@@ -27,4 +27,5 @@ import (
 	_ "github.com/minio/minio/cmd/gateway/s3"
 	_ "github.com/minio/minio/cmd/gateway/sia"
 	// Add your gateway here.
+	_ "github.com/minio/minio/cmd/gateway/eos"
 )
