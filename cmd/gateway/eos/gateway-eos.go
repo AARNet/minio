@@ -13,6 +13,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -445,6 +446,8 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
 	e.Log(1, "DEBUG: DeleteObject       : %s/%s\n", bucket, object)
 
+	e.EOSrmMeta(bucket+"/"+object, "etag")
+	e.EOSrmMeta(bucket+"/"+object, "contenttype")
 	return e.EOSrm(bucket + "/" + object)
 }
 
@@ -527,8 +530,21 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 	e.Log(1, "DEBUG: CompleteMultipartUpload : %s size : %d firstByte : %d\n", uploadID, eosMultiParts[uploadID].Size(), eosMultiParts[uploadID].FirstByte())
 
 	err = e.EOSwriteChunk(uploadID, 0, eosMultiParts[uploadID].Size(), "1", []byte{eosMultiParts[uploadID].FirstByte()})
-	delete(eosMultiParts, uploadID)
 
+	etag, _ := e.EOScalcMD5(uploadID)
+	e.Log(2, "ETAG: %s\n", etag)
+	err = e.EOSsetETag(uploadID, etag)
+	if err != nil {
+		e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+		return objInfo, err
+	}
+	err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].contenttype)
+	if err != nil {
+		e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+		return objInfo, err
+	}
+
+	delete(eosMultiParts, uploadID)
 	e.messagebusAddPutJob(uploadID)
 
 	return e.GetObjectInfo(ctx, bucket, object)
@@ -654,6 +670,7 @@ func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool)
 //  Helpers
 
 type eosFileStat struct {
+	id          int64
 	name        string
 	size        int64
 	mode        os.FileMode
@@ -664,20 +681,16 @@ type eosFileStat struct {
 	checksum    string
 }
 
-func (fs *eosFileStat) Name() string       { return fs.name }
-func (fs *eosFileStat) Size() int64        { return fs.size }
-func (fs *eosFileStat) Mode() os.FileMode  { return fs.mode }
-func (fs *eosFileStat) ModTime() time.Time { return fs.modTime }
-func (fs *eosFileStat) Sys() interface{}   { return &fs.sys }
-func (fs *eosFileStat) IsDir() bool        { return fs.mode == 0 }
-func (fs *eosFileStat) Checksum() string   { return fs.checksum }
-func (fs *eosFileStat) ETag() string       { return fs.etag }
-func (fs *eosFileStat) ContentType() string {
-	if fs.contenttype == "" {
-		return "application/octet-stream"
-	}
-	return fs.contenttype
-}
+func (fs *eosFileStat) Id() int64           { return fs.id }
+func (fs *eosFileStat) Name() string        { return fs.name }
+func (fs *eosFileStat) Size() int64         { return fs.size }
+func (fs *eosFileStat) Mode() os.FileMode   { return fs.mode }
+func (fs *eosFileStat) ModTime() time.Time  { return fs.modTime }
+func (fs *eosFileStat) Sys() interface{}    { return &fs.sys }
+func (fs *eosFileStat) IsDir() bool         { return fs.mode == 0 }
+func (fs *eosFileStat) Checksum() string    { return fs.checksum }
+func (fs *eosFileStat) ETag() string        { return fs.etag }
+func (fs *eosFileStat) ContentType() string { return fs.contenttype }
 
 type eosDirCacheType struct {
 	objects []string
@@ -861,6 +874,9 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 			e.Log(2, "ERROR: EOSreadDir 2 can not json.Unmarshal()\n")
 			return nil, err
 		}
+
+		childrenMeta := e.EOSgetAllMetaForDir(dirPath)
+
 		//e.Log(4,"%+v\n", c)
 		eospath = strings.TrimSuffix(eospath, "/") + "/"
 		children := m["children"].([]interface{})
@@ -875,14 +891,28 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 					obj += "/"
 				}
 				entries = append(entries, obj)
-				meta := e.EOSgetAllMeta(dirPath + "/" + obj)
+				//meta := e.EOSgetAllMeta(dirPath + "/" + obj)
+
+				id := e.interfaceToInt64(child["id"])
+
+				etag := childrenMeta[strconv.FormatInt(id, 10)+"_etag"]
+				if etag == "" {
+					etag = childrenMeta["default_etag"]
+				}
+
+				contenttype := childrenMeta[strconv.FormatInt(id, 10)+"_contenttype"]
+				if contenttype == "" {
+					contenttype = childrenMeta["default_contenttype"]
+				}
+
 				e.EOScacheWrite(eospath+obj, eosFileStat{
+					id:          id,
 					name:        e.interfaceToString(child["name"]),
 					size:        e.interfaceToInt64(child["size"]) + e.interfaceToInt64(child["treesize"]),
 					mode:        os.FileMode(e.interfaceToUint32(child["mode"])),
 					modTime:     time.Unix(e.interfaceToInt64(child["mtime"]), 0),
-					etag:        meta["etag"],
-					contenttype: meta["contenttype"],
+					etag:        etag,
+					contenttype: contenttype,
 					checksum:    e.interfaceToString(child["checksumvalue"]),
 				})
 			}
@@ -916,6 +946,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	e.Log(4, "EOS STAT name:%s mtime:%d mode:%d size:%d\n", e.interfaceToString(m["name"]), e.interfaceToInt64(m["mtime"]), e.interfaceToInt64(m["mode"]), e.interfaceToInt64(m["size"]))
 	meta := e.EOSgetAllMeta(p)
 	fi := eosFileStat{
+		id:          e.interfaceToInt64(m["id"]),
 		name:        e.interfaceToString(m["name"]),
 		size:        e.interfaceToInt64(m["size"]) + e.interfaceToInt64(m["treesize"]),
 		mode:        os.FileMode(e.interfaceToUint32(m["mode"])),
@@ -977,6 +1008,7 @@ func (e *eosObjects) EOSrm(p string) error {
 	if err != nil {
 		return err
 	}
+
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(2, "ERROR: can not json.Unmarshal()\n")
@@ -1019,12 +1051,12 @@ func (e *eosObjects) EOScopy(src, dst string) error {
 	return nil
 }
 
-func (e *eosObjects) EOSsetMeta(p, key, value string) error {
+func (e *eosObjects) EOSsetMetaRAW(p, key, value string) error {
 	eospath, err := e.EOSpath(p)
 	if err != nil {
 		return err
 	}
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio.%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras()))
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras()))
 	//e.Log(5,"body : %s\n", string(body))
 	if err != nil {
 		e.Log(2, "ERROR: can not json.Unmarshal()\n")
@@ -1036,6 +1068,51 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	}
 
 	return nil
+}
+
+func (e *eosObjects) EOSsetMeta(p, key, value string) error {
+	err := e.EOSsetMetaRAW(p, key, value)
+	if err != nil {
+		return err
+	}
+
+	//Also set it on its parent folder, faster to curl...
+	stat, _ := e.EOSfsStat(p)
+	dir := filepath.Dir(p)
+	key2 := strconv.FormatInt(stat.Id(), 10) + "_" + key
+	err = e.EOSsetMetaRAW(dir, key2, value)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (e *eosObjects) EOSsetContentType(p, ct string) error { return e.EOSsetMeta(p, "contenttype", ct) }
+func (e *eosObjects) EOSsetETag(p, etag string) error      { return e.EOSsetMeta(p, "etag", etag) }
+
+func (e *eosObjects) EOSrmMeta(p, key string) error {
+	stat, _ := e.EOSfsStat(p)
+	dir := filepath.Dir(p)
+	key2 := strconv.FormatInt(stat.Id(), 10) + "_" + key
+
+	eospath, err := e.EOSpath(dir)
+	if err != nil {
+		return err
+	}
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=rm&mgm.attr.key=minio_%s&mgm.path=%s%s", url.QueryEscape(key2), url.QueryEscape(eospath), e.EOSurlExtras()))
+	//e.Log(5,"body : %s\n", string(body))
+	if err != nil {
+		e.Log(2, "ERROR: can not json.Unmarshal()\n")
+		return err
+	}
+
+	if e.interfaceToString(m["errormsg"]) != "" {
+		return nil //eoserrSetMeta
+	}
+
+	return nil
+
 }
 
 func (e *eosObjects) EOSgetAllMeta(p string) map[string]string {
@@ -1091,21 +1168,9 @@ func (e *eosObjects) EOSgetAllMeta(p string) map[string]string {
 
 			for _, jmetai := range jls {
 				jmeta, _ := jmetai.(map[string]interface{})
-
-				if j, ok = jmeta["minio"]; ok {
-					err = json.Unmarshal([]byte(body), &j)
-					if err != nil {
-						//e.Log(2,"ERROR: [attr][ls][][minio] missing\n")
-						continue
-					}
-					jminio := jmeta["minio"].(map[string]interface{})
-					for key, _ := range jminio {
-						err = json.Unmarshal([]byte(body), &j)
-						if err != nil {
-							//e.Log(2,"ERROR: [attr][ls][][minio][%s] missing\n", key)
-							continue
-						}
-						meta[key] = strings.Trim(e.interfaceToString(jminio[key]), "\"")
+				for key, _ := range jmeta {
+					if strings.HasPrefix(key, "minio_") {
+						meta[strings.TrimPrefix(key, "minio_")] = strings.Trim(e.interfaceToString(jmeta[key]), "\"")
 					}
 				}
 			}
@@ -1114,10 +1179,69 @@ func (e *eosObjects) EOSgetAllMeta(p string) map[string]string {
 	return meta
 }
 
-func (e *eosObjects) EOSsetContentType(p, ct string) error { return e.EOSsetMeta(p, "contenttype", ct) }
-func (e *eosObjects) EOSsetETag(p, etag string) error      { return e.EOSsetMeta(p, "etag", etag) }
+func (e *eosObjects) EOSgetAllMetaForDir(p string) map[string]string {
+	meta := make(map[string]string)
+	//some defaults
+	meta["default_contenttype"] = "application/octet-stream"
+	meta["default_etag"] = "00000000000000000000000000000000"
+
+	eospath, err := e.EOSpath(p)
+	if err != nil {
+		return meta
+	}
+	if strings.HasSuffix(eospath, "/") {
+		return meta
+	}
+
+	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=ls&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
+	//e.Log(5,"body: %s\n", string(body))
+	if err != nil {
+		return meta
+	}
+
+	if e.interfaceToString(m["errormsg"]) != "" {
+		return meta
+	}
+
+	if j, ok := m["attr"]; ok {
+		jattr := m["attr"].(map[string]interface{})
+		err = json.Unmarshal([]byte(body), &j)
+		if err != nil {
+			//e.Log(2,"ERROR: [attr] missing\n")
+			return meta
+		}
+
+		if j, ok = jattr["ls"]; ok {
+			err = json.Unmarshal([]byte(body), &j)
+			if err != nil {
+				//e.Log(2,"ERROR: [attr][ls] missing\n")
+				return meta
+			}
+			if jattr["ls"] == nil {
+				//e.Log(2,"ERROR: [attr][ls] null\n")
+				return meta
+			}
+			jls := jattr["ls"].([]interface{})
+			if len(jls) == 0 {
+				//e.Log(2,"ERROR: [attr][ls][] empty\n")
+				return meta
+			}
+
+			for _, jmetai := range jls {
+				jmeta, _ := jmetai.(map[string]interface{})
+				for key, _ := range jmeta {
+					if strings.HasPrefix(key, "minio_") {
+						meta[strings.TrimPrefix(key, "minio_")] = strings.Trim(e.interfaceToString(jmeta[key]), "\"")
+					}
+				}
+			}
+		}
+	}
+	return meta
+}
 
 func (e *eosObjects) EOSput(p string, data []byte) error {
+	e.Log(2, "EOSput: %s\n", p)
 	//curl -L -X PUT -T somefile -H 'Remote-User: minio' -sw '%{http_code}' http://eos:8000/eos-path/somefile
 
 	eospath, err := e.EOSpath(p)
@@ -1125,7 +1249,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		return err
 	}
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
-	//e.Log(3,"  %s\n", eosurl)
+	e.Log(3, "  %s\n", eosurl)
 
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -1216,4 +1340,40 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		}
 	}
 	return err
+}
+
+func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
+	eospath, err := e.EOSpath(p)
+	if err != nil {
+		return "00000000000000000000000000000000", err
+	}
+	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			e.Log(2, "    http client wants to redirect\n")
+			return nil
+		}}
+	req, _ := http.NewRequest("GET", eosurl, nil)
+	req.Header.Set("Remote-User", "minio")
+	req.Close = true
+	res, err := client.Do(req)
+	if err != nil {
+		e.Log(2, "%+v\n", err)
+		return "00000000000000000000000000000000", err
+	}
+
+	defer res.Body.Close()
+	hash := md5.New()
+	reader := bufio.NewReader(res.Body)
+	for {
+		buf := make([]byte, 1024, 1024)
+		n, err := reader.Read(buf[:])
+		hash.Write(buf[0:n])
+		if err != nil {
+			break
+		}
+	}
+	md5sum = hex.EncodeToString(hash.Sum(nil))
+	return md5sum, err
 }
