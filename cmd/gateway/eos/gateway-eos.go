@@ -158,15 +158,37 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		loglevel = 0
 	}
 
+	const CLR_W = "\x1b[37;1m"
+	const CLR_B = "\x1b[34;1m"
+	const CLR_Y = "\x1b[33;1m"
+	const CLR_G = "\x1b[32;1m"
+	const CLR_N = "\x1b[0m"
+
+	fmt.Printf("------%sEOS CONFIG%s------\n", CLR_G, CLR_N)
+	fmt.Printf("%sEOS URL              %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("EOS"), CLR_N)
+	fmt.Printf("%sEOS VOLUME PATH      %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("VOLUME_PATH"), CLR_N)
+	fmt.Printf("%sEOS USER (uid:gid)   %s:%s %s (%s:%s)%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"), CLR_N)
+	fmt.Printf("%sEOS file hooks url   %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("HOOKSURL"), CLR_N)
+	fmt.Printf("%sEOS SCRIPTS PATH     %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("SCRIPTS"), CLR_N)
+
 	metastore := os.Getenv("EOSMETA")
 	if metastore != "" {
+		fmt.Printf("%sEOS metastore        %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, metastore, CLR_N)
 		os.MkdirAll(metastore, 0700)
+	} else {
+		fmt.Printf("%sEOS metastore        %s: %sDISABLED%s\n", CLR_B, CLR_N, CLR_Y, CLR_N)
 	}
 
 	stage := os.Getenv("EOSSTAGE")
 	if stage != "" {
+		fmt.Printf("%sEOS staging          %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, stage, CLR_N)
 		os.MkdirAll(stage, 0700)
+	} else {
+		fmt.Printf("%sEOS staging          %s: %sDISABLED%s\n", CLR_B, CLR_N, CLR_Y, CLR_N)
 	}
+
+	fmt.Printf("%sEOS LOG LEVEL        %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, loglevel, CLR_N)
+	fmt.Printf("----------------------\n\n")
 
 	return &eosObjects{
 		loglevel:  loglevel,
@@ -337,14 +359,19 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 		e.EOSmkdirWithOption(dir, "&mgm.option=p")
 	}
 
-	err = e.EOScopy(srcBucket+"/"+srcObject, destBucket+"/"+destObject)
+	err = e.EOScopy(srcBucket+"/"+srcObject, destBucket+"/"+destObject, srcInfo.Size)
 	if err != nil {
-		e.Log(2, "ERROR: PUT:%+v\n", err)
+		e.Log(2, "ERROR: COPY:%+v\n", err)
 		return objInfo, err
 	}
 	err = e.EOSsetETag(destBucket+"/"+destObject, srcInfo.ETag)
 	if err != nil {
-		e.Log(2, "ERROR: PUT:%+v\n", err)
+		e.Log(2, "ERROR: COPY:%+v\n", err)
+		return objInfo, err
+	}
+	err = e.EOSsetContentType(destBucket+"/"+destObject, srcInfo.ContentType)
+	if err != nil {
+		e.Log(2, "ERROR: COPY:%+v\n", err)
 		return objInfo, err
 	}
 
@@ -401,7 +428,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		e.EOSmkdirWithOption(dir, "&mgm.option=p")
 	}
 
-	err = e.EOSput(bucket+"/"+object, buf)
+	err = e.EOSput(bucket+"/"+object, bytes.NewBuffer(buf), int64(len(buf)))
 	if err != nil {
 		e.Log(2, "ERROR: PUT:%+v\n", err)
 		return objInfo, err
@@ -449,15 +476,35 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	offset := eosMultiParts[uploadID].parts[1].Size * int64(partID-1)
 	e.Log(3, "DEBUG: PutObjectPart        offset = %d = %d\n", (partID - 1), offset)
 
-	err = e.EOSwriteChunk(uploadID, offset, offset+size, "0", buf)
+	if e.stage != "" {
+		e.Log(1, "DEBUG: PutObjectPart      : Staging\n")
 
-	if partID == 1 {
-		eosMultiParts[uploadID].SetFirstByte(buf[0])
-		err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].ContentType())
+		//eosMultiParts[uploadID].mutex.Lock()
+		f, err := os.OpenFile(e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			e.Log(2, "ERROR: Write ContentType: %+v\n", err)
 			return newPart, err
 		}
+		_, err = f.WriteAt(buf, offset)
+		if err != nil {
+			e.Log(2, "ERROR: Write ContentType: %+v\n", err)
+			return newPart, err
+		}
+		f.Close()
+		//eosMultiParts[uploadID].mutex.Unlock()
+
+		/*
+			partFile := fmt.Sprintf("%s/%s/%010d", e.stage, eosMultiParts[uploadID].stagepath, partID)
+			e.Log(1, "DEBUG: PutObjectPart      : write chunk %d to %s\n", offset, partFile)
+			ioutil.WriteFile(partFile, buf, 0644)
+		*/
+
+	} else {
+		err = e.EOSwriteChunk(uploadID, offset, offset+size, "0", buf)
+	}
+
+	if partID == 1 {
+		eosMultiParts[uploadID].SetFirstByte(buf[0])
 	}
 
 	return newPart, nil
@@ -539,6 +586,22 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		firstByte:   0,
 		contenttype: metadata["content-type"],
 	}
+
+	if e.stage != "" {
+		hasher := md5.New()
+		hasher.Write([]byte(uploadID))
+		stagepath := hex.EncodeToString(hasher.Sum(nil))
+
+		//make sure it is clear of older junk
+		os.RemoveAll(e.stage + "/" + stagepath)
+
+		err = os.MkdirAll(e.stage+"/"+stagepath, 0700)
+		if err != nil {
+			e.Log(2, "  MKDIR %s FAILED %+v\n", e.stage+"/"+stagepath, err)
+		}
+		mp.stagepath = stagepath
+	}
+
 	eosMultiParts[uploadID] = &mp
 
 	e.Log(2, "  uploadID : %s\n", uploadID)
@@ -547,25 +610,74 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 
 // CompleteMultipartUpload
 func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart) (objInfo minio.ObjectInfo, err error) {
-	e.Log(1, "DEBUG: CompleteMultipartUpload : %s size : %d firstByte : %d\n", uploadID, eosMultiParts[uploadID].Size(), eosMultiParts[uploadID].FirstByte())
+	e.Log(1, "DEBUG: CompleteMultipartUpload : %s size : %d firstByte : %d\n", uploadID, eosMultiParts[uploadID].size, eosMultiParts[uploadID].firstByte)
 
-	err = e.EOSwriteChunk(uploadID, 0, eosMultiParts[uploadID].Size(), "1", []byte{eosMultiParts[uploadID].FirstByte()})
+	if e.stage != "" {
+		err = e.EOStouch(uploadID, eosMultiParts[uploadID].size)
+		if err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload: EOStouch :%+v\n", err)
+			return objInfo, err
+		}
 
-	etag, _ := e.EOScalcMD5(uploadID)
-	e.Log(2, "ETAG: %s\n", etag)
-	err = e.EOSsetETag(uploadID, etag)
-	if err != nil {
-		e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
-		return objInfo, err
+		//this could be done better
+		file, err := os.Open(e.stage + "/" + eosMultiParts[uploadID].stagepath + "/file")
+		if err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload: os.Open :%+v\n", err)
+			return objInfo, err
+		}
+		hash := md5.New()
+		if _, err := io.Copy(hash, file); err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+		}
+		file.Close()
+		etag := hex.EncodeToString(hash.Sum(nil))
+
+		e.Log(2, "ETAG: %s\n", etag)
+		err = e.EOSsetETag(uploadID, etag)
+		if err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+			return objInfo, err
+		}
+		err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].contenttype)
+		if err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+			return objInfo, err
+		}
+
+		//upload in background
+		go func() {
+			err := e.EOSxrdcp(e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", uploadID, eosMultiParts[uploadID].size)
+			if err != nil {
+				e.Log(2, "ERROR: CompleteMultipartUpload: xrdcp: %+v\n", err)
+				return
+			}
+
+			err = os.RemoveAll(e.stage + "/" + eosMultiParts[uploadID].stagepath)
+			if err != nil {
+				return
+			}
+
+			delete(eosMultiParts, uploadID)
+			e.messagebusAddPutJob(uploadID)
+		}()
+	} else {
+		err = e.EOSwriteChunk(uploadID, 0, eosMultiParts[uploadID].size, "1", []byte{eosMultiParts[uploadID].firstByte})
+		etag, _ := e.EOScalcMD5(uploadID)
+
+		e.Log(2, "ETAG: %s\n", etag)
+		err = e.EOSsetETag(uploadID, etag)
+		if err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+			return objInfo, err
+		}
+		err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].contenttype)
+		if err != nil {
+			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+			return objInfo, err
+		}
+		delete(eosMultiParts, uploadID)
+		e.messagebusAddPutJob(uploadID)
 	}
-	err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].contenttype)
-	if err != nil {
-		e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
-		return objInfo, err
-	}
-
-	delete(eosMultiParts, uploadID)
-	e.messagebusAddPutJob(uploadID)
 
 	return e.GetObjectInfo(ctx, bucket, object)
 }
@@ -635,6 +747,20 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 		}
 
 		result.Objects = append(result.Objects, o)
+
+		if delimiter == "" { //recursive
+			if stat.IsDir() {
+				e.Log(3, "  ASKING FOR -r on : %s\n", prefix+obj)
+
+				subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
+				if err != nil {
+					return result, err
+				}
+				for _, subobj := range subdir.Objects {
+					result.Objects = append(result.Objects, subobj)
+				}
+			}
+		}
 	}
 
 	result.IsTruncated = false
@@ -734,13 +860,12 @@ type eosMultiPartsType struct {
 	size        int64
 	firstByte   byte
 	contenttype string
+	stagepath   string
+	mutex       sync.Mutex
 }
 
-func (mp *eosMultiPartsType) Size() int64          { return mp.size }
-func (mp *eosMultiPartsType) FirstByte() byte      { return mp.firstByte }
 func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
 func (mp *eosMultiPartsType) SetFirstByte(b byte)  { mp.firstByte = b }
-func (mp *eosMultiPartsType) ContentType() string  { return mp.contenttype }
 
 var eosMultiParts = make(map[string]*eosMultiPartsType)
 
@@ -1031,7 +1156,7 @@ func (e *eosObjects) EOSrm(p string) error {
 	return nil
 }
 
-func (e *eosObjects) EOScopy(src, dst string) error {
+func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 	eossrcpath, err := e.EOSpath(src)
 	if err != nil {
 		return err
@@ -1041,7 +1166,19 @@ func (e *eosObjects) EOScopy(src, dst string) error {
 		return err
 	}
 
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.EOSurlExtras()))
+	//need to wait for file, it is possible it is uploaded via a background job
+	for {
+		_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eossrcpath), e.EOSurlExtras()))
+		if err == nil {
+			if e.interfaceToInt64(m["size"]) == size {
+				break
+			}
+		}
+		e.Log(1, "DEBUG: EOScopy waiting for src file to arrive : %s size: %d\n", eossrcpath, size)
+		time.Sleep(1000 * time.Millisecond)
+	}
+
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(2, "ERROR: can not json.Unmarshal()\n")
 		return err
@@ -1053,6 +1190,26 @@ func (e *eosObjects) EOScopy(src, dst string) error {
 
 	e.EOScacheDeletePath(dst)
 	e.messagebusAddPutJob(dst)
+
+	return nil
+}
+
+func (e *eosObjects) EOStouch(p string, size int64) error {
+	//bookingsize is ignored by touch...
+	eospath, err := e.EOSpath(p)
+	if err != nil {
+		return err
+	}
+
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.EOSurlExtras(), size))
+	if err != nil {
+		e.Log(2, "ERROR: can not json.Unmarshal()\n")
+		return err
+	}
+
+	if e.interfaceToString(m["errormsg"]) != "" {
+		return eoserrDiskAccessDenied
+	}
 
 	return nil
 }
@@ -1175,8 +1332,8 @@ func (e *eosObjects) EOSgetAllMeta(p string) map[string]string {
 	return meta
 }
 
-func (e *eosObjects) EOSput(p string, data []byte) error {
-	e.Log(2, "EOSput: %s\n", p)
+func (e *eosObjects) EOSput(p string, buf *bytes.Buffer, size int64) error {
+	e.Log(2, "EOSput: %s %d bytes\n", p, size)
 	//curl -L -X PUT -T somefile -H 'Remote-User: minio' -sw '%{http_code}' http://eos:8000/eos-path/somefile
 
 	eospath, err := e.EOSpath(p)
@@ -1192,10 +1349,11 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 			e.Log(5, "    %+v\n", req)
 			return nil
 		}}
-	req, _ := http.NewRequest("PUT", eosurl, bytes.NewBuffer(data))
+	//req, _ := http.NewRequest("PUT", eosurl, bytes.NewBuffer(buf))
+	req, _ := http.NewRequest("PUT", eosurl, buf)
 	req.Header.Set("Remote-User", "minio")
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = int64(len(data))
+	req.ContentLength = size
 	req.Close = true
 	res, err := client.Do(req)
 	if err != nil {
@@ -1225,6 +1383,29 @@ func (e *eosObjects) EOSwriteChunk(p string, offset, size int64, checksum string
 	if err != nil {
 		e.Log(2, "ERROR: can not %s %s %d %d %s %d %d\n", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
 		e.Log(2, "%s\n", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
+	}
+	return err
+}
+
+func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
+	eospath, err := e.EOSpath(dst)
+	if err != nil {
+		return err
+	}
+	eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", e.url, eospath, e.uid, e.gid, size))
+	if err != nil {
+		fmt.Printf("ERROR: can not url.QueryUnescape()\n")
+		return err
+	}
+
+	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
+	stdoutStderr, err := cmd.CombinedOutput()
+	if err != nil {
+		e.Log(2, "ERROR: can not /usr/bin/xrdcp -N -f -p %s %s\n", src, eosurl)
+	}
+	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
+	if output != "" {
+		e.Log(2, "%s\n", output)
 	}
 	return err
 }
