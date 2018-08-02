@@ -463,7 +463,9 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		Size:         size,
 	}
 
+	eosMultiPartsMutex.Lock()
 	eosMultiParts[uploadID].parts[partID] = newPart
+	eosMultiPartsMutex.Unlock()
 	eosMultiParts[uploadID].AddToSize(size)
 
 	_, ok := eosMultiParts[uploadID].parts[1]
@@ -541,21 +543,22 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (
 
 	stat, err := e.EOSfsStat(bucket + "/" + object)
 
-	if err == nil {
-		objInfo = minio.ObjectInfo{
-			Bucket:      bucket,
-			Name:        object,
-			ModTime:     stat.ModTime(),
-			Size:        stat.Size(),
-			IsDir:       stat.IsDir(),
-			ETag:        stat.ETag(),
-			ContentType: stat.ContentType(),
-		}
-	} else {
+	if err != nil {
 		e.Log(4, "%+v\n", err)
 		err = minio.ObjectNotFound{
 			Bucket: bucket,
 			Object: object}
+		return objInfo, err
+	}
+
+	objInfo = minio.ObjectInfo{
+		Bucket:      bucket,
+		Name:        object,
+		ModTime:     stat.ModTime(),
+		Size:        stat.Size(),
+		IsDir:       stat.IsDir(),
+		ETag:        stat.ETag(),
+		ContentType: stat.ContentType(),
 	}
 
 	e.Log(2, "  %s etag:%s content-type:%s\n", bucket+"/"+object, stat.ETag(), stat.ContentType())
@@ -657,7 +660,9 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 				return
 			}
 
+			eosMultiPartsMutex.Lock()
 			delete(eosMultiParts, uploadID)
+			eosMultiPartsMutex.Unlock()
 			e.messagebusAddPutJob(uploadID)
 		}()
 	} else {
@@ -675,7 +680,9 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
 			return objInfo, err
 		}
+		eosMultiPartsMutex.Lock()
 		delete(eosMultiParts, uploadID)
+		eosMultiPartsMutex.Unlock()
 		e.messagebusAddPutJob(uploadID)
 	}
 
@@ -701,9 +708,11 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.MaxParts = maxParts
 	result.PartNumberMarker = partNumberMarker
 
+	eosMultiPartsMutex.Lock()
 	for _, part := range eosMultiParts[uploadID].parts {
 		result.Parts = append(result.Parts, part)
 	}
+	eosMultiPartsMutex.Unlock()
 
 	return result, nil
 }
@@ -851,7 +860,8 @@ var eoserrFileNotFound = errors.New("EOS: file not found")
 var eoserrDiskAccessDenied = errors.New("EOS: disk access denied")
 var eoserrCantPut = errors.New("EOS: can't put")
 var eoserrFilePathBad = errors.New("EOS: bad file path")
-var eoserrSetMeta = errors.New("EOS: can't set metadata")
+
+//var eoserrSetMeta = errors.New("EOS: can't set metadata")
 
 var eosfsStatMutex = sync.RWMutex{}
 
@@ -868,6 +878,7 @@ func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
 func (mp *eosMultiPartsType) SetFirstByte(b byte)  { mp.firstByte = b }
 
 var eosMultiParts = make(map[string]*eosMultiPartsType)
+var eosMultiPartsMutex = sync.RWMutex{}
 
 func (e *eosObjects) interfaceToInt64(in interface{}) int64 {
 	if in == nil {
@@ -1228,7 +1239,8 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		return eoserrSetMeta
+		e.Log(2, "ERROR: %s\n", e.interfaceToString(m["errormsg"]))
+		//return eoserrSetMeta
 	}
 
 	if e.metastore != "" {
