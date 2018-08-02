@@ -904,17 +904,17 @@ func (e *eosObjects) messagebusAddJob(jobType, path string) {
 		return
 	}
 
-	file, err := e.EOSpath(path)
+	eospath, err := e.EOSpath(path)
 	if err != nil {
 		return
 	}
 
 	go func() {
-		url := fmt.Sprintf("%s?type=%s&file=%s", e.hookurl, jobType, file)
-		res, _ := http.Get(url)
+		joburl := fmt.Sprintf("%s?type=%s&file=%s", e.hookurl, jobType, url.QueryEscape(eospath))
+		res, _ := http.Get(joburl)
 		defer res.Body.Close()
 		body, _ := ioutil.ReadAll(res.Body)
-		e.Log(2, "S3 Hook: %s\n", url)
+		e.Log(2, "S3 Hook: %s\n", joburl)
 		e.Log(3, "  %s\n", body)
 		_ = body
 	}()
@@ -1029,7 +1029,7 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 			//e.Log(4,"  name: %s   %d\n", e.interfaceToString(child["name"]), e.interfaceToint64(child["mode"]))
 
 			obj := e.interfaceToString(child["name"])
-			if fmt.Sprintf("%c", obj[0]) != "." {
+			if !strings.HasPrefix(obj, ".sys.v#.") {
 				if e.interfaceToInt64(child["mode"]) == 0 {
 					obj += "/"
 				}
@@ -1140,7 +1140,7 @@ func (e *eosObjects) EOSrm(p string) error {
 		return err
 	}
 
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=rf&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(2, "ERROR: can not json.Unmarshal()\n")
 		return err
@@ -1170,11 +1170,12 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 	for {
 		_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eossrcpath), e.EOSurlExtras()))
 		if err == nil {
-			if e.interfaceToInt64(m["size"]) == size {
+			if e.interfaceToInt64(m["size"]) >= size {
 				break
 			}
 		}
 		e.Log(1, "DEBUG: EOScopy waiting for src file to arrive : %s size: %d\n", eossrcpath, size)
+		e.Log(3, "DEBUG: EOScopy expecting size: %d found size: %d\n", size, e.interfaceToInt64(m["size"]))
 		time.Sleep(1000 * time.Millisecond)
 	}
 
