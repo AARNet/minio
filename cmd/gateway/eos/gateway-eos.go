@@ -331,19 +331,19 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 
 // GetBucketPolicy - Get the container ACL
 func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
-	e.Log(1, "DEBUG: GetBucketPolicy    : %s\n", bucket)
+	e.Log(4, "DEBUG: GetBucketPolicy    : %s\n", bucket)
 	return nil, minio.NotImplemented{}
 }
 
 // SetBucketPolicy
 func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketPolicy *policy.Policy) error {
-	e.Log(1, "DEBUG: SetBucketPolicy    : %s, %+v\n", bucket, bucketPolicy)
+	e.Log(4, "DEBUG: SetBucketPolicy    : %s, %+v\n", bucket, bucketPolicy)
 	return minio.NotImplemented{}
 }
 
 // DeleteBucketPolicy - Set the container ACL to "private"
 func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	e.Log(1, "DEBUG: DeleteBucketPolicy : %s\n", bucket)
+	e.Log(4, "DEBUG: DeleteBucketPolicy : %s\n", bucket)
 	return minio.NotImplemented{}
 }
 
