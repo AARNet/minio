@@ -992,7 +992,9 @@ func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			e.Log(4, "    http client wants to redirect\n")
 			return nil
-		}}
+		},
+		Timeout: 0,
+	}
 	req, _ := http.NewRequest("GET", eosurl, nil)
 	req.Header.Set("Remote-User", "minio")
 	res, _ := client.Do(req)
@@ -1361,7 +1363,9 @@ func (e *eosObjects) EOSput(p string, buf *bytes.Buffer, size int64) error {
 			e.Log(2, "    http client wants to redirect\n")
 			e.Log(5, "    %+v\n", req)
 			return nil
-		}}
+		},
+		Timeout: 0,
+	}
 	//req, _ := http.NewRequest("PUT", eosurl, bytes.NewBuffer(buf))
 	req, _ := http.NewRequest("PUT", eosurl, buf)
 	req.Header.Set("Remote-User", "minio")
@@ -1438,7 +1442,9 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			e.Log(2, "    http client wants to redirect\n")
 			return nil
-		}}
+		},
+		Timeout: 0,
+	}
 	req, _ := http.NewRequest("GET", eosurl, nil)
 	req.Header.Set("Remote-User", "minio")
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
@@ -1483,7 +1489,9 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			e.Log(2, "    http client wants to redirect\n")
 			return nil
-		}}
+		},
+		Timeout: 0,
+	}
 	req, _ := http.NewRequest("GET", eosurl, nil)
 	req.Header.Set("Remote-User", "minio")
 	req.Close = true
