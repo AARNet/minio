@@ -18,7 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/adler32"
+	//"hash/adler32"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -393,42 +393,44 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 
 	buf, _ := ioutil.ReadAll(data)
 	etag := hex.EncodeToString(data.MD5Current())
-	stat, err := e.EOSfsStat(bucket + "/" + object)
-	if err == nil {
-		adler := fmt.Sprintf("%08x", adler32.Checksum(buf))
+	/*
+		stat, err := e.EOSfsStat(bucket + "/" + object)
+		if err == nil {
+			adler := fmt.Sprintf("%08x", adler32.Checksum(buf))
 
-		e.Log(2, "       checksum Client    : %s\n", adler)
-		e.Log(2, "       checksum EOS       : %s\n", stat.Checksum())
-		e.Log(2, "       ETag Client        : %s\n", etag)
-		e.Log(2, "       ETag EOS           : %s\n", stat.ETag())
+			e.Log(2, "       checksum Client    : %s\n", adler)
+			e.Log(2, "       checksum EOS       : %s\n", stat.Checksum())
+			e.Log(2, "       ETag Client        : %s\n", etag)
+			e.Log(2, "       ETag EOS           : %s\n", stat.ETag())
 
-		if etag == stat.ETag() || adler == stat.Checksum() {
-			if etag != stat.ETag() {
-				err = e.EOSsetETag(bucket+"/"+object, etag)
-				if err != nil {
-					e.Log(2, "ERROR: PUT:%+v\n", err)
-					return objInfo, err
+			if etag == stat.ETag() || adler == stat.Checksum() {
+				if etag != stat.ETag() {
+					err = e.EOSsetETag(bucket+"/"+object, etag)
+					if err != nil {
+						e.Log(2, "ERROR: PUT:%+v\n", err)
+						return objInfo, err
+					}
 				}
-			}
-			if metadata["content-type"] != stat.ContentType() {
-				err = e.EOSsetContentType(bucket+"/"+object, metadata["content-type"])
-				if err != nil {
-					e.Log(2, "ERROR: PUT:%+v\n", err)
-					return objInfo, err
+				if metadata["content-type"] != stat.ContentType() {
+					err = e.EOSsetContentType(bucket+"/"+object, metadata["content-type"])
+					if err != nil {
+						e.Log(2, "ERROR: PUT:%+v\n", err)
+						return objInfo, err
+					}
 				}
+				e.EOScacheDeleteObject(bucket, object)
+				e.Log(1, "       SAME FILE Skipping\n")
+				return e.GetObjectInfo(ctx, bucket, object)
 			}
-			e.EOScacheDeleteObject(bucket, object)
-			e.Log(1, "       SAME FILE Skipping\n")
-			return e.GetObjectInfo(ctx, bucket, object)
 		}
-	}
+	*/
 
 	dir := bucket + "/" + filepath.Dir(object)
 	if _, err := e.EOSfsStat(dir); err != nil {
 		e.EOSmkdirWithOption(dir, "&mgm.option=p")
 	}
 
-	err = e.EOSput(bucket+"/"+object, bytes.NewBuffer(buf), int64(len(buf)))
+	err = e.EOSput(bucket+"/"+object, buf)
 	if err != nil {
 		e.Log(2, "ERROR: PUT:%+v\n", err)
 		return objInfo, err
@@ -452,6 +454,11 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *hash.Reader) (info minio.PartInfo, err error) {
 	e.Log(1, "DEBUG: PutObjectPart      : %s/%s %s [%d] %d\n", bucket, object, uploadID, partID, data.Size())
 
+	for eosMultiParts[uploadID].parts == nil {
+		e.Log(1, "DEBUG: PutObjectPart called before NewMultipartUpload finished...\n")
+		e.EOSsleep()
+	}
+
 	size := data.Size()
 	buf, _ := ioutil.ReadAll(data)
 	etag := hex.EncodeToString(data.MD5Current())
@@ -466,16 +473,21 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	eosMultiPartsMutex.Lock()
 	eosMultiParts[uploadID].parts[partID] = newPart
 	eosMultiPartsMutex.Unlock()
+
+	eosMultiParts[uploadID].partsCount++
 	eosMultiParts[uploadID].AddToSize(size)
 
-	_, ok := eosMultiParts[uploadID].parts[1]
-	for !ok {
-		_, ok = eosMultiParts[uploadID].parts[1]
-		e.Log(1, "DEBUG: PutObjectPart        ok, waiting for first chunk...\n")
-		time.Sleep(10 * time.Millisecond)
+	if partID == 1 {
+		eosMultiParts[uploadID].firstByte = buf[0]
+		eosMultiParts[uploadID].chunkSize = size
+	} else {
+		for eosMultiParts[uploadID].chunkSize == 0 {
+			e.Log(1, "DEBUG: PutObjectPart        ok, waiting for first chunk...\n")
+			e.EOSsleep()
+		}
 	}
 
-	offset := eosMultiParts[uploadID].parts[1].Size * int64(partID-1)
+	offset := eosMultiParts[uploadID].chunkSize * int64(partID-1)
 	e.Log(3, "DEBUG: PutObjectPart        offset = %d = %d\n", (partID - 1), offset)
 
 	if e.stage != "" {
@@ -503,10 +515,6 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 
 	} else {
 		err = e.EOSwriteChunk(uploadID, offset, offset+size, "0", buf)
-	}
-
-	if partID == 1 {
-		eosMultiParts[uploadID].SetFirstByte(buf[0])
 	}
 
 	return newPart, nil
@@ -585,7 +593,9 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 
 	mp := eosMultiPartsType{
 		parts:       make(map[int]minio.PartInfo),
+		partsCount:  0,
 		size:        0,
+		chunkSize:   0,
 		firstByte:   0,
 		contenttype: metadata["content-type"],
 	}
@@ -605,7 +615,9 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		mp.stagepath = stagepath
 	}
 
+	eosMultiPartsMutex.Lock()
 	eosMultiParts[uploadID] = &mp
+	eosMultiPartsMutex.Unlock()
 
 	e.Log(2, "  uploadID : %s\n", uploadID)
 	return uploadID, nil
@@ -660,9 +672,9 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 				return
 			}
 
-			eosMultiPartsMutex.Lock()
+			//eosMultiPartsMutex.Lock()
 			delete(eosMultiParts, uploadID)
-			eosMultiPartsMutex.Unlock()
+			//eosMultiPartsMutex.Unlock()
 			e.messagebusAddPutJob(uploadID)
 		}()
 	} else {
@@ -680,9 +692,9 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
 			return objInfo, err
 		}
-		eosMultiPartsMutex.Lock()
+		//eosMultiPartsMutex.Lock()
 		delete(eosMultiParts, uploadID)
-		eosMultiPartsMutex.Unlock()
+		//eosMultiPartsMutex.Unlock()
 		e.messagebusAddPutJob(uploadID)
 	}
 
@@ -708,11 +720,14 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.MaxParts = maxParts
 	result.PartNumberMarker = partNumberMarker
 
-	eosMultiPartsMutex.Lock()
+	i := 0
+	eosMultiPartsMutex.RLock()
+	result.Parts = make([]minio.PartInfo, eosMultiParts[uploadID].partsCount)
 	for _, part := range eosMultiParts[uploadID].parts {
-		result.Parts = append(result.Parts, part)
+		result.Parts[i] = part
+		i++
 	}
-	eosMultiPartsMutex.Unlock()
+	eosMultiPartsMutex.RUnlock()
 
 	return result, nil
 }
@@ -867,7 +882,9 @@ var eosfsStatMutex = sync.RWMutex{}
 
 type eosMultiPartsType struct {
 	parts       map[int]minio.PartInfo
+	partsCount  int
 	size        int64
+	chunkSize   int64
 	firstByte   byte
 	contenttype string
 	stagepath   string
@@ -875,9 +892,9 @@ type eosMultiPartsType struct {
 }
 
 func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
-func (mp *eosMultiPartsType) SetFirstByte(b byte)  { mp.firstByte = b }
 
 var eosMultiParts = make(map[string]*eosMultiPartsType)
+
 var eosMultiPartsMutex = sync.RWMutex{}
 
 func (e *eosObjects) interfaceToInt64(in interface{}) int64 {
@@ -934,6 +951,10 @@ func (e *eosObjects) messagebusAddJob(jobType, path string) {
 }
 func (e *eosObjects) messagebusAddPutJob(path string)    { e.messagebusAddJob("s3.Add", path) }
 func (e *eosObjects) messagebusAddDeleteJob(path string) { e.messagebusAddJob("s3.Delete", path) }
+
+//Sometimes EOS needs to breath
+func (e *eosObjects) EOSsleep()     { time.Sleep(100 * time.Millisecond) }
+func (e *eosObjects) EOSsleepSlow() { time.Sleep(1000 * time.Millisecond) }
 
 func (e *eosObjects) EOSurlExtras() string {
 	return fmt.Sprintf("&eos.ruid=%s&eos.rgid=%s&mgm.format=json", e.uid, e.gid)
@@ -1189,7 +1210,7 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 		}
 		e.Log(1, "DEBUG: EOScopy waiting for src file to arrive : %s size: %d\n", eossrcpath, size)
 		e.Log(3, "DEBUG: EOScopy expecting size: %d found size: %d\n", size, e.interfaceToInt64(m["size"]))
-		time.Sleep(1000 * time.Millisecond)
+		e.EOSsleepSlow()
 	}
 
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.EOSurlExtras()))
@@ -1347,8 +1368,8 @@ func (e *eosObjects) EOSgetAllMeta(p string) map[string]string {
 	return meta
 }
 
-func (e *eosObjects) EOSput(p string, buf *bytes.Buffer, size int64) error {
-	e.Log(2, "EOSput: %s %d bytes\n", p, size)
+func (e *eosObjects) EOSput(p string, data []byte) error {
+	e.Log(2, "EOSput: %s\n", p)
 	//curl -L -X PUT -T somefile -H 'Remote-User: minio' -sw '%{http_code}' http://eos:8000/eos-path/somefile
 
 	eospath, err := e.EOSpath(p)
@@ -1358,31 +1379,41 @@ func (e *eosObjects) EOSput(p string, buf *bytes.Buffer, size int64) error {
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 	e.Log(3, "  %s\n", eosurl)
 
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			e.Log(2, "    http client wants to redirect\n")
-			e.Log(5, "    %+v\n", req)
-			return nil
-		},
-		Timeout: 0,
-	}
-	//req, _ := http.NewRequest("PUT", eosurl, bytes.NewBuffer(buf))
-	req, _ := http.NewRequest("PUT", eosurl, buf)
-	req.Header.Set("Remote-User", "minio")
-	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = size
-	req.Close = true
-	res, err := client.Do(req)
-	if err != nil {
-		e.Log(2, "%+v\n", err)
+	maxRetry := 10
+	retry := 0
+	for retry < maxRetry {
+		retry = retry + 1
+		client := &http.Client{
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				e.Log(2, "    http client wants to redirect\n")
+				e.Log(5, "    %+v\n", req)
+				return nil
+			},
+			Timeout: 0,
+		}
+		req, _ := http.NewRequest("PUT", eosurl, bytes.NewBuffer(data))
+		req.Header.Set("Remote-User", "minio")
+		req.Header.Set("Content-Type", "application/octet-stream")
+		req.ContentLength = int64(len(data))
+		req.Close = true
+		res, err := client.Do(req)
+		if err != nil {
+			e.Log(2, "%+v\n", err)
+			e.EOSsleep()
+			continue
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 201 {
+			e.Log(2, "%+v\n", res)
+			err = eoserrCantPut
+			e.EOSsleep()
+			continue
+		}
+
+		e.messagebusAddPutJob(p)
 		return err
 	}
-	defer res.Body.Close()
-	if res.StatusCode != 201 {
-		e.Log(2, "%+v\n", res)
-		err = eoserrCantPut
-	}
-	e.messagebusAddPutJob(p)
+	e.Log(2, "ERROR: EOSput failed %d times\n", maxRetry)
 	return err
 }
 
