@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	//"hash/adler32"
 	"io"
 	"io/ioutil"
@@ -35,10 +36,10 @@ import (
 	"github.com/minio/cli"
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/pkg/auth"
-	"github.com/minio/minio/pkg/policy"
-	//"github.com/minio/minio/pkg/policy/condition"
-	"github.com/minio/minio/pkg/hash"
+	miniohash "github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/madmin"
+	"github.com/minio/minio/pkg/policy"
+	"github.com/minio/minio/pkg/policy/condition"
 )
 
 const (
@@ -332,7 +333,26 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 // GetBucketPolicy - Get the container ACL
 func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
 	e.Log(4, "DEBUG: GetBucketPolicy    : %s\n", bucket)
-	return nil, minio.NotImplemented{}
+
+	return &policy.Policy{
+		Version: policy.DefaultVersion,
+		Statements: []policy.Statement{
+			policy.NewStatement(
+				policy.Allow,
+				policy.NewPrincipal("*"),
+				policy.NewActionSet(
+					policy.GetBucketLocationAction,
+					policy.ListBucketAction,
+					policy.GetObjectAction,
+				),
+				policy.NewResourceSet(
+					policy.NewResource(bucket, ""),
+					policy.NewResource(bucket, "*"),
+				),
+				condition.NewFunctions(),
+			),
+		},
+	}, nil
 }
 
 // SetBucketPolicy
@@ -385,7 +405,7 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 }
 
 // PutObject - Create a new blob with the incoming data
-func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *hash.Reader, metadata map[string]string) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *miniohash.Reader, metadata map[string]string) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: PutObject          : %s/%s\n", bucket, object)
 	for key, val := range metadata {
 		e.Log(3, "DEBUG: PutObject            %s = %s\n", key, val)
@@ -393,37 +413,6 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 
 	buf, _ := ioutil.ReadAll(data)
 	etag := hex.EncodeToString(data.MD5Current())
-	/*
-		stat, err := e.EOSfsStat(bucket + "/" + object)
-		if err == nil {
-			adler := fmt.Sprintf("%08x", adler32.Checksum(buf))
-
-			e.Log(2, "       checksum Client    : %s\n", adler)
-			e.Log(2, "       checksum EOS       : %s\n", stat.Checksum())
-			e.Log(2, "       ETag Client        : %s\n", etag)
-			e.Log(2, "       ETag EOS           : %s\n", stat.ETag())
-
-			if etag == stat.ETag() || adler == stat.Checksum() {
-				if etag != stat.ETag() {
-					err = e.EOSsetETag(bucket+"/"+object, etag)
-					if err != nil {
-						e.Log(2, "ERROR: PUT:%+v\n", err)
-						return objInfo, err
-					}
-				}
-				if metadata["content-type"] != stat.ContentType() {
-					err = e.EOSsetContentType(bucket+"/"+object, metadata["content-type"])
-					if err != nil {
-						e.Log(2, "ERROR: PUT:%+v\n", err)
-						return objInfo, err
-					}
-				}
-				e.EOScacheDeleteObject(bucket, object)
-				e.Log(1, "       SAME FILE Skipping\n")
-				return e.GetObjectInfo(ctx, bucket, object)
-			}
-		}
-	*/
 
 	dir := bucket + "/" + filepath.Dir(object)
 	if _, err := e.EOSfsStat(dir); err != nil {
@@ -448,76 +437,6 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 
 	e.EOScacheDeleteObject(bucket, object)
 	return e.GetObjectInfo(ctx, bucket, object)
-}
-
-// PutObjectPart
-func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *hash.Reader) (info minio.PartInfo, err error) {
-	e.Log(1, "DEBUG: PutObjectPart      : %s/%s %s [%d] %d\n", bucket, object, uploadID, partID, data.Size())
-
-	for eosMultiParts[uploadID].parts == nil {
-		e.Log(1, "DEBUG: PutObjectPart called before NewMultipartUpload finished...\n")
-		e.EOSsleep()
-	}
-
-	size := data.Size()
-	buf, _ := ioutil.ReadAll(data)
-	etag := hex.EncodeToString(data.MD5Current())
-
-	newPart := minio.PartInfo{
-		PartNumber:   partID,
-		LastModified: time.Now(),
-		ETag:         etag,
-		Size:         size,
-	}
-
-	eosMultiPartsMutex.Lock()
-	eosMultiParts[uploadID].parts[partID] = newPart
-	eosMultiPartsMutex.Unlock()
-
-	eosMultiParts[uploadID].partsCount++
-	eosMultiParts[uploadID].AddToSize(size)
-
-	if partID == 1 {
-		eosMultiParts[uploadID].firstByte = buf[0]
-		eosMultiParts[uploadID].chunkSize = size
-	} else {
-		for eosMultiParts[uploadID].chunkSize == 0 {
-			e.Log(1, "DEBUG: PutObjectPart        ok, waiting for first chunk...\n")
-			e.EOSsleep()
-		}
-	}
-
-	offset := eosMultiParts[uploadID].chunkSize * int64(partID-1)
-	e.Log(3, "DEBUG: PutObjectPart        offset = %d = %d\n", (partID - 1), offset)
-
-	if e.stage != "" {
-		e.Log(1, "DEBUG: PutObjectPart      : Staging\n")
-
-		//eosMultiParts[uploadID].mutex.Lock()
-		f, err := os.OpenFile(e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-		if err != nil {
-			e.Log(2, "ERROR: Write ContentType: %+v\n", err)
-			return newPart, err
-		}
-		_, err = f.WriteAt(buf, offset)
-		if err != nil {
-			e.Log(2, "ERROR: Write ContentType: %+v\n", err)
-			return newPart, err
-		}
-		f.Close()
-		//eosMultiParts[uploadID].mutex.Unlock()
-
-		/*
-			partFile := fmt.Sprintf("%s/%s/%010d", e.stage, eosMultiParts[uploadID].stagepath, partID)
-			e.Log(1, "DEBUG: PutObjectPart      : write chunk %d to %s\n", offset, partFile)
-			ioutil.WriteFile(partFile, buf, 0644)
-		*/
-
-	} else {
-		err = e.EOSwriteChunk(uploadID, offset, offset+size, "0", buf)
-	}
-
-	return newPart, nil
 }
 
 // DeleteObject - Deletes a blob on azure container
@@ -598,6 +517,8 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		chunkSize:   0,
 		firstByte:   0,
 		contenttype: metadata["content-type"],
+		md5:         md5.New(),
+		md5PartID:   1,
 	}
 
 	if e.stage != "" {
@@ -623,9 +544,86 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 	return uploadID, nil
 }
 
+// PutObjectPart
+func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *miniohash.Reader) (info minio.PartInfo, err error) {
+	e.Log(1, "DEBUG: PutObjectPart      : %s/%s %s [%d] %d\n", bucket, object, uploadID, partID, data.Size())
+
+	for eosMultiParts[uploadID].parts == nil {
+		e.Log(1, "DEBUG: PutObjectPart called before NewMultipartUpload finished...\n")
+		e.EOSsleep()
+	}
+
+	size := data.Size()
+	buf, _ := ioutil.ReadAll(data)
+	etag := hex.EncodeToString(data.MD5Current())
+
+	newPart := minio.PartInfo{
+		PartNumber:   partID,
+		LastModified: time.Now(),
+		ETag:         etag,
+		Size:         size,
+	}
+
+	eosMultiPartsMutex.Lock()
+	eosMultiParts[uploadID].parts[partID] = newPart
+	eosMultiPartsMutex.Unlock()
+
+	if partID == 1 {
+		eosMultiParts[uploadID].firstByte = buf[0]
+		eosMultiParts[uploadID].chunkSize = size
+	} else {
+		for eosMultiParts[uploadID].chunkSize == 0 {
+			e.Log(1, "DEBUG: PutObjectPart        ok, waiting for first chunk...\n")
+			e.EOSsleep()
+		}
+	}
+	eosMultiParts[uploadID].partsCount++
+	eosMultiParts[uploadID].AddToSize(size)
+
+	offset := eosMultiParts[uploadID].chunkSize * int64(partID-1)
+	e.Log(3, "DEBUG: PutObjectPart        offset = %d = %d\n", (partID - 1), offset)
+
+	if e.stage != "" {
+		e.Log(1, "DEBUG: PutObjectPart      : Staging\n")
+
+		f, err := os.OpenFile(e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			e.Log(2, "ERROR: Write ContentType: %+v\n", err)
+			return newPart, err
+		}
+		_, err = f.WriteAt(buf, offset)
+		if err != nil {
+			e.Log(2, "ERROR: Write ContentType: %+v\n", err)
+			return newPart, err
+		}
+		f.Close()
+	} else {
+		go func() {
+			err = e.EOSwriteChunk(uploadID, offset, offset+size, "0", buf)
+		}()
+	}
+
+	go func() {
+		for eosMultiParts[uploadID].md5PartID != partID {
+			e.Log(3, "DEBUG: PutObjectPart waiting for md5PartID = %d, currently = %d\n", eosMultiParts[uploadID].md5PartID, partID)
+			e.EOSsleep()
+		}
+		eosMultiParts[uploadID].md5.Write(buf)
+		eosMultiParts[uploadID].md5PartID++
+	}()
+
+	return newPart, nil
+}
+
 // CompleteMultipartUpload
 func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: CompleteMultipartUpload : %s size : %d firstByte : %d\n", uploadID, eosMultiParts[uploadID].size, eosMultiParts[uploadID].firstByte)
+
+	for eosMultiParts[uploadID].md5PartID != eosMultiParts[uploadID].partsCount+1 {
+		e.Log(3, "DEBUG: PutObjectPart waiting for all md5Parts, %d remaining\n", eosMultiParts[uploadID].partsCount+1-eosMultiParts[uploadID].md5PartID)
+		e.EOSsleep()
+	}
+	etag := hex.EncodeToString(eosMultiParts[uploadID].md5.Sum(nil))
 
 	if e.stage != "" {
 		err = e.EOStouch(uploadID, eosMultiParts[uploadID].size)
@@ -634,18 +632,20 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 			return objInfo, err
 		}
 
-		//this could be done better
-		file, err := os.Open(e.stage + "/" + eosMultiParts[uploadID].stagepath + "/file")
-		if err != nil {
-			e.Log(2, "ERROR: CompleteMultipartUpload: os.Open :%+v\n", err)
-			return objInfo, err
-		}
-		hash := md5.New()
-		if _, err := io.Copy(hash, file); err != nil {
-			e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
-		}
-		file.Close()
-		etag := hex.EncodeToString(hash.Sum(nil))
+		/*
+			//this could be done better
+			file, err := os.Open(e.stage + "/" + eosMultiParts[uploadID].stagepath + "/file")
+			if err != nil {
+				e.Log(2, "ERROR: CompleteMultipartUpload: os.Open :%+v\n", err)
+				return objInfo, err
+			}
+			hash := md5.New()
+			if _, err := io.Copy(hash, file); err != nil {
+				e.Log(2, "ERROR: CompleteMultipartUpload:%+v\n", err)
+			}
+			file.Close()
+			etag := hex.EncodeToString(hash.Sum(nil))
+		*/
 
 		e.Log(2, "ETAG: %s\n", etag)
 		err = e.EOSsetETag(uploadID, etag)
@@ -679,7 +679,7 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		}()
 	} else {
 		err = e.EOSwriteChunk(uploadID, 0, eosMultiParts[uploadID].size, "1", []byte{eosMultiParts[uploadID].firstByte})
-		etag, _ := e.EOScalcMD5(uploadID)
+		//etag, _ := e.EOScalcMD5(uploadID)
 
 		e.Log(2, "ETAG: %s\n", etag)
 		err = e.EOSsetETag(uploadID, etag)
@@ -851,16 +851,21 @@ type eosFileStat struct {
 	checksum    string
 }
 
-func (fs *eosFileStat) Id() int64           { return fs.id }
-func (fs *eosFileStat) Name() string        { return fs.name }
-func (fs *eosFileStat) Size() int64         { return fs.size }
-func (fs *eosFileStat) Mode() os.FileMode   { return fs.mode }
-func (fs *eosFileStat) ModTime() time.Time  { return fs.modTime }
-func (fs *eosFileStat) Sys() interface{}    { return &fs.sys }
-func (fs *eosFileStat) IsDir() bool         { return fs.mode == 0 }
-func (fs *eosFileStat) Checksum() string    { return fs.checksum }
-func (fs *eosFileStat) ETag() string        { return fs.etag }
-func (fs *eosFileStat) ContentType() string { return fs.contenttype }
+func (fs *eosFileStat) Id() int64          { return fs.id }
+func (fs *eosFileStat) Name() string       { return fs.name }
+func (fs *eosFileStat) Size() int64        { return fs.size }
+func (fs *eosFileStat) Mode() os.FileMode  { return fs.mode }
+func (fs *eosFileStat) ModTime() time.Time { return fs.modTime }
+func (fs *eosFileStat) Sys() interface{}   { return &fs.sys }
+func (fs *eosFileStat) IsDir() bool        { return fs.mode == 0 }
+func (fs *eosFileStat) Checksum() string   { return fs.checksum }
+func (fs *eosFileStat) ETag() string       { return fs.etag }
+func (fs *eosFileStat) ContentType() string {
+	if fs.IsDir() {
+		return "application/x-directory"
+	}
+	return fs.contenttype
+}
 
 type eosDirCacheType struct {
 	objects []string
@@ -888,6 +893,8 @@ type eosMultiPartsType struct {
 	firstByte   byte
 	contenttype string
 	stagepath   string
+	md5         hash.Hash
+	md5PartID   int
 	mutex       sync.Mutex
 }
 
