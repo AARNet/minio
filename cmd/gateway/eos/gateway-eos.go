@@ -3,7 +3,7 @@
  *
  * Michael D'Silva
  *
- * This is a gateway for AARNet's CERN's EOS storage backend (v4.2.24)
+ * This is a gateway for AARNet's CERN's EOS storage backend (v4.2.29)
  *
  */
 
@@ -76,7 +76,6 @@ ENVIRONMENT VARIABLES:
      EOSUSER: eos username
      EOSUID: eos user uid
      EOSGID: eos user gid
-     EOSMETA: eos metadata storage (best not to be on eos, huge slowdowns)
      EOSSTAGE: local fast disk to stage multipart uploads
      VOLUME_PATH: path on eos
      HOOKSURL: url to s3 hooks (not setting this will disable hooks)
@@ -97,7 +96,6 @@ EXAMPLES:
      $ export EOSUSER=eos username
      $ export EOSUID=eos user uid
      $ export EOSGID=eos user gid
-     $ export EOSMETA=eos metadata storage
      $ export EOSSTAGE=local fast disk to stage multipart uploads
      $ export VOLUME_PATH=path on eos
      $ export HOOKSURL=url to s3 hooks
@@ -112,7 +110,6 @@ EXAMPLES:
      $ export EOSUSER=eos username
      $ export EOSUID=eos user uid
      $ export EOSGID=eos user gid
-     $ export EOSMETA=eos metadata storage
      $ export EOSSTAGE=local fast disk to stage multipart uploads
      $ export VOLUME_PATH=path on eos
      $ export HOOKSURL=url to s3 hooks
@@ -172,14 +169,6 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	fmt.Printf("%sEOS file hooks url   %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("HOOKSURL"), CLR_N)
 	fmt.Printf("%sEOS SCRIPTS PATH     %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("SCRIPTS"), CLR_N)
 
-	metastore := os.Getenv("EOSMETA")
-	if metastore != "" {
-		fmt.Printf("%sEOS metastore        %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, metastore, CLR_N)
-		os.MkdirAll(metastore, 0700)
-	} else {
-		fmt.Printf("%sEOS metastore        %s: %sDISABLED%s\n", CLR_B, CLR_N, CLR_Y, CLR_N)
-	}
-
 	stage := os.Getenv("EOSSTAGE")
 	if stage != "" {
 		fmt.Printf("%sEOS staging          %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, stage, CLR_N)
@@ -192,16 +181,15 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	fmt.Printf("----------------------\n\n")
 
 	return &eosObjects{
-		loglevel:  loglevel,
-		url:       os.Getenv("EOS"),
-		path:      os.Getenv("VOLUME_PATH"),
-		hookurl:   os.Getenv("HOOKSURL"),
-		scripts:   os.Getenv("SCRIPTS"),
-		user:      os.Getenv("EOSUSER"),
-		uid:       os.Getenv("EOSUID"),
-		gid:       os.Getenv("EOSGID"),
-		metastore: metastore,
-		stage:     stage,
+		loglevel: loglevel,
+		url:      os.Getenv("EOS"),
+		path:     os.Getenv("VOLUME_PATH"),
+		hookurl:  os.Getenv("HOOKSURL"),
+		scripts:  os.Getenv("SCRIPTS"),
+		user:     os.Getenv("EOSUSER"),
+		uid:      os.Getenv("EOSUID"),
+		gid:      os.Getenv("EOSGID"),
+		stage:    stage,
 	}, nil
 }
 
@@ -212,16 +200,15 @@ func (g *EOS) Production() bool {
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
-	loglevel  int
-	url       string
-	path      string
-	hookurl   string
-	scripts   string
-	user      string
-	uid       string
-	gid       string
-	metastore string
-	stage     string
+	loglevel int
+	url      string
+	path     string
+	hookurl  string
+	scripts  string
+	user     string
+	uid      string
+	gid      string
+	stage    string
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -239,7 +226,7 @@ func (e *eosObjects) IsEncryptionSupported() bool {
 	return true
 }
 
-// Shutdown - save any gateway metadata to disk
+// Shutdown - nothing to do really...
 func (e *eosObjects) Shutdown(ctx context.Context) error {
 	return nil
 }
@@ -443,7 +430,6 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
 	e.Log(1, "DEBUG: DeleteObject       : %s/%s\n", bucket, object)
 
-	e.EOSrmMeta(bucket + "/" + object)
 	return e.EOSrm(bucket + "/" + object)
 }
 
@@ -758,8 +744,8 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 		var stat *eosFileStat
 		stat, err = e.EOSfsStat(path + "/" + obj)
 
-		e.Log(3, "  %s, %s, %s = %s\n", bucket, prefix, obj, bucket+"/"+prefix+obj)
-		e.Log(2, "  %s <=> %s etag:%s content-type:%s\n", path+"/"+obj, prefix+obj, stat.ETag(), stat.ContentType())
+		e.Log(5, "  %s, %s, %s = %s\n", bucket, prefix, obj, bucket+"/"+prefix+obj)
+		e.Log(4, "  %s <=> %s etag:%s content-type:%s\n", path+"/"+obj, prefix+obj, stat.ETag(), stat.ContentType())
 		o := minio.ObjectInfo{
 			Bucket:      bucket,
 			Name:        prefix + obj,
@@ -1075,7 +1061,21 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 					obj += "/"
 				}
 				entries = append(entries, obj)
-				meta := e.EOSgetAllMeta(dirPath + "/" + obj)
+
+				//some defaults
+				meta := make(map[string]string)
+				meta["contenttype"] = "application/octet-stream"
+				meta["etag"] = "00000000000000000000000000000000"
+				if _, ok := child["xattr"]; ok {
+					xattr, _ := child["xattr"].(map[string]interface{})
+					//e.Log(4, "xattr: %+v\n", xattr)
+					if contenttype, ok := xattr["minio_contenttype"]; ok {
+						meta["contenttype"] = e.interfaceToString(contenttype)
+					}
+					if etag, ok := xattr["minio_etag"]; ok {
+						meta["etag"] = e.interfaceToString(etag)
+					}
+				}
 
 				e.EOScacheWrite(eospath+obj, eosFileStat{
 					id:          e.interfaceToInt64(child["id"]),
@@ -1116,7 +1116,22 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	}
 
 	e.Log(4, "EOS STAT name:%s mtime:%d mode:%d size:%d\n", e.interfaceToString(m["name"]), e.interfaceToInt64(m["mtime"]), e.interfaceToInt64(m["mode"]), e.interfaceToInt64(m["size"]))
-	meta := e.EOSgetAllMeta(p)
+
+	//some defaults
+	meta := make(map[string]string)
+	meta["contenttype"] = "application/octet-stream"
+	meta["etag"] = "00000000000000000000000000000000"
+	if _, ok := m["xattr"]; ok {
+		xattr, _ := m["xattr"].(map[string]interface{})
+		//e.Log(4, "xattr: %+v\n", xattr)
+		if contenttype, ok := xattr["minio_contenttype"]; ok {
+			meta["contenttype"] = e.interfaceToString(contenttype)
+		}
+		if etag, ok := xattr["minio_etag"]; ok {
+			meta["etag"] = e.interfaceToString(etag)
+		}
+	}
+
 	fi := eosFileStat{
 		id:          e.interfaceToInt64(m["id"]),
 		name:        e.interfaceToString(m["name"]),
@@ -1273,107 +1288,11 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 		//return eoserrSetMeta
 	}
 
-	if e.metastore != "" {
-		e.Log(2, "DEBUG: metafile: %s\n", e.metastore+"/"+p+"/"+key)
-		os.MkdirAll(e.metastore+"/"+p, 0700)
-		ioutil.WriteFile(e.metastore+"/"+p+"/"+key, []byte(value), 0644)
-	}
-
 	return nil
 }
 
 func (e *eosObjects) EOSsetContentType(p, ct string) error { return e.EOSsetMeta(p, "contenttype", ct) }
 func (e *eosObjects) EOSsetETag(p, etag string) error      { return e.EOSsetMeta(p, "etag", etag) }
-
-func (e *eosObjects) EOSrmMeta(p string) error {
-	if e.metastore == "" {
-		return nil
-	}
-
-	err := os.RemoveAll(e.metastore + "/" + p)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (e *eosObjects) EOSgetAllMeta(p string) map[string]string {
-	meta := make(map[string]string)
-
-	//some defaults
-	meta["contenttype"] = "application/octet-stream"
-	meta["etag"] = "00000000000000000000000000000000"
-
-	// pull from local metastore
-	if e.metastore != "" {
-		if data, _ := ioutil.ReadFile(e.metastore + "/" + p + "/contenttype"); len(data) > 0 {
-			meta["contenttype"] = string(data)
-		}
-
-		if data, _ := ioutil.ReadFile(e.metastore + "/" + p + "/etag"); len(data) > 0 {
-			meta["etag"] = string(data)
-		}
-
-		return meta
-	}
-
-	// pull from EOS
-	eospath, err := e.EOSpath(p)
-	if err != nil {
-		return meta
-	}
-	if strings.HasSuffix(eospath, "/") {
-		return meta
-	}
-
-	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=ls&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
-	//e.Log(5,"body: %s\n", string(body))
-	if err != nil {
-		return meta
-	}
-
-	if e.interfaceToString(m["errormsg"]) != "" {
-		return meta
-	}
-
-	//map[attr:map[get:[map[minio:map[etag:"34918ce33d8d91cc8256d260cbd04bc1"]]]]
-	if j, ok := m["attr"]; ok {
-		jattr := m["attr"].(map[string]interface{})
-		err = json.Unmarshal([]byte(body), &j)
-		if err != nil {
-			//e.Log(2,"ERROR: [attr] missing\n")
-			return meta
-		}
-
-		if j, ok = jattr["ls"]; ok {
-			err = json.Unmarshal([]byte(body), &j)
-			if err != nil {
-				//e.Log(2,"ERROR: [attr][ls] missing\n")
-				return meta
-			}
-			if jattr["ls"] == nil {
-				//e.Log(2,"ERROR: [attr][ls] null\n")
-				return meta
-			}
-			jls := jattr["ls"].([]interface{})
-			if len(jls) == 0 {
-				//e.Log(2,"ERROR: [attr][ls][] empty\n")
-				return meta
-			}
-
-			for _, jmetai := range jls {
-				jmeta, _ := jmetai.(map[string]interface{})
-				for key, _ := range jmeta {
-					if strings.HasPrefix(key, "minio_") {
-						meta[strings.TrimPrefix(key, "minio_")] = strings.Trim(e.interfaceToString(jmeta[key]), "\"")
-					}
-				}
-			}
-		}
-	}
-	return meta
-}
 
 func (e *eosObjects) EOSput(p string, data []byte) error {
 	e.Log(2, "EOSput: %s\n", p)
