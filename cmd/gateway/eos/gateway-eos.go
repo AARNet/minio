@@ -216,11 +216,6 @@ func (e *eosObjects) IsNotificationSupported() bool {
 	return false
 }
 
-// ClearLocks - Clear namespace locks held in object layer
-func (e *eosObjects) ClearLocks(ctx context.Context, info []minio.VolumeLockInfo) error {
-	return minio.NotImplemented{}
-}
-
 // IsEncryptionSupported returns whether server side encryption is applicable for this layer.
 func (e *eosObjects) IsEncryptionSupported() bool {
 	return true
@@ -786,11 +781,6 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 
 /////////////////////////////////////////////////////////////////////////////////////////////
 //  Don't thing we need this...
-
-// ListLocks - List namespace locks held in object layer
-func (e *eosObjects) ListLocks(ctx context.Context, bucket, prefix string, duration time.Duration) ([]minio.VolumeLockInfo, error) {
-	return []minio.VolumeLockInfo{}, minio.NotImplemented{}
-}
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
