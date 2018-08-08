@@ -265,18 +265,6 @@ func (fs *FSObjects) StorageInfo(ctx context.Context) StorageInfo {
 	return storageInfo
 }
 
-// Locking operations
-
-// ListLocks - List namespace locks held in object layer
-func (fs *FSObjects) ListLocks(ctx context.Context, bucket, prefix string, duration time.Duration) ([]VolumeLockInfo, error) {
-	return []VolumeLockInfo{}, NotImplemented{}
-}
-
-// ClearLocks - Clear namespace locks held in object layer
-func (fs *FSObjects) ClearLocks(ctx context.Context, info []VolumeLockInfo) error {
-	return NotImplemented{}
-}
-
 /// Bucket operations
 
 // getBucketDir - will convert incoming bucket names to
@@ -968,13 +956,15 @@ func (fs *FSObjects) DeleteObject(ctx context.Context, bucket, object string) er
 // is a leaf or non-leaf entry.
 func (fs *FSObjects) listDirFactory(isLeaf isLeafFunc) listDirFunc {
 	// listDir - lists all the entries at a given prefix and given entry in the prefix.
-	listDir := func(bucket, prefixDir, prefixEntry string) (entries []string, delayIsLeaf bool, err error) {
+	listDir := func(bucket, prefixDir, prefixEntry string) (entries []string, delayIsLeaf bool) {
+		var err error
 		entries, err = readDir(pathJoin(fs.fsPath, bucket, prefixDir))
 		if err != nil {
-			return nil, false, err
+			logger.LogIf(context.Background(), err)
+			return
 		}
 		entries, delayIsLeaf = filterListEntries(bucket, prefixDir, entries, prefixEntry, isLeaf)
-		return entries, delayIsLeaf, nil
+		return entries, delayIsLeaf
 	}
 
 	// Return list factory instance.

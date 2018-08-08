@@ -375,18 +375,18 @@ func (e BackendDown) Error() string {
 
 // isErrIncompleteBody - Check if error type is IncompleteBody.
 func isErrIncompleteBody(err error) bool {
-	switch err.(type) {
-	case IncompleteBody:
-		return true
-	}
-	return false
+	_, ok := err.(IncompleteBody)
+	return ok
 }
 
 // isErrObjectNotFound - Check if error type is ObjectNotFound.
 func isErrObjectNotFound(err error) bool {
-	switch err.(type) {
-	case ObjectNotFound:
-		return true
-	}
-	return false
+	_, ok := err.(ObjectNotFound)
+	return ok
+}
+
+// isInsufficientReadQuorum - Check if error type is InsufficientReadQuorum.
+func isInsufficientReadQuorum(err error) bool {
+	_, ok := err.(InsufficientReadQuorum)
+	return ok
 }
