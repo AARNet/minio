@@ -77,6 +77,7 @@ ENVIRONMENT VARIABLES:
      EOSUID: eos user uid
      EOSGID: eos user gid
      EOSSTAGE: local fast disk to stage multipart uploads
+     EOSREADONLY: true/false
      VOLUME_PATH: path on eos
      HOOKSURL: url to s3 hooks (not setting this will disable hooks)
      SCRIPTS: path to xroot script
@@ -162,6 +163,16 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	const CLR_G = "\x1b[32;1m"
 	const CLR_N = "\x1b[0m"
 
+	stage := os.Getenv("EOSSTAGE")
+	if stage != "" {
+		os.MkdirAll(stage, 0700)
+	}
+
+	readonly := false
+	if os.Getenv("EOSREADONLY") == "true" {
+		readonly = true
+	}
+
 	fmt.Printf("------%sEOS CONFIG%s------\n", CLR_G, CLR_N)
 	fmt.Printf("%sEOS URL              %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("EOS"), CLR_N)
 	fmt.Printf("%sEOS VOLUME PATH      %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("VOLUME_PATH"), CLR_N)
@@ -169,12 +180,14 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	fmt.Printf("%sEOS file hooks url   %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("HOOKSURL"), CLR_N)
 	fmt.Printf("%sEOS SCRIPTS PATH     %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("SCRIPTS"), CLR_N)
 
-	stage := os.Getenv("EOSSTAGE")
 	if stage != "" {
 		fmt.Printf("%sEOS staging          %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, stage, CLR_N)
-		os.MkdirAll(stage, 0700)
 	} else {
 		fmt.Printf("%sEOS staging          %s: %sDISABLED%s\n", CLR_B, CLR_N, CLR_Y, CLR_N)
+	}
+
+	if readonly {
+		fmt.Printf("%sEOS read only mode   %s: %sENABLED%s\n", CLR_B, CLR_N, CLR_W, CLR_N)
 	}
 
 	fmt.Printf("%sEOS LOG LEVEL        %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, loglevel, CLR_N)
@@ -190,6 +203,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		uid:      os.Getenv("EOSUID"),
 		gid:      os.Getenv("EOSGID"),
 		stage:    stage,
+		readonly: readonly,
 	}, nil
 }
 
@@ -209,6 +223,7 @@ type eosObjects struct {
 	uid      string
 	gid      string
 	stage    string
+	readonly bool
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -289,6 +304,10 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
 	e.Log(1, "DEBUG: MakeBucketWithLocation: %s %s\n", bucket, location)
 
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
+
 	// Verify if bucket is valid.
 	if !minio.IsValidBucketName(bucket) {
 		return minio.BucketNameInvalid{Bucket: bucket}
@@ -308,6 +327,10 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, locatio
 // DeleteBucket - delete a container
 func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 	e.Log(1, "DEBUG: DeleteBucket       : %s\n", bucket)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
 
 	return e.EOSrmdir(bucket)
 }
@@ -340,12 +363,22 @@ func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*polic
 // SetBucketPolicy
 func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketPolicy *policy.Policy) error {
 	e.Log(4, "DEBUG: SetBucketPolicy    : %s, %+v\n", bucket, bucketPolicy)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
+
 	return minio.NotImplemented{}
 }
 
 // DeleteBucketPolicy - Set the container ACL to "private"
 func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
 	e.Log(4, "DEBUG: DeleteBucketPolicy : %s\n", bucket)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
+
 	return minio.NotImplemented{}
 }
 
@@ -355,6 +388,10 @@ func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) erro
 // CopyObject - Copies a blob from source container to destination container.
 func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo minio.ObjectInfo) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: CopyObject         : %s -> %s : %+v\n", srcBucket+"/"+srcObject, destBucket+"/"+destObject, srcInfo)
+
+	if e.readonly {
+		return objInfo, minio.NotImplemented{}
+	}
 
 	dir := destBucket + "/" + filepath.Dir(destObject)
 	if _, err := e.EOSfsStat(dir); err != nil {
@@ -383,12 +420,21 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 
 // CopyObjectPart creates a part in a multipart upload by copying
 func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo) (p minio.PartInfo, err error) {
+	if e.readonly {
+		return p, minio.NotImplemented{}
+	}
+
 	return p, minio.NotImplemented{}
 }
 
 // PutObject - Create a new blob with the incoming data
 func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *miniohash.Reader, metadata map[string]string) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: PutObject          : %s/%s\n", bucket, object)
+
+	if e.readonly {
+		return objInfo, minio.NotImplemented{}
+	}
+
 	for key, val := range metadata {
 		e.Log(3, "DEBUG: PutObject            %s = %s\n", key, val)
 	}
@@ -424,6 +470,10 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 // DeleteObject - Deletes a blob on azure container
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
 	e.Log(1, "DEBUG: DeleteObject       : %s/%s\n", bucket, object)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
 
 	return e.EOSrm(bucket + "/" + object)
 }
@@ -483,6 +533,10 @@ func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, k
 func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, metadata map[string]string) (uploadID string, err error) {
 	e.Log(1, "DEBUG: NewMultipartUpload : %s/%s\n           +%v\n", bucket, object, metadata)
 
+	if e.readonly {
+		return "", minio.NotImplemented{}
+	}
+
 	uploadID = bucket + "/" + object
 
 	dir := bucket + "/" + filepath.Dir(object)
@@ -528,6 +582,10 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 // PutObjectPart
 func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *miniohash.Reader) (info minio.PartInfo, err error) {
 	e.Log(1, "DEBUG: PutObjectPart      : %s/%s %s [%d] %d\n", bucket, object, uploadID, partID, data.Size())
+
+	if e.readonly {
+		return info, minio.NotImplemented{}
+	}
 
 	for eosMultiParts[uploadID].parts == nil {
 		e.Log(1, "DEBUG: PutObjectPart called before NewMultipartUpload finished...\n")
@@ -599,6 +657,10 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 // CompleteMultipartUpload
 func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: CompleteMultipartUpload : %s size : %d firstByte : %d\n", uploadID, eosMultiParts[uploadID].size, eosMultiParts[uploadID].firstByte)
+
+	if e.readonly {
+		return objInfo, minio.NotImplemented{}
+	}
 
 	for eosMultiParts[uploadID].md5PartID != eosMultiParts[uploadID].partsCount+1 {
 		e.Log(3, "DEBUG: PutObjectPart waiting for all md5Parts, %d remaining\n", eosMultiParts[uploadID].partsCount+1-eosMultiParts[uploadID].md5PartID)
@@ -685,6 +747,10 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 //AbortMultipartUpload
 func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string) (err error) {
 	e.Log(1, "DEBUG: AbortMultipartUpload : %s/%s %s\n", bucket, object, uploadID)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
 
 	_ = e.EOSrm(bucket + "/" + object)
 
@@ -780,7 +846,7 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
-//  Don't thing we need this...
+//  Don't think we need this...
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
