@@ -1181,10 +1181,16 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 		xattr, _ := m["xattr"].(map[string]interface{})
 		//e.Log(4, "xattr: %+v\n", xattr)
 		if contenttype, ok := xattr["minio_contenttype"]; ok {
-			meta["contenttype"] = e.interfaceToString(contenttype)
+			ct := e.interfaceToString(contenttype)
+			if ct != "" {
+				meta["contenttype"] = ct
+			}
 		}
 		if etag, ok := xattr["minio_etag"]; ok {
-			meta["etag"] = e.interfaceToString(etag)
+			et := e.interfaceToString(etag)
+			if et != "" {
+				meta["etag"] = et
+			}
 		}
 	}
 
