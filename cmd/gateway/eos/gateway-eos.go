@@ -901,7 +901,12 @@ func (fs *eosFileStat) ModTime() time.Time { return fs.modTime }
 func (fs *eosFileStat) Sys() interface{}   { return &fs.sys }
 func (fs *eosFileStat) IsDir() bool        { return fs.mode == 0 }
 func (fs *eosFileStat) Checksum() string   { return fs.checksum }
-func (fs *eosFileStat) ETag() string       { return fs.etag }
+func (fs *eosFileStat) ETag() string {
+	if fs.IsDir() {
+		return "00000000000000000000000000000000"
+	}
+	return fs.etag
+}
 func (fs *eosFileStat) ContentType() string {
 	if fs.IsDir() {
 		return "application/x-directory"
