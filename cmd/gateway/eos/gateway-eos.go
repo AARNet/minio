@@ -497,9 +497,12 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 
 // GetObjectInfo - reads blob metadata properties and replies back minio.ObjectInfo
 func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (objInfo minio.ObjectInfo, err error) {
-	e.Log(1, "DEBUG: GetObjectInfo      : %s/%s\n", bucket, object)
 
-	stat, err := e.EOSfsStat(bucket + "/" + object)
+	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
+
+	e.Log(1, "DEBUG: GetObjectInfo      : %s\n", path)
+
+	stat, err := e.EOSfsStat(path)
 
 	if err != nil {
 		e.Log(4, "%+v\n", err)
@@ -519,7 +522,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (
 		ContentType: stat.ContentType(),
 	}
 
-	e.Log(2, "  %s etag:%s content-type:%s\n", bucket+"/"+object, stat.ETag(), stat.ContentType())
+	e.Log(2, "  %s etag:%s content-type:%s\n", path, stat.ETag(), stat.ContentType())
 	return objInfo, err
 }
 
@@ -1019,6 +1022,7 @@ func (e *eosObjects) EOSpath(path string) (eosPath string, err error) {
 		return "", eoserrFilePathBad
 	}
 
+	path = strings.Replace(path, "//", "/", -1)
 	eosPath = strings.TrimSuffix(e.path+"/"+path, ".")
 	return eosPath, nil
 }
