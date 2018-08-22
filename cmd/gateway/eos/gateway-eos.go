@@ -420,6 +420,8 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 
 // CopyObjectPart creates a part in a multipart upload by copying
 func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo) (p minio.PartInfo, err error) {
+	e.Log(1, "DEBUG: CopyObjectPart     : %s/%s to %s/%s\n", srcBucket, srcObject, destBucket, destObject)
+
 	if e.readonly {
 		return p, minio.NotImplemented{}
 	}
@@ -480,6 +482,10 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 
 // GetObject - reads an object from EOS
 func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string) error {
+	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
+
+	e.Log(1, "DEBUG: GetObject          : %s from %d for %d byte(s)\n", path, startOffset, length)
+
 	if etag != "" {
 		objInfo, err := e.GetObjectInfo(ctx, bucket, object)
 		if err != nil {
@@ -490,7 +496,7 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 		}
 	}
 
-	err := e.EOSreadChunk(bucket+"/"+object, startOffset, length, writer)
+	err := e.EOSreadChunk(path, startOffset, length, writer)
 
 	return err
 }
@@ -784,7 +790,7 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 
 // ListObjects - lists all blobs in a container filtered by prefix and marker
 func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
-	e.Log(1, "DEBUG ListObjects         : %s, %s, %s, %s, %d\n", bucket, prefix, marker, delimiter, maxKeys)
+	e.Log(1, "DEBUG: ListObjects         : %s, %s, %s, %s, %d\n", bucket, prefix, marker, delimiter, maxKeys)
 	if delimiter == "/" && prefix == "/" {
 		e.Log(2, "  delimiter and prefix is slash\n")
 		return result, nil
@@ -845,6 +851,7 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 
 // ListObjectsV2 - list all blobs in a container filtered by prefix
 func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (result minio.ListObjectsV2Info, err error) {
+	e.Log(1, "DEBUG: ListObjectsV2       : %s, %s, %s, %s, %d\n", bucket, prefix, continuationToken, delimiter, maxKeys)
 	return result, minio.NotImplemented{}
 }
 
@@ -853,31 +860,37 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
+	e.Log(4, "DEBUG: HealFormat\n")
 	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
 
 // ReloadFormat - no-op for fs
 func (e *eosObjects) ReloadFormat(ctx context.Context, dryRun bool) error {
+	e.Log(4, "DEBUG: ReloadFormat\n")
 	return minio.NotImplemented{}
 }
 
 // ListObjectsHeal - list all objects to be healed.
 func (e *eosObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi minio.ListObjectsInfo, err error) {
+	e.Log(4, "DEBUG: ListObjectsHeal\n")
 	return loi, minio.NotImplemented{}
 }
 
 // HealObject - no-op for fs.
 func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool) (res madmin.HealResultItem, err error) {
+	e.Log(4, "DEBUG: HealObject\n")
 	return res, minio.NotImplemented{}
 }
 
 // ListBucketsHeal - list all buckets to be healed
 func (e *eosObjects) ListBucketsHeal(ctx context.Context) ([]minio.BucketInfo, error) {
+	e.Log(4, "DEBUG: ListBucketsHeal\n")
 	return []minio.BucketInfo{}, minio.NotImplemented{}
 }
 
 // HealBucket - heals inconsistent buckets and bucket metadata on all sets.
 func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool) (results []madmin.HealResultItem, err error) {
+	e.Log(4, "DEBUG: HealBucket\n")
 	return nil, minio.NotImplemented{}
 }
 
