@@ -102,7 +102,7 @@ func (xl xlObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBuc
 	_, modTime := listOnlineDisks(storageDisks, metaArr, errs)
 
 	// Pick latest valid metadata.
-	xlMeta, err := pickValidXLMeta(ctx, metaArr, modTime)
+	xlMeta, err := pickValidXLMeta(ctx, metaArr, modTime, readQuorum)
 	if err != nil {
 		return oi, toObjectErr(err, srcBucket, srcObject)
 	}
@@ -221,7 +221,7 @@ func (xl xlObjects) getObject(ctx context.Context, bucket, object string, startO
 	onlineDisks, modTime := listOnlineDisks(xl.getDisks(), metaArr, errs)
 
 	// Pick latest valid metadata.
-	xlMeta, err := pickValidXLMeta(ctx, metaArr, modTime)
+	xlMeta, err := pickValidXLMeta(ctx, metaArr, modTime, readQuorum)
 	if err != nil {
 		return err
 	}
@@ -402,7 +402,7 @@ func (xl xlObjects) getObjectInfo(ctx context.Context, bucket, object string) (o
 	modTime, _ := commonTime(modTimes)
 
 	// Pick latest valid metadata.
-	xlMeta, err := pickValidXLMeta(ctx, metaArr, modTime)
+	xlMeta, err := pickValidXLMeta(ctx, metaArr, modTime, readQuorum)
 	if err != nil {
 		return objInfo, err
 	}
@@ -462,7 +462,6 @@ func rename(ctx context.Context, disks []StorageAPI, srcBucket, srcEntry, dstBuc
 			defer wg.Done()
 			if err := disk.RenameFile(srcBucket, srcEntry, dstBucket, dstEntry); err != nil {
 				if !IsErrIgnored(err, ignoredErr...) {
-					logger.LogIf(ctx, err)
 					errs[index] = err
 				}
 			}
@@ -743,7 +742,6 @@ func (xl xlObjects) putObject(ctx context.Context, bucket string, object string,
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
 		if xl.isObject(bucket, object) {
-			logger.LogIf(ctx, ObjectAlreadyExists{Bucket: bucket, Object: object})
 			return ObjectInfo{}, ObjectAlreadyExists{Bucket: bucket, Object: object}
 		}
 	}
@@ -807,7 +805,6 @@ func (xl xlObjects) deleteObject(ctx context.Context, bucket, object string) err
 
 	for index, disk := range xl.getDisks() {
 		if disk == nil {
-			logger.LogIf(ctx, errDiskNotFound)
 			dErrs[index] = errDiskNotFound
 			continue
 		}

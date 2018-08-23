@@ -108,7 +108,6 @@ func healBucket(ctx context.Context, storageDisks []StorageAPI, bucket string, w
 	// Make a volume entry on all underlying storage disks.
 	for index, disk := range storageDisks {
 		if disk == nil {
-			logger.LogIf(ctx, errDiskNotFound)
 			dErrs[index] = errDiskNotFound
 			beforeState[index] = madmin.DriveStateOffline
 			afterState[index] = madmin.DriveStateOffline
@@ -405,7 +404,7 @@ func healObject(ctx context.Context, storageDisks []StorageAPI, bucket string, o
 
 	// Latest xlMetaV1 for reference. If a valid metadata is not
 	// present, it is as good as object not found.
-	latestMeta, pErr := pickValidXLMeta(ctx, partsMetadata, modTime)
+	latestMeta, pErr := pickValidXLMeta(ctx, partsMetadata, modTime, quorum)
 	if pErr != nil {
 		return result, toObjectErr(pErr, bucket, object)
 	}
@@ -609,16 +608,28 @@ func (xl xlObjects) healObjectDir(ctx context.Context, bucket, object string, dr
 // and later the disk comes back up again, heal on the object
 // should delete it.
 func (xl xlObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool) (hr madmin.HealResultItem, err error) {
+
+	// Create context that also contains information about the object and bucket.
+	// The top level handler might not have this information.
+	reqInfo := logger.GetReqInfo(ctx)
+	var newReqInfo *logger.ReqInfo
+	if reqInfo != nil {
+		newReqInfo = logger.NewReqInfo(reqInfo.RemoteHost, reqInfo.UserAgent, reqInfo.RequestID, reqInfo.API, bucket, object)
+	} else {
+		newReqInfo = logger.NewReqInfo("", "", "", "Heal", bucket, object)
+	}
+	healCtx := logger.SetReqInfo(context.Background(), newReqInfo)
+
 	// Healing directories handle it separately.
 	if hasSuffix(object, slashSeparator) {
-		return xl.healObjectDir(ctx, bucket, object, dryRun)
+		return xl.healObjectDir(healCtx, bucket, object, dryRun)
 	}
 
 	// FIXME: Metadata is read again in the healObject() call below.
 	// Read metadata files from all the disks
-	partsMetadata, errs := readAllXLMetadata(ctx, xl.getDisks(), bucket, object)
+	partsMetadata, errs := readAllXLMetadata(healCtx, xl.getDisks(), bucket, object)
 
-	latestXLMeta, err := getLatestXLMeta(ctx, partsMetadata, errs)
+	latestXLMeta, err := getLatestXLMeta(healCtx, partsMetadata, errs)
 	if err != nil {
 		return hr, toObjectErr(err, bucket, object)
 	}
@@ -631,5 +642,5 @@ func (xl xlObjects) HealObject(ctx context.Context, bucket, object string, dryRu
 	defer objectLock.RUnlock()
 
 	// Heal the object.
-	return healObject(ctx, xl.getDisks(), bucket, object, latestXLMeta.Erasure.DataBlocks, dryRun)
+	return healObject(healCtx, xl.getDisks(), bucket, object, latestXLMeta.Erasure.DataBlocks, dryRun)
 }

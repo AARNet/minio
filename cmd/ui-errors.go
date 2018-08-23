@@ -29,6 +29,12 @@ var (
 		"Browser can only accept `on` and `off` values. To disable web browser access, set this value to `off`",
 	)
 
+	uiErrInvalidErasureSetSize = newUIErrFn(
+		"Invalid erasure set size",
+		"Please check the passed value",
+		"Erasure set can only accept any of [4, 6, 8, 10, 12, 14, 16] values.",
+	)
+
 	uiErrInvalidWormValue = newUIErrFn(
 		"Invalid WORM value",
 		"Please check the passed value",
@@ -66,10 +72,16 @@ var (
 Secret key should be in between 8 and 40 characters.`,
 	)
 
-	uiErrEnvCredentialsMissing = newUIErrFn(
+	uiErrEnvCredentialsMissingGateway = newUIErrFn(
 		"Credentials missing",
 		"Please provide correct credentials",
 		`Access key and Secret key should be specified in Gateway mode from environment variables MINIO_ACCESS_KEY and MINIO_SECRET_KEY respectively.`,
+	)
+
+	uiErrEnvCredentialsMissingServer = newUIErrFn(
+		"Credentials missing",
+		"Please provide correct credentials",
+		`Access key and Secret key should be specified in distributed server mode from environment variables MINIO_ACCESS_KEY and MINIO_SECRET_KEY respectively.`,
 	)
 
 	uiErrInvalidErasureEndpoints = newUIErrFn(

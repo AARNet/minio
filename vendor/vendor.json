@@ -402,9 +402,82 @@
 			"revisionTime": "2018-05-22T10:52:15Z"
 		},
 		{
+			"checksumSHA1": "dVqCmA2mEDIDr8tEXu4gTaK9uPs=",
+			"path": "github.com/hashicorp/errwrap",
+			"revision": "d6c0cd88035724dd42e0f335ae30161c20575ecc",
+			"revisionTime": "2018-07-15T04:49:06Z"
+		},
+		{
+			"checksumSHA1": "YAq1rqZIp+M74Q+jMBQkkMKm3VM=",
+			"path": "github.com/hashicorp/go-cleanhttp",
+			"revision": "d5fe4b57a186c716b0e00b8c301cbd9b4182694d",
+			"revisionTime": "2017-12-18T14:54:08Z"
+		},
+		{
+			"checksumSHA1": "K395EgrkkWtEFyuAv3WvPF95WN8=",
+			"path": "github.com/hashicorp/go-multierror",
+			"revision": "3d5d8f294aa03d8e98859feac328afbdf1ae0703",
+			"revisionTime": "2018-07-17T15:01:48Z"
+		},
+		{
+			"checksumSHA1": "/yKfFSspjuDzyOe/bBslrPzyfYM=",
+			"path": "github.com/hashicorp/go-retryablehttp",
+			"revision": "e651d75abec6fbd4f2c09508f72ae7af8a8b7171",
+			"revisionTime": "2018-07-18T19:50:05Z"
+		},
+		{
+			"checksumSHA1": "A1PcINvF3UiwHRKn8UcgARgvGRs=",
+			"path": "github.com/hashicorp/go-rootcerts",
+			"revision": "6bb64b370b90e7ef1fa532be9e591a81c3493e00",
+			"revisionTime": "2016-05-03T14:34:40Z"
+		},
+		{
+			"checksumSHA1": "J47ySO1q0gcnmoMnir1q1loKzCk=",
+			"origin": "github.com/hashicorp/vault/vendor/github.com/hashicorp/go-sockaddr",
+			"path": "github.com/hashicorp/go-sockaddr",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
 			"path": "github.com/hashicorp/go-version",
 			"revision": "7e3c02b30806fa5779d3bdfc152ce4c6f40e7b38",
 			"revisionTime": "2016-01-19T13:13:26-08:00"
+		},
+		{
+			"checksumSHA1": "nBmnbC438E5CNF1kRCnivCnqsEM=",
+			"path": "github.com/hashicorp/vault/api",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
+			"checksumSHA1": "bSdPFOHaTwEvM4PIvn0PZfn75jM=",
+			"path": "github.com/hashicorp/vault/helper/compressutil",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
+			"checksumSHA1": "RlqPBLOexQ0jj6jomhiompWKaUg=",
+			"path": "github.com/hashicorp/vault/helper/hclutil",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
+			"checksumSHA1": "POgkM3GrjRFw6H3sw95YNEs552A=",
+			"path": "github.com/hashicorp/vault/helper/jsonutil",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
+			"checksumSHA1": "HA2MV/2XI0HcoThSRxQCaBZR2ps=",
+			"path": "github.com/hashicorp/vault/helper/parseutil",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
+			"checksumSHA1": "iwXQDzHqTFsjJW2ehYae0oLo2Ts=",
+			"path": "github.com/hashicorp/vault/helper/strutil",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
 		},
 		{
 			"checksumSHA1": "K6exl2ouL7d8cR2i378EzZOdRVI=",
@@ -461,6 +534,12 @@
 			"revisionTime": "2018-01-16T16:19:11Z"
 		},
 		{
+			"checksumSHA1": "mA7isU/nIAT5ytwIzK65H0vlVqI=",
+			"path": "github.com/klauspost/compress/flate",
+			"revision": "5fb1f31b0a61e9858f12f39266e059848a5f1cea",
+			"revisionTime": "2018-04-02T19:26:10Z"
+		},
+		{
 			"path": "github.com/klauspost/cpuid",
 			"revision": "349c675778172472f5e8f3a3e0fe187e302e5a10",
 			"revisionTime": "2016-01-06T11:44:51+01:00"
@@ -470,6 +549,12 @@
 			"path": "github.com/klauspost/crc32",
 			"revision": "cb6bfca970f6908083f26f39a79009d608efd5cd",
 			"revisionTime": "2016-10-16T15:41:25Z"
+		},
+		{
+			"checksumSHA1": "o/9oGuVccfxPYuRdzvW0lv7Zbzg=",
+			"path": "github.com/klauspost/pgzip",
+			"revision": "90b2c57fba35a1dd05cb40f9200722763808d99b",
+			"revisionTime": "2018-06-06T15:09:39Z"
 		},
 		{
 			"checksumSHA1": "ehsrWipiGIWqa4To8TmelIx06vI=",
@@ -620,6 +705,12 @@
 			"revisionTime": "2016-12-03T19:45:07Z"
 		},
 		{
+			"checksumSHA1": "4Js6Jlu93Wa0o6Kjt393L9Z7diE=",
+			"path": "github.com/mitchellh/mapstructure",
+			"revision": "281073eb9eb092240d33ef253c404f1cca550309",
+			"revisionTime": "2015-07-17T05:11:58Z"
+		},
+		{
 			"checksumSHA1": "zvQr4zOz1/g/Fui6co0sctxrJ28=",
 			"path": "github.com/nats-io/go-nats",
 			"revision": "6b6bf392d34d01f57cc563ae123f00c13778bd57",
@@ -755,6 +846,13 @@
 			"revisionTime": "2016-06-18T12:32:21-07:00"
 		},
 		{
+			"checksumSHA1": "6JP37UqrI0H80Gpk0Y2P+KXgn5M=",
+			"origin": "github.com/hashicorp/vault/vendor/github.com/ryanuber/go-glob",
+			"path": "github.com/ryanuber/go-glob",
+			"revision": "f348177b5d55dbd38d039b814bf34cbc9cfc093b",
+			"revisionTime": "2018-07-27T12:33:20Z"
+		},
+		{
 			"checksumSHA1": "iqUXcP3VA+G1/gVLRpQpBUt/BuA=",
 			"path": "github.com/satori/uuid",
 			"revision": "5bf94b69c6b68ee1b541973bb8e1144db23a194b",
@@ -789,6 +887,48 @@
 			"path": "github.com/tidwall/match",
 			"revision": "173748da739a410c5b0b813b956f89ff94730b4c",
 			"revisionTime": "2016-08-30T17:39:30Z"
+		},
+		{
+			"checksumSHA1": "MWqyOvDMkW+XYe2RJ5mplvut+aE=",
+			"path": "github.com/ugorji/go/codec",
+			"revision": "ded73eae5db7e7a0ef6f55aace87a2873c5d2b74",
+			"revisionTime": "2017-01-07T13:32:03Z"
+		},
+		{
+			"checksumSHA1": "R/Mpe0uUp5HeqWrdrH5qE2qZuE8=",
+			"path": "github.com/valyala/tcplisten",
+			"revision": "ceec8f93295a060cdb565ec25e4ccf17941dbd55",
+			"revisionTime": "2016-11-14T21:01:44Z"
+		},
+		{
+			"checksumSHA1": "6ksZHYhLc3yOzTbcWKb3bDENhD4=",
+			"path": "github.com/xwb1989/sqlparser",
+			"revision": "120387863bf27d04bc07db8015110a6e96d0146c",
+			"revisionTime": "2018-06-06T15:21:19Z"
+		},
+		{
+			"checksumSHA1": "L/Q8Ylbo+wnj5whDFfMxxwyxmdo=",
+			"path": "github.com/xwb1989/sqlparser/dependency/bytes2",
+			"revision": "120387863bf27d04bc07db8015110a6e96d0146c",
+			"revisionTime": "2018-06-06T15:21:19Z"
+		},
+		{
+			"checksumSHA1": "f9K0yQdwD0Z2yc3bmDw2uqXt4hU=",
+			"path": "github.com/xwb1989/sqlparser/dependency/hack",
+			"revision": "120387863bf27d04bc07db8015110a6e96d0146c",
+			"revisionTime": "2018-06-06T15:21:19Z"
+		},
+		{
+			"checksumSHA1": "xpu1JU/VZ7gGNbU5Ol9Nm1oS4tY=",
+			"path": "github.com/xwb1989/sqlparser/dependency/querypb",
+			"revision": "120387863bf27d04bc07db8015110a6e96d0146c",
+			"revisionTime": "2018-06-06T15:21:19Z"
+		},
+		{
+			"checksumSHA1": "KbNIySCQgMG81TRMJp1IDRfSgv8=",
+			"path": "github.com/xwb1989/sqlparser/dependency/sqltypes",
+			"revision": "120387863bf27d04bc07db8015110a6e96d0146c",
+			"revisionTime": "2018-06-06T15:21:19Z"
 		},
 		{
 			"checksumSHA1": "6NS7FWJl1FobB+Xfe4SzBGD+75g=",

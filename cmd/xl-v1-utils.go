@@ -66,12 +66,8 @@ func reduceErrs(errs []error, ignoredErrs []error) (maxCount int, maxErr error) 
 func reduceQuorumErrs(ctx context.Context, errs []error, ignoredErrs []error, quorum int, quorumErr error) error {
 	maxCount, maxErr := reduceErrs(errs, ignoredErrs)
 	if maxCount >= quorum {
-		if maxErr != errFileNotFound && maxErr != errVolumeNotFound {
-			logger.LogIf(ctx, maxErr)
-		}
 		return maxErr
 	}
-	logger.LogIf(ctx, quorumErr)
 	return quorumErr
 }
 
@@ -166,6 +162,13 @@ func parseXLErasureInfo(ctx context.Context, xlMetaBuf []byte) (ErasureInfo, err
 	erasure.Index = int(erasureResult.Get("index").Int())
 
 	checkSumsResult := erasureResult.Get("checksum").Array()
+
+	// Check for scenario where checksum information missing for some parts.
+	partsResult := gjson.GetBytes(xlMetaBuf, "parts").Array()
+	if len(checkSumsResult) != len(partsResult) {
+		return erasure, errCorruptedFormat
+	}
+
 	// Parse xlMetaV1.Erasure.Checksum array.
 	checkSums := make([]ChecksumInfo, len(checkSumsResult))
 	for i, v := range checkSumsResult {
@@ -179,7 +182,11 @@ func parseXLErasureInfo(ctx context.Context, xlMetaBuf []byte) (ErasureInfo, err
 			logger.LogIf(ctx, err)
 			return erasure, err
 		}
-		checkSums[i] = ChecksumInfo{Name: v.Get("name").String(), Algorithm: algorithm, Hash: hash}
+		name := v.Get("name").String()
+		if name == "" {
+			return erasure, errCorruptedFormat
+		}
+		checkSums[i] = ChecksumInfo{Name: name, Algorithm: algorithm, Hash: hash}
 	}
 	erasure.Checksums = checkSums
 	return erasure, nil
@@ -305,6 +312,8 @@ func readXLMeta(ctx context.Context, disk StorageAPI, bucket string, object stri
 	// obtain xlMetaV1{} using `github.com/tidwall/gjson`.
 	xlMeta, err = xlMetaV1UnmarshalJSON(ctx, xlMetaBuf)
 	if err != nil {
+		logger.GetReqInfo(ctx).AppendTags("disk", disk.String())
+		logger.LogIf(ctx, err)
 		return xlMetaV1{}, err
 	}
 	// Return structured `xl.json`.

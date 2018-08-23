@@ -26,7 +26,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +37,7 @@ import (
 
 var (
 	configJSON = []byte(`{
-	"version": "27",
+	"version": "28",
 	"credential": {
 		"accessKey": "minio",
 		"secretKey": "minio123"
@@ -56,6 +55,22 @@ var (
 		"expiry": 90,
 		"maxuse": 80,
 		"exclude": []
+	},
+	"kms": {
+		"vault": {
+			"endpoint": "",
+			"auth": {
+				"type": "",
+				"approle": {
+					"id": "",
+					"secret": ""
+				}
+			},
+			"key-id": {
+				"name": "",
+				"version": 0
+			}
+		}
 	},
 	"notify": {
 		"amqp": {
@@ -193,15 +208,15 @@ func prepareAdminXLTestBed() (*adminXLTestBed, error) {
 	// reset global variables to start afresh.
 	resetTestGlobals()
 
-	// Initialize minio server config.
-	rootPath, err := newTestConfig(globalMinioDefaultRegion)
-	if err != nil {
-		return nil, err
-	}
 	// Initializing objectLayer for HealFormatHandler.
 	objLayer, xlDirs, xlErr := initTestXLObjLayer()
 	if xlErr != nil {
 		return nil, xlErr
+	}
+
+	// Initialize minio server config.
+	if err := newTestConfig(globalMinioDefaultRegion, objLayer); err != nil {
+		return nil, err
 	}
 
 	// Initialize boot time
@@ -230,17 +245,15 @@ func prepareAdminXLTestBed() (*adminXLTestBed, error) {
 	registerAdminRouter(adminRouter)
 
 	return &adminXLTestBed{
-		configPath: rootPath,
-		xlDirs:     xlDirs,
-		objLayer:   objLayer,
-		router:     adminRouter,
+		xlDirs:   xlDirs,
+		objLayer: objLayer,
+		router:   adminRouter,
 	}, nil
 }
 
 // TearDown - method that resets the test bed for subsequent unit
 // tests to start afresh.
 func (atb *adminXLTestBed) TearDown() {
-	os.RemoveAll(atb.configPath)
 	removeRoots(atb.xlDirs)
 	resetTestGlobals()
 }
@@ -579,8 +592,14 @@ func TestServiceSetCreds(t *testing.T) {
 		if err != nil {
 			t.Fatalf("JSONify err: %v", err)
 		}
+
+		ebody, err := madmin.EncryptServerConfigData(credentials.SecretKey, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+
 		// Construct setCreds request
-		req, err := getServiceCmdRequest(setCreds, credentials, body)
+		req, err := getServiceCmdRequest(setCreds, credentials, ebody)
 		if err != nil {
 			t.Fatalf("Failed to build service status request %v", err)
 		}
@@ -680,8 +699,14 @@ func TestSetConfigHandler(t *testing.T) {
 	queryVal := url.Values{}
 	queryVal.Set("config", "")
 
+	password := globalServerConfig.GetCredential().SecretKey
+	econfigJSON, err := madmin.EncryptServerConfigData(password, configJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	req, err := buildAdminRequest(queryVal, http.MethodPut, "/config",
-		int64(len(configJSON)), bytes.NewReader(configJSON))
+		int64(len(econfigJSON)), bytes.NewReader(econfigJSON))
 	if err != nil {
 		t.Fatalf("Failed to construct set-config object request - %v", err)
 	}
@@ -690,16 +715,6 @@ func TestSetConfigHandler(t *testing.T) {
 	adminTestBed.router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("Expected to succeed but failed with %d", rec.Code)
-	}
-
-	result := setConfigResult{}
-	err = json.NewDecoder(rec.Body).Decode(&result)
-	if err != nil {
-		t.Fatalf("Failed to decode set config result json %v", err)
-	}
-
-	if !result.Status {
-		t.Error("Expected set-config to succeed, but failed")
 	}
 
 	// Check that a very large config file returns an error.
@@ -724,7 +739,7 @@ func TestSetConfigHandler(t *testing.T) {
 	// Check that a config with duplicate keys in an object return
 	// error.
 	{
-		invalidCfg := append(configJSON[:len(configJSON)-1], []byte(`, "version": "15"}`)...)
+		invalidCfg := append(econfigJSON[:len(econfigJSON)-1], []byte(`, "version": "15"}`)...)
 		req, err := buildAdminRequest(queryVal, http.MethodPut, "/config",
 			int64(len(invalidCfg)), bytes.NewReader(invalidCfg))
 		if err != nil {
@@ -818,81 +833,6 @@ func TestToAdminAPIErr(t *testing.T) {
 		if actualErr != test.expectedAPIErr {
 			t.Errorf("Test %d: Expected %v but received %v",
 				i+1, test.expectedAPIErr, actualErr)
-		}
-	}
-}
-
-func TestWriteSetConfigResponse(t *testing.T) {
-	rootPath, err := newTestConfig(globalMinioDefaultRegion)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(rootPath)
-	testCases := []struct {
-		status bool
-		errs   []error
-	}{
-		// 1. all nodes returned success.
-		{
-			status: true,
-			errs:   []error{nil, nil, nil, nil},
-		},
-		// 2. some nodes returned errors.
-		{
-			status: false,
-			errs:   []error{errDiskNotFound, nil, errDiskAccessDenied, errFaultyDisk},
-		},
-	}
-
-	testPeers := []adminPeer{
-		{
-			addr: "localhost:9001",
-		},
-		{
-			addr: "localhost:9002",
-		},
-		{
-			addr: "localhost:9003",
-		},
-		{
-			addr: "localhost:9004",
-		},
-	}
-
-	testURL, err := url.Parse("http://dummy.com")
-	if err != nil {
-		t.Fatalf("Failed to parse a place-holder url")
-	}
-
-	var actualResult setConfigResult
-	for i, test := range testCases {
-		rec := httptest.NewRecorder()
-		writeSetConfigResponse(rec, testPeers, test.errs, test.status, testURL)
-		resp := rec.Result()
-		jsonBytes, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("Test %d: Failed to read response %v", i+1, err)
-		}
-
-		err = json.Unmarshal(jsonBytes, &actualResult)
-		if err != nil {
-			t.Fatalf("Test %d: Failed to unmarshal json %v", i+1, err)
-		}
-		if actualResult.Status != test.status {
-			t.Errorf("Test %d: Expected status %v but received %v", i+1, test.status, actualResult.Status)
-		}
-		for p, res := range actualResult.NodeResults {
-			if res.Name != testPeers[p].addr {
-				t.Errorf("Test %d: Expected node name %s but received %s", i+1, testPeers[p].addr, res.Name)
-			}
-			expectedErrMsg := fmt.Sprintf("%v", test.errs[p])
-			if res.ErrMsg != expectedErrMsg {
-				t.Errorf("Test %d: Expected error %s but received %s", i+1, expectedErrMsg, res.ErrMsg)
-			}
-			expectedErrSet := test.errs[p] != nil
-			if res.ErrSet != expectedErrSet {
-				t.Errorf("Test %d: Expected ErrSet %v but received %v", i+1, expectedErrSet, res.ErrSet)
-			}
 		}
 	}
 }

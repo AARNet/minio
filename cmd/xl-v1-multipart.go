@@ -103,7 +103,6 @@ func commitXLMetadata(ctx context.Context, disks []StorageAPI, srcBucket, srcPre
 	// Rename `xl.json` to all disks in parallel.
 	for index, disk := range disks {
 		if disk == nil {
-			logger.LogIf(ctx, errDiskNotFound)
 			mErrs[index] = errDiskNotFound
 			continue
 		}
@@ -332,6 +331,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	// get Quorum for this object
 	_, writeQuorum, err := objectQuorumFromMeta(ctx, xl, partsMetadata, errs)
 	if err != nil {
+		preUploadIDLock.RUnlock()
 		return pi, toObjectErr(err, bucket, object)
 	}
 
@@ -346,7 +346,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	onlineDisks, modTime := listOnlineDisks(xl.getDisks(), partsMetadata, errs)
 
 	// Pick one from the first valid metadata.
-	xlMeta, err := pickValidXLMeta(ctx, partsMetadata, modTime)
+	xlMeta, err := pickValidXLMeta(ctx, partsMetadata, modTime, writeQuorum)
 	if err != nil {
 		return pi, err
 	}
@@ -445,7 +445,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	onlineDisks, modTime = listOnlineDisks(onlineDisks, partsMetadata, errs)
 
 	// Pick one from the first valid metadata.
-	xlMeta, err = pickValidXLMeta(ctx, partsMetadata, modTime)
+	xlMeta, err = pickValidXLMeta(ctx, partsMetadata, modTime, writeQuorum)
 	if err != nil {
 		return pi, err
 	}
@@ -462,6 +462,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 		if disk == OfflineDisk {
 			continue
 		}
+		partsMetadata[i].Stat = xlMeta.Stat
 		partsMetadata[i].Parts = xlMeta.Parts
 		partsMetadata[i].Erasure.AddChecksumInfo(ChecksumInfo{partSuffix, DefaultBitrotAlgorithm, writers[i].Sum()})
 	}
@@ -644,7 +645,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	var objectSize int64
 
 	// Pick one from the first valid metadata.
-	xlMeta, err := pickValidXLMeta(ctx, partsMetadata, modTime)
+	xlMeta, err := pickValidXLMeta(ctx, partsMetadata, modTime, writeQuorum)
 	if err != nil {
 		return oi, err
 	}
@@ -666,14 +667,23 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 		partIdx := objectPartIndex(currentXLMeta.Parts, part.PartNumber)
 		// All parts should have same part number.
 		if partIdx == -1 {
-			logger.LogIf(ctx, InvalidPart{})
-			return oi, InvalidPart{}
+			invp := InvalidPart{
+				PartNumber: part.PartNumber,
+				GotETag:    part.ETag,
+			}
+			logger.LogIf(ctx, invp)
+			return oi, invp
 		}
 
 		// All parts should have same ETag as previously generated.
 		if currentXLMeta.Parts[partIdx].ETag != part.ETag {
-			logger.LogIf(ctx, InvalidPart{})
-			return oi, InvalidPart{}
+			invp := InvalidPart{
+				PartNumber: part.PartNumber,
+				ExpETag:    currentXLMeta.Parts[partIdx].ETag,
+				GotETag:    part.ETag,
+			}
+			logger.LogIf(ctx, invp)
+			return oi, invp
 		}
 
 		// All parts except the last part has to be atleast 5MB.
@@ -769,7 +779,6 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
 		if xl.isObject(bucket, object) {
-			logger.LogIf(ctx, ObjectAlreadyExists{Bucket: bucket, Object: object})
 			return ObjectInfo{}, ObjectAlreadyExists{Bucket: bucket, Object: object}
 		}
 	}
@@ -791,7 +800,6 @@ func (xl xlObjects) cleanupUploadedParts(ctx context.Context, uploadIDPath strin
 	// Cleanup uploadID for all disks.
 	for index, disk := range xl.getDisks() {
 		if disk == nil {
-			logger.LogIf(ctx, errDiskNotFound)
 			errs[index] = errDiskNotFound
 			continue
 		}

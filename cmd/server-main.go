@@ -92,6 +92,12 @@ ENVIRONMENT VARIABLES:
      MINIO_PUBLIC_IPS: To enable bucket DNS requests, set this value to list of Minio host public IP(s) delimited by ",".
      MINIO_ETCD_ENDPOINTS: To enable bucket DNS requests, set this value to list of etcd endpoints delimited by ",".
 
+   KMS:
+     MINIO_SSE_VAULT_ENDPOINT: To enable Vault as KMS,set this value to Vault endpoint.
+     MINIO_SSE_VAULT_APPROLE_ID: To enable Vault as KMS,set this value to Vault AppRole ID.
+     MINIO_SSE_VAULT_APPROLE_SECRET: To enable Vault as KMS,set this value to Vault AppRole Secret ID.
+     MINIO_SSE_VAULT_KEY_NAME: To enable Vault as KMS,set this value to Vault encryption key-ring name.
+
 EXAMPLES:
   1. Start minio server on "/home/shared" directory.
      $ {{.HelpName}} /home/shared
@@ -116,6 +122,13 @@ EXAMPLES:
      $ export MINIO_CACHE_EXCLUDE="bucket1/*;*.png"
      $ export MINIO_CACHE_EXPIRY=40
      $ export MINIO_CACHE_MAXUSE=80
+     $ {{.HelpName}} /home/shared
+
+  7. Start minio server with KMS enabled.
+     $ export MINIO_SSE_VAULT_APPROLE_ID=9b56cc08-8258-45d5-24a3-679876769126
+     $ export MINIO_SSE_VAULT_APPROLE_SECRET=4e30c52f-13e4-a6f5-0763-d50e8cb4321f
+     $ export MINIO_SSE_VAULT_ENDPOINT=https://vault-endpoint-ip:8200
+     $ export MINIO_SSE_VAULT_KEY_NAME=my-minio-key
      $ {{.HelpName}} /home/shared
 `,
 }
@@ -211,14 +224,13 @@ func serverMain(ctx *cli.Context) {
 	// Handle all server environment vars.
 	serverHandleEnvVars()
 
+	// In distributed setup users need to set ENVs always.
+	if !globalIsEnvCreds && globalIsDistXL {
+		logger.Fatal(uiErrEnvCredentialsMissingServer(nil), "Unable to initialize minio server in distributed mode")
+	}
+
 	// Create certs path.
 	logger.FatalIf(createConfigDir(), "Unable to initialize configuration files")
-
-	// Initialize server config.
-	initConfig()
-
-	// Load logger subsystem
-	loadLoggers()
 
 	// Check and load SSL certificates.
 	var err error
@@ -244,6 +256,11 @@ func serverMain(ctx *cli.Context) {
 			mode = globalMinioModeXL
 		}
 		checkUpdate(mode)
+	}
+
+	// Enforce ENV credentials for distributed setup such that we can create the first config.
+	if globalIsDistXL && !globalIsEnvCreds {
+		logger.Fatal(uiErrInvalidCredentials(nil), "Unable to start the server in distrbuted mode. In distributed mode we require explicit credentials.")
 	}
 
 	// Set system resources to maximum.
@@ -303,6 +320,24 @@ func serverMain(ctx *cli.Context) {
 	// Populate existing buckets to the etcd backend
 	if globalDNSConfig != nil {
 		initFederatorBackend(newObject)
+	}
+
+	// Create a new config system.
+	globalConfigSys = NewConfigSys()
+
+	// Initialize config system.
+	if err = globalConfigSys.Init(newObjectLayerFn()); err != nil {
+		logger.Fatal(err, "Unable to initialize config system")
+	}
+
+	// Load logger subsystem
+	loadLoggers()
+
+	var cacheConfig = globalServerConfig.GetCacheConfig()
+	if len(cacheConfig.Drives) > 0 {
+		// initialize the new disk cache objects.
+		globalCacheObjectAPI, err = newServerCacheObjects(cacheConfig)
+		logger.FatalIf(err, "Unable to initialize disk caching")
 	}
 
 	// Re-enable logging
