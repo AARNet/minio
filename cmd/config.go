@@ -136,7 +136,8 @@ func checkServerConfig(ctx context.Context, objAPI ObjectLayer) error {
 	}
 
 	if _, err := objAPI.GetObjectInfo(ctx, minioMetaBucket, configFile); err != nil {
-		if isErrObjectNotFound(err) {
+		// Convert ObjectNotFound, Quorum errors into errConfigNotFound
+		if isErrObjectNotFound(err) || isInsufficientReadQuorum(err) {
 			return errConfigNotFound
 		}
 		logger.GetReqInfo(ctx).AppendTags("configFile", configFile)
@@ -162,7 +163,7 @@ func readConfig(ctx context.Context, objAPI ObjectLayer, configFile string) (*by
 	var buffer bytes.Buffer
 	// Read entire content by setting size to -1
 	if err := objAPI.GetObject(ctx, minioMetaBucket, configFile, 0, -1, &buffer, ""); err != nil {
-		// Ignore if err is ObjectNotFound or IncompleteBody when bucket is not configured with notification
+		// Convert ObjectNotFound, IncompleteBody and Quorum errors into errConfigNotFound
 		if isErrObjectNotFound(err) || isErrIncompleteBody(err) || isInsufficientReadQuorum(err) {
 			return nil, errConfigNotFound
 		}
@@ -202,9 +203,9 @@ func NewConfigSys() *ConfigSys {
 }
 
 // Migrates ${HOME}/.minio/config.json to '<export_path>/.minio.sys/config/config.json'
-func migrateConfigToMinioSys() error {
+func migrateConfigToMinioSys(objAPI ObjectLayer) error {
 	// Verify if backend already has the file.
-	if err := checkServerConfig(context.Background(), newObjectLayerFn()); err != errConfigNotFound {
+	if err := checkServerConfig(context.Background(), objAPI); err != errConfigNotFound {
 		return err
 	} // if errConfigNotFound proceed to migrate..
 
@@ -213,7 +214,7 @@ func migrateConfigToMinioSys() error {
 		return err
 	}
 
-	return saveServerConfig(newObjectLayerFn(), config)
+	return saveServerConfig(objAPI, config)
 }
 
 // Initialize and load config from remote etcd or local config directory
@@ -236,7 +237,7 @@ func initConfig(objAPI ObjectLayer) error {
 			}
 
 			// Migrates ${HOME}/.minio/config.json to '<export_path>/.minio.sys/config/config.json'
-			if err := migrateConfigToMinioSys(); err != nil {
+			if err := migrateConfigToMinioSys(objAPI); err != nil {
 				return err
 			}
 		}

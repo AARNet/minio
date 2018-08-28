@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,7 +47,13 @@ func (sys *NotificationSys) GetARNList() []string {
 	arns := []string{}
 	region := globalServerConfig.GetRegion()
 	for _, targetID := range sys.targetList.List() {
-		arns = append(arns, targetID.ToARN(region).String())
+		// httpclient target is part of ListenBucketNotification
+		// which doesn't need to be listed as part of the ARN list
+		// This list is only meant for external targets, filter
+		// this out pro-actively.
+		if !strings.HasPrefix(targetID.ID, "httpclient+") {
+			arns = append(arns, targetID.ToARN(region).String())
+		}
 	}
 
 	return arns
@@ -192,11 +199,17 @@ func (sys *NotificationSys) AddRemoteTarget(bucketName string, target event.Targ
 	if targetMap == nil {
 		targetMap = make(map[event.TargetID]event.RulesMap)
 	}
-	targetMap[target.ID()] = rulesMap.Clone()
+
+	rulesMap = rulesMap.Clone()
+	targetMap[target.ID()] = rulesMap
 	sys.bucketRemoteTargetRulesMap[bucketName] = targetMap
+
+	rulesMap = rulesMap.Clone()
+	rulesMap.Add(sys.bucketRulesMap[bucketName])
+	sys.bucketRulesMap[bucketName] = rulesMap
+
 	sys.Unlock()
 
-	sys.AddRulesMap(bucketName, rulesMap)
 	return nil
 }
 
@@ -341,8 +354,12 @@ func (sys *NotificationSys) AddRulesMap(bucketName string, rulesMap event.RulesM
 		rulesMap.Add(targetRulesMap)
 	}
 
-	rulesMap.Add(sys.bucketRulesMap[bucketName])
-	sys.bucketRulesMap[bucketName] = rulesMap
+	// Do not add for an empty rulesMap.
+	if len(rulesMap) == 0 {
+		delete(sys.bucketRulesMap, bucketName)
+	} else {
+		sys.bucketRulesMap[bucketName] = rulesMap
+	}
 }
 
 // RemoveRulesMap - removes rules map for bucket name.
@@ -439,13 +456,14 @@ func NewNotificationSys(config *serverConfig, endpoints EndpointList) *Notificat
 }
 
 type eventArgs struct {
-	EventName  event.Name
-	BucketName string
-	Object     ObjectInfo
-	ReqParams  map[string]string
-	Host       string
-	Port       string
-	UserAgent  string
+	EventName    event.Name
+	BucketName   string
+	Object       ObjectInfo
+	ReqParams    map[string]string
+	RespElements map[string]string
+	Host         string
+	Port         string
+	UserAgent    string
 }
 
 // ToEvent - converts to notification event.
@@ -464,6 +482,13 @@ func (args eventArgs) ToEvent() event.Event {
 	eventTime := UTCNow()
 	uniqueID := fmt.Sprintf("%X", eventTime.UnixNano())
 
+	respElements := map[string]string{
+		"x-amz-request-id":        uniqueID,
+		"x-minio-origin-endpoint": getOriginEndpoint(), // Minio specific custom elements.
+	}
+	if args.RespElements["content-length"] != "" {
+		respElements["content-length"] = args.RespElements["content-length"]
+	}
 	newEvent := event.Event{
 		EventVersion:      "2.0",
 		EventSource:       "minio:s3",
@@ -472,10 +497,7 @@ func (args eventArgs) ToEvent() event.Event {
 		EventName:         args.EventName,
 		UserIdentity:      event.Identity{creds.AccessKey},
 		RequestParameters: args.ReqParams,
-		ResponseElements: map[string]string{
-			"x-amz-request-id":        uniqueID,
-			"x-minio-origin-endpoint": getOriginEndpoint(), // Minio specific custom elements.
-		},
+		ResponseElements:  respElements,
 		S3: event.Metadata{
 			SchemaVersion:   "1.0",
 			ConfigurationID: "Config",

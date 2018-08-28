@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"io"
@@ -162,6 +163,53 @@ func (xl xlObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBuc
 	return objInfo, nil
 }
 
+func (xl xlObjects) GetObjectNInfo(ctx context.Context, bucket, object string, rs *HTTPRangeSpec) (objInfo ObjectInfo, reader io.ReadCloser, err error) {
+
+	// Acquire lock
+	lock := xl.nsMutex.NewNSLock(bucket, object)
+	if err = lock.GetRLock(globalObjectTimeout); err != nil {
+		return objInfo, nil, err
+	}
+	objReader := &GetObjectReader{
+		lock: lock,
+	}
+
+	if err = checkGetObjArgs(ctx, bucket, object); err != nil {
+		return objInfo, objReader, err
+	}
+
+	if hasSuffix(object, slashSeparator) {
+		if !xl.isObjectDir(bucket, object) {
+			return objInfo, objReader, toObjectErr(errFileNotFound, bucket, object)
+		}
+		var e error
+		if objInfo, e = xl.getObjectInfoDir(ctx, bucket, object); e != nil {
+			return objInfo, objReader, toObjectErr(e, bucket, object)
+		}
+		objReader.pr = bytes.NewBuffer(nil)
+		return objInfo, objReader, nil
+	}
+
+	objInfo, err = xl.getObjectInfo(ctx, bucket, object)
+	if err != nil {
+		return objInfo, objReader, toObjectErr(err, bucket, object)
+	}
+
+	startOffset, readLength := int64(0), objInfo.Size
+	if rs != nil {
+		startOffset, readLength = rs.GetOffsetLength(objInfo.Size)
+	}
+
+	pr, pw := io.Pipe()
+	objReader.pr = pr
+	go func() {
+		err := xl.getObject(ctx, bucket, object, startOffset, readLength, pw, "")
+		pw.CloseWithError(err)
+	}()
+
+	return objInfo, objReader, nil
+}
+
 // GetObject - reads an object erasured coded across multiple
 // disks. Supports additional parameters like offset and length
 // which are synonymous with HTTP Range requests.
@@ -262,7 +310,7 @@ func (xl xlObjects) getObject(ctx context.Context, bucket, object string, startO
 	}
 
 	var totalBytesRead int64
-	storage, err := NewErasureStorage(ctx, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, xlMeta.Erasure.BlockSize)
+	erasure, err := NewErasure(ctx, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, xlMeta.Erasure.BlockSize)
 	if err != nil {
 		return toObjectErr(err, bucket, object)
 	}
@@ -292,7 +340,7 @@ func (xl xlObjects) getObject(ctx context.Context, bucket, object string, startO
 			bitrotReaders[index] = newBitrotReader(disk, bucket, pathJoin(object, partName), checksumInfo.Algorithm, endOffset, checksumInfo.Hash)
 		}
 
-		err := storage.ReadFile(ctx, writer, bitrotReaders, partOffset, partLength, partSize)
+		err := erasure.Decode(ctx, writer, bitrotReaders, partOffset, partLength, partSize)
 		if err != nil {
 			return toObjectErr(err, bucket, object)
 		}
@@ -608,7 +656,7 @@ func (xl xlObjects) putObject(ctx context.Context, bucket string, object string,
 	// Total size of the written object
 	var sizeWritten int64
 
-	storage, err := NewErasureStorage(ctx, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, xlMeta.Erasure.BlockSize)
+	erasure, err := NewErasure(ctx, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, xlMeta.Erasure.BlockSize)
 	if err != nil {
 		return ObjectInfo{}, toObjectErr(err, bucket, object)
 	}
@@ -667,7 +715,7 @@ func (xl xlObjects) putObject(ctx context.Context, bucket string, object string,
 			}
 			writers[i] = newBitrotWriter(disk, minioMetaTmpBucket, tempErasureObj, DefaultBitrotAlgorithm)
 		}
-		n, erasureErr := storage.CreateFile(ctx, curPartReader, writers, buffer, storage.dataBlocks+1)
+		n, erasureErr := erasure.Encode(ctx, curPartReader, writers, buffer, erasure.dataBlocks+1)
 		if erasureErr != nil {
 			return ObjectInfo{}, toObjectErr(erasureErr, minioMetaTmpBucket, tempErasureObj)
 		}
