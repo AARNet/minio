@@ -286,11 +286,24 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 	for _, dir := range dirs {
 		var stat *eosFileStat
 		stat, err = e.EOSfsStat(dir)
-		b := minio.BucketInfo{
-			Name:    dir,
-			Created: stat.ModTime()}
-		buckets = append(buckets, b)
-		eosBucketCache[strings.TrimSuffix(dir, "/")] = b
+		if stat != nil {
+			if stat.dir && minio.IsValidBucketName(strings.TrimRight(dir, "/")) {
+				b := minio.BucketInfo{
+					Name:    dir,
+					Created: stat.ModTime()}
+				buckets = append(buckets, b)
+				eosBucketCache[strings.TrimSuffix(dir, "/")] = b
+			} else {
+				if !stat.dir {
+					e.Log(3, "DEBUG: Bucket: %s not a directory\n", dir)
+				}
+				if !minio.IsValidBucketName(strings.TrimRight(dir, "/")) {
+					e.Log(3, "DEBUG: Bucket: %s not a valid name\n", dir)
+				}
+			}
+		} else {
+			e.Log(1, "ERROR: ListBuckets - can not stat %s\n", dir)
+		}
 	}
 
 	eosDirCache.path = ""
@@ -503,7 +516,6 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 
 // GetObjectInfo - reads blob metadata properties and replies back minio.ObjectInfo
 func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (objInfo minio.ObjectInfo, err error) {
-
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
 
 	e.Log(1, "DEBUG: GetObjectInfo      : %s\n", path)
@@ -530,6 +542,32 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (
 
 	e.Log(2, "  %s etag:%s content-type:%s\n", path, stat.ETag(), stat.ContentType())
 	return objInfo, err
+}
+
+// GetObjectNInfo - returns object info and a reader for object content
+func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, rs *minio.HTTPRangeSpec) (objInfo minio.ObjectInfo, reader io.ReadCloser, err error) {
+	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
+
+	e.Log(1, "DEBUG: GetObjectNInfo     : %s %+v\n", path, rs)
+
+	objInfo, err = e.GetObjectInfo(ctx, bucket, object)
+	if err != nil {
+		return objInfo, reader, err
+	}
+
+	startOffset, length := int64(0), objInfo.Size
+	if rs != nil {
+		startOffset, length = rs.GetOffsetLength(objInfo.Size)
+	}
+
+	pr, pw := io.Pipe()
+	objReader := minio.NewGetObjectReader(pr, nil, nil)
+	go func() {
+		err := e.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag)
+		pw.CloseWithError(err)
+	}()
+
+	return objInfo, objReader, nil
 }
 
 // ListMultipartUploads - lists all multipart uploads.
@@ -814,32 +852,37 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 		var stat *eosFileStat
 		stat, err = e.EOSfsStat(path + "/" + obj)
 
-		e.Log(5, "  %s, %s, %s = %s\n", bucket, prefix, obj, bucket+"/"+prefix+obj)
-		e.Log(4, "  %s <=> %s etag:%s content-type:%s\n", path+"/"+obj, prefix+obj, stat.ETag(), stat.ContentType())
-		o := minio.ObjectInfo{
-			Bucket:      bucket,
-			Name:        prefix + obj,
-			ModTime:     stat.ModTime(),
-			Size:        stat.Size(),
-			IsDir:       stat.IsDir(),
-			ETag:        stat.ETag(),
-			ContentType: stat.ContentType(),
-		}
+		if stat != nil {
 
-		result.Objects = append(result.Objects, o)
+			e.Log(5, "  %s, %s, %s = %s\n", bucket, prefix, obj, bucket+"/"+prefix+obj)
+			e.Log(4, "  %s <=> %s etag:%s content-type:%s\n", path+"/"+obj, prefix+obj, stat.ETag(), stat.ContentType())
+			o := minio.ObjectInfo{
+				Bucket:      bucket,
+				Name:        prefix + obj,
+				ModTime:     stat.ModTime(),
+				Size:        stat.Size(),
+				IsDir:       stat.IsDir(),
+				ETag:        stat.ETag(),
+				ContentType: stat.ContentType(),
+			}
 
-		if delimiter == "" { //recursive
-			if stat.IsDir() {
-				e.Log(3, "  ASKING FOR -r on : %s\n", prefix+obj)
+			result.Objects = append(result.Objects, o)
 
-				subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
-				if err != nil {
-					return result, err
-				}
-				for _, subobj := range subdir.Objects {
-					result.Objects = append(result.Objects, subobj)
+			if delimiter == "" { //recursive
+				if stat.IsDir() {
+					e.Log(3, "  ASKING FOR -r on : %s\n", prefix+obj)
+
+					subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
+					if err != nil {
+						return result, err
+					}
+					for _, subobj := range subdir.Objects {
+						result.Objects = append(result.Objects, subobj)
+					}
 				}
 			}
+		} else {
+			e.Log(1, "ERROR: ListObjects - can not stat %s\n", path+"/"+obj)
 		}
 	}
 
@@ -852,7 +895,24 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 // ListObjectsV2 - list all blobs in a container filtered by prefix
 func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (result minio.ListObjectsV2Info, err error) {
 	e.Log(1, "DEBUG: ListObjectsV2       : %s, %s, %s, %s, %d\n", bucket, prefix, continuationToken, delimiter, maxKeys)
-	return result, minio.NotImplemented{}
+
+	marker := continuationToken
+	if marker == "" {
+		marker = startAfter
+	}
+
+	var resultV1 minio.ListObjectsInfo
+	resultV1, err = e.ListObjects(ctx, bucket, prefix, marker, delimiter, maxKeys)
+	if err != nil {
+		return result, err
+	}
+
+	result.Objects = resultV1.Objects
+	result.Prefixes = resultV1.Prefixes
+	result.ContinuationToken = continuationToken
+	result.NextContinuationToken = resultV1.NextMarker
+	result.IsTruncated = (resultV1.NextMarker != "")
+	return result, nil
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -901,7 +961,7 @@ type eosFileStat struct {
 	id          int64
 	name        string
 	size        int64
-	mode        os.FileMode
+	dir         bool
 	modTime     time.Time
 	sys         syscall.Stat_t
 	etag        string
@@ -912,19 +972,18 @@ type eosFileStat struct {
 func (fs *eosFileStat) Id() int64          { return fs.id }
 func (fs *eosFileStat) Name() string       { return fs.name }
 func (fs *eosFileStat) Size() int64        { return fs.size }
-func (fs *eosFileStat) Mode() os.FileMode  { return fs.mode }
 func (fs *eosFileStat) ModTime() time.Time { return fs.modTime }
 func (fs *eosFileStat) Sys() interface{}   { return &fs.sys }
-func (fs *eosFileStat) IsDir() bool        { return fs.mode == 0 }
+func (fs *eosFileStat) IsDir() bool        { return fs.dir }
 func (fs *eosFileStat) Checksum() string   { return fs.checksum }
 func (fs *eosFileStat) ETag() string {
-	if fs.IsDir() {
+	if fs.dir || fs.etag == "" {
 		return "00000000000000000000000000000000"
 	}
 	return fs.etag
 }
 func (fs *eosFileStat) ContentType() string {
-	if fs.IsDir() {
+	if fs.dir {
 		return "application/x-directory"
 	}
 	return fs.contenttype
@@ -1135,8 +1194,10 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 
 			obj := e.interfaceToString(child["name"])
 			if !strings.HasPrefix(obj, ".sys.v#.") {
+				isDir := false
 				if e.interfaceToInt64(child["mode"]) == 0 {
 					obj += "/"
+					isDir = true
 				}
 				entries = append(entries, obj)
 
@@ -1159,7 +1220,7 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 					id:          e.interfaceToInt64(child["id"]),
 					name:        e.interfaceToString(child["name"]),
 					size:        e.interfaceToInt64(child["size"]) + e.interfaceToInt64(child["treesize"]),
-					mode:        os.FileMode(e.interfaceToUint32(child["mode"])),
+					dir:         isDir,
 					modTime:     time.Unix(e.interfaceToInt64(child["mtime"]), 0),
 					etag:        meta["etag"],
 					contenttype: meta["contenttype"],
@@ -1220,7 +1281,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 		id:          e.interfaceToInt64(m["id"]),
 		name:        e.interfaceToString(m["name"]),
 		size:        e.interfaceToInt64(m["size"]) + e.interfaceToInt64(m["treesize"]),
-		mode:        os.FileMode(e.interfaceToUint32(m["mode"])),
+		dir:         e.interfaceToUint32(m["mode"]) == 0,
 		modTime:     time.Unix(e.interfaceToInt64(m["mtime"]), 0),
 		etag:        meta["etag"],
 		contenttype: meta["contenttype"],
@@ -1360,8 +1421,8 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	if err != nil {
 		return err
 	}
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras()))
-	//e.Log(5,"body : %s\n", string(body))
+	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras()))
+	e.Log(5, "body : %s\n", string(body))
 	if err != nil {
 		e.Log(2, "ERROR: can not json.Unmarshal()\n")
 		return err
