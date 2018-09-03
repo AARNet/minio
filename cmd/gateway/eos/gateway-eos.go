@@ -544,32 +544,6 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (
 	return objInfo, err
 }
 
-// GetObjectNInfo - returns object info and a reader for object content
-func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, rs *minio.HTTPRangeSpec) (objInfo minio.ObjectInfo, reader io.ReadCloser, err error) {
-	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
-
-	e.Log(1, "DEBUG: GetObjectNInfo     : %s %+v\n", path, rs)
-
-	objInfo, err = e.GetObjectInfo(ctx, bucket, object)
-	if err != nil {
-		return objInfo, reader, err
-	}
-
-	startOffset, length := int64(0), objInfo.Size
-	if rs != nil {
-		startOffset, length = rs.GetOffsetLength(objInfo.Size)
-	}
-
-	pr, pw := io.Pipe()
-	objReader := minio.NewGetObjectReader(pr, nil, nil)
-	go func() {
-		err := e.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag)
-		pw.CloseWithError(err)
-	}()
-
-	return objInfo, objReader, nil
-}
-
 // ListMultipartUploads - lists all multipart uploads.
 func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result minio.ListMultipartsInfo, err error) {
 	e.Log(1, "DEBUG: ListMultipartUploads : %s %s %s %s %s %d\n", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
@@ -1558,25 +1532,8 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 	}
 
 	defer res.Body.Close()
-	reader := bufio.NewReader(res.Body)
-	lengthLeft := length
-	for {
-		buf := make([]byte, 1024, 1024)
-		n, err := reader.Read(buf[:])
-		if n > 0 {
-			if int64(n) > lengthLeft {
-				n = int(lengthLeft)
-			}
-			lengthLeft -= int64(n)
-			data.Write(buf[0:n])
-			//nn, err := data.Write(buf[0:n])
-			//e.Log(2,"DEBUG-WRITE:      %d, %s\n", n, string(buf[0:n]))
-			//e.Log(2,"DEBUG-WRITE:      %d, %+v\n", nn, err)
-		}
-		if err != nil {
-			break
-		}
-	}
+	_, err = io.CopyN(data, res.Body, length)
+
 	return err
 }
 
