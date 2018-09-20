@@ -411,7 +411,7 @@ func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) erro
 //  Object
 
 // CopyObject - Copies a blob from source container to destination container.
-func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo minio.ObjectInfo) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: CopyObject: %s -> %s : %+v\n", srcBucket+"/"+srcObject, destBucket+"/"+destObject, srcInfo)
 
 	if e.readonly {
@@ -440,11 +440,11 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 	}
 
 	e.EOScacheDeleteObject(destBucket, destObject)
-	return e.GetObjectInfo(ctx, destBucket, destObject)
+	return e.GetObjectInfo(ctx, destBucket, destObject, dstOpts)
 }
 
 // CopyObjectPart creates a part in a multipart upload by copying
-func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo) (p minio.PartInfo, err error) {
+func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (p minio.PartInfo, err error) {
 	e.Log(1, "DEBUG: CopyObjectPart: %s/%s to %s/%s\n", srcBucket, srcObject, destBucket, destObject)
 
 	if e.readonly {
@@ -455,7 +455,7 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 }
 
 // PutObject - Create a new blob with the incoming data
-func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *miniohash.Reader, metadata map[string]string) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *miniohash.Reader, metadata map[string]string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	e.Log(1, "DEBUG: PutObject: %s/%s\n", bucket, object)
 
 	if e.readonly {
@@ -491,7 +491,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	}
 
 	e.EOScacheDeleteObject(bucket, object)
-	return e.GetObjectInfo(ctx, bucket, object)
+	return e.GetObjectInfo(ctx, bucket, object, opts)
 }
 
 // DeleteObject - Deletes a blob on azure container
@@ -506,13 +506,13 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 }
 
 // GetObject - reads an object from EOS
-func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string) error {
+func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string, opts minio.ObjectOptions) error {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
 
 	e.Log(1, "DEBUG: GetObject: %s from %d for %d byte(s)\n", path, startOffset, length)
 
 	if etag != "" {
-		objInfo, err := e.GetObjectInfo(ctx, bucket, object)
+		objInfo, err := e.GetObjectInfo(ctx, bucket, object, opts)
 		if err != nil {
 			return err
 		}
@@ -527,7 +527,7 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 }
 
 // GetObjectInfo - reads blob metadata properties and replies back minio.ObjectInfo
-func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
 
 	e.Log(1, "DEBUG: GetObjectInfo: %s\n", path)
@@ -563,7 +563,7 @@ func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, k
 }
 
 // NewMultipartUpload
-func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, metadata map[string]string) (uploadID string, err error) {
+func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, metadata map[string]string, opts minio.ObjectOptions) (uploadID string, err error) {
 	e.Log(1, "DEBUG: NewMultipartUpload: %s/%s\n           +%v\n", bucket, object, metadata)
 
 	if e.readonly {
@@ -613,7 +613,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 }
 
 // PutObjectPart
-func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *miniohash.Reader) (info minio.PartInfo, err error) {
+func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *miniohash.Reader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
 	e.Log(1, "DEBUG: PutObjectPart: %s/%s %s [%d] %d\n", bucket, object, uploadID, partID, data.Size())
 
 	if e.readonly {
