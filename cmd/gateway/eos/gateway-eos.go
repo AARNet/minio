@@ -1545,7 +1545,7 @@ func (e *eosObjects) EOSwriteChunk(p string, offset, size int64, checksum string
 		return err
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-	e.Log(1, "DEBUG: EOS xrootdWriteChunk : %s %s %d %d %s %d %d\n", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
+	e.Log(1, "DEBUG: EOS xrootdPUT : %s %s %d %d %s %d %d\n", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
 
 	cmd := exec.Command(e.scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.uid, e.gid)
 	cmd.Stdin = bytes.NewReader(data)
