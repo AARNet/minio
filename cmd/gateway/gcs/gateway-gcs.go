@@ -736,6 +736,31 @@ func (l *gcsGateway) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 	}, nil
 }
 
+// GetObjectNInfo - returns object info and locked object ReadCloser
+func (l *gcsGateway) GetObjectNInfo(ctx context.Context, bucket, object string, rs *minio.HTTPRangeSpec, h http.Header) (gr *minio.GetObjectReader, err error) {
+	var objInfo minio.ObjectInfo
+	objInfo, err = l.GetObjectInfo(ctx, bucket, object, minio.ObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var startOffset, length int64
+	startOffset, length, err = rs.GetOffsetLength(objInfo.Size)
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		err := l.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag, minio.ObjectOptions{})
+		pw.CloseWithError(err)
+	}()
+	// Setup cleanup function to cause the above go-routine to
+	// exit in case of partial read
+	pipeCloser := func() { pr.Close() }
+	return minio.NewGetObjectReaderFromReader(pr, objInfo, pipeCloser), nil
+}
+
 // GetObject - reads an object from GCS. Supports additional
 // parameters like offset and length which are synonymous with
 // HTTP Range requests.
@@ -750,7 +775,13 @@ func (l *gcsGateway) GetObject(ctx context.Context, bucket string, key string, s
 		return gcsToObjectError(err, bucket)
 	}
 
-	object := l.client.Bucket(bucket).Object(key)
+	// GCS storage decompresses a gzipped object by default and returns the data.
+	// Refer to https://cloud.google.com/storage/docs/transcoding#decompressive_transcoding
+	// Need to set `Accept-Encoding` header to `gzip` when issuing a GetObject call, to be able
+	// to download the object in compressed state.
+	// Calling ReadCompressed with true accomplishes that.
+	object := l.client.Bucket(bucket).Object(key).ReadCompressed(true)
+
 	r, err := object.NewRangeReader(l.ctx, startOffset, length)
 	if err != nil {
 		logger.LogIf(ctx, err)
