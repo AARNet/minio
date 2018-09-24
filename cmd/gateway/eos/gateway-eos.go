@@ -79,6 +79,7 @@ ENVIRONMENT VARIABLES:
      EOSSTAGE: local fast disk to stage multipart uploads
      EOSREADONLY: true/false
      EOSREADMETHOD: webdav/xrootd/xrdcp (DEFAULT: webdav)
+     EOSMAXPROCUSER: int (default 8)
      VOLUME_PATH: path on eos
      HOOKSURL: url to s3 hooks (not setting this will disable hooks)
      SCRIPTS: path to xroot script
@@ -181,6 +182,12 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readmethod = "xrdcp"
 	}
 
+	procuserMax := 8
+	ret, err := strconv.Atoi(os.Getenv("EOSMAXPROCUSER"))
+	if err == nil {
+		procuserMax = ret
+	}
+
 	fmt.Printf("------%sEOS CONFIG%s------\n", CLR_G, CLR_N)
 	fmt.Printf("%sEOS URL              %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("EOS"), CLR_N)
 	fmt.Printf("%sEOS VOLUME PATH      %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, os.Getenv("VOLUME_PATH"), CLR_N)
@@ -199,22 +206,24 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	}
 
 	fmt.Printf("%sEOS READ METHOD      %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, readmethod, CLR_N)
+	fmt.Printf("%sEOS /proc/user MAX   %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, procuserMax, CLR_N)
 
 	fmt.Printf("%sEOS LOG LEVEL        %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, loglevel, CLR_N)
 	fmt.Printf("----------------------\n\n")
 
 	return &eosObjects{
-		loglevel:   loglevel,
-		url:        os.Getenv("EOS"),
-		path:       os.Getenv("VOLUME_PATH"),
-		hookurl:    os.Getenv("HOOKSURL"),
-		scripts:    os.Getenv("SCRIPTS"),
-		user:       os.Getenv("EOSUSER"),
-		uid:        os.Getenv("EOSUID"),
-		gid:        os.Getenv("EOSGID"),
-		stage:      stage,
-		readonly:   readonly,
-		readmethod: readmethod,
+		loglevel:    loglevel,
+		url:         os.Getenv("EOS"),
+		path:        os.Getenv("VOLUME_PATH"),
+		hookurl:     os.Getenv("HOOKSURL"),
+		scripts:     os.Getenv("SCRIPTS"),
+		user:        os.Getenv("EOSUSER"),
+		uid:         os.Getenv("EOSUID"),
+		gid:         os.Getenv("EOSGID"),
+		stage:       stage,
+		readonly:    readonly,
+		readmethod:  readmethod,
+		procuserMax: procuserMax,
 	}, nil
 }
 
@@ -225,17 +234,18 @@ func (g *EOS) Production() bool {
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
-	loglevel   int
-	url        string
-	path       string
-	hookurl    string
-	scripts    string
-	user       string
-	uid        string
-	gid        string
-	stage      string
-	readonly   bool
-	readmethod string
+	loglevel    int
+	url         string
+	path        string
+	hookurl     string
+	scripts     string
+	user        string
+	uid         string
+	gid         string
+	stage       string
+	readonly    bool
+	readmethod  string
+	procuserMax int
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -554,6 +564,31 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 
 	e.Log(2, "  %s etag:%s content-type:%s\n", path, stat.ETag(), stat.ContentType())
 	return objInfo, err
+}
+
+// GetObjectNInfo - returns object info and locked object ReadCloser
+func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, rs *minio.HTTPRangeSpec, h http.Header) (gr *minio.GetObjectReader, err error) {
+	var objInfo minio.ObjectInfo
+	objInfo, err = e.GetObjectInfo(ctx, bucket, object, minio.ObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	var startOffset, length int64
+	startOffset, length, err = rs.GetOffsetLength(objInfo.Size)
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		err := e.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag, minio.ObjectOptions{})
+		pw.CloseWithError(err)
+	}()
+	// Setup cleanup function to cause the above go-routine to
+	// exit in case of partial read
+	pipeCloser := func() { pr.Close() }
+	return minio.NewGetObjectReaderFromReader(pr, objInfo, pipeCloser), nil
 }
 
 // ListMultipartUploads - lists all multipart uploads.
@@ -1040,6 +1075,38 @@ var eosMultiParts = make(map[string]*eosMultiPartsType)
 
 var eosMultiPartsMutex = sync.RWMutex{}
 
+var procuserAmountWaiting = 0
+var procuserAmountRunning = 0
+var procuserAmountMutex = sync.Mutex{}
+
+func (e *eosObjects) procuserAmountWaitingInc() (waiting, running int) {
+	procuserAmountMutex.Lock()
+	defer procuserAmountMutex.Unlock()
+	procuserAmountWaiting++
+	return procuserAmountWaiting, procuserAmountRunning
+}
+
+func (e *eosObjects) procuserAmountRunningIncWaitingDec() (waiting, running int) {
+	procuserAmountMutex.Lock()
+	defer procuserAmountMutex.Unlock()
+	procuserAmountRunning++
+	procuserAmountWaiting--
+	return procuserAmountWaiting, procuserAmountRunning
+}
+
+func (e *eosObjects) procuserAmountRunningDec() (waiting, running int) {
+	procuserAmountMutex.Lock()
+	defer procuserAmountMutex.Unlock()
+	procuserAmountRunning--
+	return procuserAmountWaiting, procuserAmountRunning
+}
+
+func (e *eosObjects) procuserAmountRead() (waiting, running int) {
+	procuserAmountMutex.Lock()
+	defer procuserAmountMutex.Unlock()
+	return procuserAmountWaiting, procuserAmountRunning
+}
+
 func (e *eosObjects) interfaceToInt64(in interface{}) int64 {
 	if in == nil {
 		return 0
@@ -1096,8 +1163,9 @@ func (e *eosObjects) messagebusAddPutJob(path string)    { e.messagebusAddJob("s
 func (e *eosObjects) messagebusAddDeleteJob(path string) { e.messagebusAddJob("s3.Delete", path) }
 
 //Sometimes EOS needs to breath
-func (e *eosObjects) EOSsleep()     { time.Sleep(100 * time.Millisecond) }
+func (e *eosObjects) EOSsleep()     { time.Sleep(0100 * time.Millisecond) }
 func (e *eosObjects) EOSsleepSlow() { time.Sleep(1000 * time.Millisecond) }
+func (e *eosObjects) EOSsleepFast() { time.Sleep(0010 * time.Millisecond) }
 
 func (e *eosObjects) EOSurlExtras() string {
 	return fmt.Sprintf("&eos.ruid=%s&eos.rgid=%s&mgm.format=json", e.uid, e.gid)
@@ -1151,6 +1219,17 @@ func (e *eosObjects) EOScacheDeleteObject(bucket, object string) {
 }
 
 func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface{}, err error) {
+	if e.procuserMax > 0 {
+		amountWaiting, amountRunning := e.procuserAmountWaitingInc()
+		e.Log(3, "DEBUG: procuserAmountRunning / procuserMax (%d/%d), procuserAmountWaiting: %d Before curl\n", amountRunning, e.procuserMax, amountWaiting)
+		for amountRunning >= e.procuserMax { //limit queries
+			e.Log(4, "DEBUG: procuserAmountRunning >= procuserMax (%d>=%d), procuserAmountWaiting: %d, sleeping\n", amountRunning, e.procuserMax, amountWaiting)
+			e.EOSsleepFast()
+			amountWaiting, amountRunning = e.procuserAmountRead()
+		}
+		amountWaiting, amountRunning = e.procuserAmountRunningIncWaitingDec()
+	}
+
 	eosurl := fmt.Sprintf("http://%s:8000/proc/user/?%s", e.url, cmd)
 	e.Log(4, "DEBUG: curl '%s'\n", eosurl)
 	client := &http.Client{
@@ -1169,6 +1248,10 @@ func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface
 	m = make(map[string]interface{})
 	err = json.Unmarshal([]byte(body), &m)
 
+	if e.procuserMax > 0 {
+		amountWaiting, amountRunning := e.procuserAmountRunningDec()
+		e.Log(3, "DEBUG: procuserAmountRunning / procuserMax (%d/%d), procuserAmountWaiting: %d After curl\n", amountRunning, e.procuserMax, amountWaiting)
+	}
 	return body, m, err
 }
 
