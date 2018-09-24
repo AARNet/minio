@@ -1582,7 +1582,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 	e.Log(3, "  %s\n", eosurl)
 
-	e.Log(1, "DEBUG: EOS webdavPUT : %s\n", eosurl)
+	e.Log(1, "DEBUG: EOS webdav.PUT : %s\n", eosurl)
 
 	maxRetry := 10
 	retry := 0
@@ -1628,7 +1628,7 @@ func (e *eosObjects) EOSwriteChunk(p string, offset, size int64, checksum string
 		return err
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-	e.Log(1, "DEBUG: EOS xrootdPUT : %s %s %d %d %s %d %d\n", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
+	e.Log(1, "DEBUG: EOS xrootd.PUT : %s %s %d %d %s %d %d\n", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
 
 	cmd := exec.Command(e.scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.uid, e.gid)
 	cmd.Stdin = bytes.NewReader(data)
@@ -1651,7 +1651,7 @@ func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
 		return err
 	}
 
-	e.Log(1, "DEBUG: EOS xrdcpPUT : %s\n", eosurl)
+	e.Log(1, "DEBUG: EOS xrdcp.PUT : %s\n", eosurl)
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1672,7 +1672,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 
 	if e.readmethod == "xrootd" {
 		eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-		e.Log(1, "DEBUG: EOS xrootdGET : %s\n", eosurl)
+		e.Log(1, "DEBUG: EOS xrootd.GET : %s\n", eosurl)
 		cmd := exec.Command(e.scripts+"/readChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(length, 10), e.uid, e.gid)
 		var stderr bytes.Buffer
 		cmd.Stdout = data
@@ -1690,7 +1690,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 			return err
 		}
 
-		e.Log(1, "DEBUG: EOS xrdcpGET : %s\n", eosurl)
+		e.Log(1, "DEBUG: EOS xrdcp.GET : %s\n", eosurl)
 		cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
 		var stdout bytes.Buffer
 		var stderr bytes.Buffer
@@ -1714,7 +1714,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 		//e.Log(3,"  %s\n", eosurl)
 		//e.Log(3,"  Range: bytes=%d-%d\n", offset, offset+length-1)
-		e.Log(1, "DEBUG: EOS webdavGET : %s\n", eosurl)
+		e.Log(1, "DEBUG: EOS webdav.GET : %s\n", eosurl)
 
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -1745,7 +1745,7 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 		return "00000000000000000000000000000000", err
 	}
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
-	e.Log(1, "DEBUG: EOS webdavGET : %s\n", eosurl)
+	e.Log(1, "DEBUG: EOS webdav.GET : %s\n", eosurl)
 
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
