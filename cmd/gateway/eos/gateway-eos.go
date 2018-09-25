@@ -599,13 +599,17 @@ func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, k
 
 // NewMultipartUpload
 func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, metadata map[string]string, opts minio.ObjectOptions) (uploadID string, err error) {
-	e.Log(1, "DEBUG: NewMultipartUpload: %s/%s\n           +%v\n", bucket, object, metadata)
+	e.Log(1, "DEBUG: NewMultipartUpload: %s/%s +%v +%v\n", bucket, object, metadata, opts)
 
 	if e.readonly {
 		return "", minio.NotImplemented{}
 	}
 
 	uploadID = bucket + "/" + object
+
+	if strings.HasSuffix(uploadID, "/") {
+		return "", minio.ObjectNotFound{Bucket: bucket, Object: object}
+	}
 
 	dir := bucket + "/" + filepath.Dir(object)
 	if _, err := e.EOSfsStat(dir); err != nil {
@@ -862,13 +866,13 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.PartNumberMarker = partNumberMarker
 
 	i := 0
-	eosMultiPartsMutex.RLock()
+	eosMultiPartsMutex.Lock()
 	result.Parts = make([]minio.PartInfo, eosMultiParts[uploadID].partsCount)
 	for _, part := range eosMultiParts[uploadID].parts {
 		result.Parts[i] = part
 		i++
 	}
-	eosMultiPartsMutex.RUnlock()
+	eosMultiPartsMutex.Unlock()
 
 	return result, nil
 }
@@ -1073,7 +1077,7 @@ func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
 
 var eosMultiParts = make(map[string]*eosMultiPartsType)
 
-var eosMultiPartsMutex = sync.RWMutex{}
+var eosMultiPartsMutex = sync.Mutex{}
 
 var procuserAmountWaiting = 0
 var procuserAmountRunning = 0
