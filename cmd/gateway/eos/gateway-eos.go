@@ -512,7 +512,9 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 		return minio.NotImplemented{}
 	}
 
-	return e.EOSrm(bucket + "/" + object)
+	e.EOSrm(bucket + "/" + object)
+
+	return nil
 }
 
 // GetObject - reads an object from EOS
@@ -846,7 +848,7 @@ func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, u
 		os.RemoveAll(e.stage + "/" + eosMultiParts[uploadID].stagepath)
 	}
 
-	_ = e.EOSrm(bucket + "/" + object)
+	e.EOSrm(bucket + "/" + object)
 
 	//eosMultiPartsMutex.Lock()
 	delete(eosMultiParts, uploadID)
@@ -1277,6 +1279,7 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.fileinfo %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return nil, eoserrFileNotFound
 	}
 
@@ -1355,6 +1358,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 		return nil, err
 	}
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.fileinfo %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return nil, eoserrFileNotFound
 	}
 
@@ -1412,6 +1416,7 @@ func (e *eosObjects) EOSmkdirWithOption(p, option string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.mkdir %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1434,6 +1439,7 @@ func (e *eosObjects) EOSrmdir(p string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.rmdir %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1456,6 +1462,7 @@ func (e *eosObjects) EOSrm(p string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.rm %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1497,6 +1504,7 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.file.copy %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1521,6 +1529,7 @@ func (e *eosObjects) EOStouch(p string, size int64) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.file.touch %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1545,6 +1554,7 @@ func (e *eosObjects) EOSrename(from, to string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
+		e.Log(1, "ERROR EOS procuser.file.rename %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1565,7 +1575,7 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(2, "ERROR: %s\n", e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.attr.set %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
 		//return eoserrSetMeta
 	}
 
