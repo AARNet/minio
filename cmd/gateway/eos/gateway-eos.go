@@ -263,6 +263,11 @@ func (e *eosObjects) Shutdown(ctx context.Context) error {
 	return nil
 }
 
+// IsCompressionSupported returns whether compression is applicable for this layer.
+func (e *eosObjects) IsCompressionSupported() bool {
+	return false
+}
+
 // StorageInfo
 func (e *eosObjects) StorageInfo(ctx context.Context) (storageInfo minio.StorageInfo) {
 	return storageInfo
@@ -569,9 +574,9 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 }
 
 // GetObjectNInfo - returns object info and locked object ReadCloser
-func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, rs *minio.HTTPRangeSpec, h http.Header) (gr *minio.GetObjectReader, err error) {
+func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, rs *minio.HTTPRangeSpec, h http.Header, lockType minio.LockType, opts minio.ObjectOptions) (gr *minio.GetObjectReader, err error) {
 	var objInfo minio.ObjectInfo
-	objInfo, err = e.GetObjectInfo(ctx, bucket, object, minio.ObjectOptions{})
+	objInfo, err = e.GetObjectInfo(ctx, bucket, object, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +589,7 @@ func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 
 	pr, pw := io.Pipe()
 	go func() {
-		err := e.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag, minio.ObjectOptions{})
+		err := e.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag, opts)
 		pw.CloseWithError(err)
 	}()
 	// Setup cleanup function to cause the above go-routine to
@@ -645,9 +650,9 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		mp.stagepath = stagepath
 	}
 
-	eosMultiPartsMutex.Lock()
+	//eosMultiPartsMutex.Lock()
 	eosMultiParts[uploadID] = &mp
-	eosMultiPartsMutex.Unlock()
+	//eosMultiPartsMutex.Unlock()
 
 	e.Log(2, "  uploadID : %s\n", uploadID)
 	return uploadID, nil
@@ -677,21 +682,26 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		Size:         size,
 	}
 
-	eosMultiPartsMutex.Lock()
+	eosMultiParts[uploadID].mutex.Lock()
 	eosMultiParts[uploadID].parts[partID] = newPart
-	eosMultiPartsMutex.Unlock()
+	eosMultiParts[uploadID].mutex.Unlock()
 
 	if partID == 1 {
+		eosMultiParts[uploadID].mutex.Lock()
 		eosMultiParts[uploadID].firstByte = buf[0]
 		eosMultiParts[uploadID].chunkSize = size
+		eosMultiParts[uploadID].mutex.Unlock()
 	} else {
 		for eosMultiParts[uploadID].chunkSize == 0 {
-			e.Log(1, "DEBUG: PutObjectPart ok, waiting for first chunk...\n")
+			e.Log(1, "DEBUG: PutObjectPart ok, waiting for first chunk (processing part %d)...\n", partID)
 			e.EOSsleep()
 		}
 	}
+
+	eosMultiParts[uploadID].mutex.Lock()
 	eosMultiParts[uploadID].partsCount++
 	eosMultiParts[uploadID].AddToSize(size)
+	eosMultiParts[uploadID].mutex.Unlock()
 
 	offset := eosMultiParts[uploadID].chunkSize * int64(partID-1)
 	e.Log(3, "DEBUG: PutObjectPart offset = %d = %d\n", (partID - 1), offset)
@@ -721,8 +731,10 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 			e.Log(3, "DEBUG: PutObjectPart waiting for md5PartID = %d, currently = %d\n", eosMultiParts[uploadID].md5PartID, partID)
 			e.EOSsleep()
 		}
+		eosMultiParts[uploadID].mutex.Lock()
 		eosMultiParts[uploadID].md5.Write(buf)
 		eosMultiParts[uploadID].md5PartID++
+		eosMultiParts[uploadID].mutex.Unlock()
 	}()
 
 	return newPart, nil
@@ -867,14 +879,17 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.MaxParts = maxParts
 	result.PartNumberMarker = partNumberMarker
 
+	eosMultiParts[uploadID].mutex.Lock()
 	i := 0
-	eosMultiPartsMutex.Lock()
-	result.Parts = make([]minio.PartInfo, eosMultiParts[uploadID].partsCount)
+	size := eosMultiParts[uploadID].partsCount
+	result.Parts = make([]minio.PartInfo, size)
 	for _, part := range eosMultiParts[uploadID].parts {
-		result.Parts[i] = part
-		i++
+		if i < size {
+			result.Parts[i] = part
+			i++
+		}
 	}
-	eosMultiPartsMutex.Unlock()
+	eosMultiParts[uploadID].mutex.Unlock()
 
 	return result, nil
 }
@@ -1073,13 +1088,12 @@ type eosMultiPartsType struct {
 	stagepath   string
 	md5         hash.Hash
 	md5PartID   int
+	mutex       sync.Mutex
 }
 
 func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
 
 var eosMultiParts = make(map[string]*eosMultiPartsType)
-
-var eosMultiPartsMutex = sync.Mutex{}
 
 var procuserAmountWaiting = 0
 var procuserAmountRunning = 0
@@ -1504,7 +1518,7 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.file.copy %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.file.copy %s %s : %s\n", eossrcpath, eosdstpath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1554,7 +1568,7 @@ func (e *eosObjects) EOSrename(from, to string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.file.rename %s : %s\n", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.file.rename %s : %s\n", eosfrompath, eostopath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
