@@ -79,7 +79,8 @@ ENVIRONMENT VARIABLES:
      EOSSTAGE: local fast disk to stage multipart uploads
      EOSREADONLY: true/false
      EOSREADMETHOD: webdav/xrootd/xrdcp (DEFAULT: webdav)
-     EOSMAXPROCUSER: int (default 8)
+     EOSMAXPROCUSER: int (default 12)
+     EOSSLEEPPROCUSER: int ms sleep 1000ms = 1s (default 100 ms)
      VOLUME_PATH: path on eos
      HOOKSURL: url to s3 hooks (not setting this will disable hooks)
      SCRIPTS: path to xroot script
@@ -182,10 +183,15 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readmethod = "xrdcp"
 	}
 
-	procuserMax := 8
+	procuserMax := 12
 	ret, err := strconv.Atoi(os.Getenv("EOSMAXPROCUSER"))
 	if err == nil {
 		procuserMax = ret
+	}
+	procuserSleep := 100
+	ret, err = strconv.Atoi(os.Getenv("EOSSLEEPPROCUSER"))
+	if err == nil {
+		procuserSleep = ret
 	}
 
 	fmt.Printf("------%sEOS CONFIG%s------\n", CLR_G, CLR_N)
@@ -207,23 +213,24 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	fmt.Printf("%sEOS READ METHOD      %s:%s %s%s\n", CLR_B, CLR_N, CLR_W, readmethod, CLR_N)
 	fmt.Printf("%sEOS /proc/user MAX   %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, procuserMax, CLR_N)
+	fmt.Printf("%sEOS /proc/user SLEEP %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, procuserSleep, CLR_N)
 
 	fmt.Printf("%sEOS LOG LEVEL        %s:%s %d%s\n", CLR_B, CLR_N, CLR_W, loglevel, CLR_N)
-	fmt.Printf("----------------------\n\n")
 
 	return &eosObjects{
-		loglevel:    loglevel,
-		url:         os.Getenv("EOS"),
-		path:        os.Getenv("VOLUME_PATH"),
-		hookurl:     os.Getenv("HOOKSURL"),
-		scripts:     os.Getenv("SCRIPTS"),
-		user:        os.Getenv("EOSUSER"),
-		uid:         os.Getenv("EOSUID"),
-		gid:         os.Getenv("EOSGID"),
-		stage:       stage,
-		readonly:    readonly,
-		readmethod:  readmethod,
-		procuserMax: procuserMax,
+		loglevel:      loglevel,
+		url:           os.Getenv("EOS"),
+		path:          os.Getenv("VOLUME_PATH"),
+		hookurl:       os.Getenv("HOOKSURL"),
+		scripts:       os.Getenv("SCRIPTS"),
+		user:          os.Getenv("EOSUSER"),
+		uid:           os.Getenv("EOSUID"),
+		gid:           os.Getenv("EOSGID"),
+		stage:         stage,
+		readonly:      readonly,
+		readmethod:    readmethod,
+		procuserMax:   procuserMax,
+		procuserSleep: procuserSleep,
 	}, nil
 }
 
@@ -234,18 +241,19 @@ func (g *EOS) Production() bool {
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
-	loglevel    int
-	url         string
-	path        string
-	hookurl     string
-	scripts     string
-	user        string
-	uid         string
-	gid         string
-	stage       string
-	readonly    bool
-	readmethod  string
-	procuserMax int
+	loglevel      int
+	url           string
+	path          string
+	hookurl       string
+	scripts       string
+	user          string
+	uid           string
+	gid           string
+	stage         string
+	readonly      bool
+	readmethod    string
+	procuserMax   int
+	procuserSleep int
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -1095,36 +1103,114 @@ func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
 
 var eosMultiParts = make(map[string]*eosMultiPartsType)
 
+type procuserJob struct {
+	busy    bool
+	lastrun int64
+}
+
+var procuserJobs = make(map[int]*procuserJob)
 var procuserAmountWaiting = 0
-var procuserAmountRunning = 0
 var procuserAmountMutex = sync.Mutex{}
 
-func (e *eosObjects) procuserAmountWaitingInc() (waiting, running int) {
-	procuserAmountMutex.Lock()
-	defer procuserAmountMutex.Unlock()
-	procuserAmountWaiting++
-	return procuserAmountWaiting, procuserAmountRunning
-}
-
-func (e *eosObjects) procuserAmountRunningIncWaitingDec() (waiting, running int) {
-	procuserAmountMutex.Lock()
-	defer procuserAmountMutex.Unlock()
-	procuserAmountRunning++
-	procuserAmountWaiting--
-	return procuserAmountWaiting, procuserAmountRunning
-}
-
-func (e *eosObjects) procuserAmountRunningDec() (waiting, running int) {
-	procuserAmountMutex.Lock()
-	defer procuserAmountMutex.Unlock()
-	procuserAmountRunning--
-	return procuserAmountWaiting, procuserAmountRunning
+func (e *eosObjects) procuserAmountRunning() int {
+	count := 0
+	for i := 0; i < e.procuserMax; i++ {
+		job, ok := procuserJobs[i]
+		if ok {
+			if job.busy {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func (e *eosObjects) procuserAmountRead() (waiting, running int) {
 	procuserAmountMutex.Lock()
+	procuserAmountRunning := e.procuserAmountRunning()
 	defer procuserAmountMutex.Unlock()
 	return procuserAmountWaiting, procuserAmountRunning
+}
+
+func (e *eosObjects) procuserAmountWaitingInc() (waiting, busy int) {
+	procuserAmountMutex.Lock()
+	procuserAmountWaiting++
+	procuserAmountRunning := e.procuserAmountRunning()
+	defer procuserAmountMutex.Unlock()
+	return procuserAmountWaiting, procuserAmountRunning
+}
+
+func (e *eosObjects) procuserGetFreeSlot() int {
+	slot := -1
+	now := time.Now().Unix()
+	procuserAmountMutex.Lock()
+	for i := 0; i < e.procuserMax; i++ {
+		job, ok := procuserJobs[i]
+		if ok {
+			e.Log(4, "DEBUG: procuser slot %d job: %+v\n", i, job)
+			if !job.busy && now-job.lastrun >= 1 {
+				slot = i
+				procuserAmountWaiting--
+				job.busy = true
+				job.lastrun = now
+				break
+			}
+		} else {
+			e.Log(4, "DEBUG: procuser slot %d does not exist, creating\n", i)
+			slot = i
+			procuserAmountWaiting--
+			newJob := procuserJob{
+				busy:    true,
+				lastrun: now,
+			}
+			procuserJobs[i] = &newJob
+			break
+		}
+	}
+	defer procuserAmountMutex.Unlock()
+	return slot
+}
+
+func (e *eosObjects) procuserWaitForSlot() int {
+	slot := -1
+	if e.procuserMax > 0 {
+		amountWaiting, amountRunning := e.procuserAmountWaitingInc()
+		e.Log(3, "DEBUG: procuserAmountRunning / procuserMax (%d/%d), procuserAmountWaiting: %d Before curl\n", amountRunning, e.procuserMax, amountWaiting)
+
+		//wait for task to be not busy
+		for amountRunning >= e.procuserMax {
+			e.Log(4, "DEBUG: procuserAmountRunning >= procuserMax (%d>=%d), procuserAmountWaiting: %d, sleeping %dms\n", amountRunning, e.procuserMax, amountWaiting, e.procuserSleep)
+			e.EOSsleepMs(e.procuserSleep)
+			amountWaiting, amountRunning = e.procuserAmountRead()
+		}
+
+		//wait for non busy slot to age at least 1s
+		for slot == -1 {
+			slot = e.procuserGetFreeSlot()
+			if slot == -1 {
+				e.Log(4, "DEBUG: procuser slots are maxed out this second, sleeping %dms\n", e.procuserSleep)
+				e.EOSsleepMs(e.procuserSleep)
+			}
+		}
+	}
+	return slot
+}
+
+func (e *eosObjects) procuserFreeSlot(slot int) {
+	e.Log(5, "DEBUG: procuser slot %d try to free\n", slot)
+	if e.procuserMax == 0 || slot == -1 {
+		return
+	}
+
+	procuserAmountMutex.Lock()
+	job, ok := procuserJobs[slot]
+	if ok {
+		e.Log(4, "DEBUG: procuser slot %d set to free SUCCESS\n", slot)
+		job.busy = false
+	} else {
+		e.Log(4, "DEBUG: procuser slot %d set to free FAILED\n", slot)
+	}
+	defer procuserAmountMutex.Unlock()
 }
 
 func (e *eosObjects) interfaceToInt64(in interface{}) int64 {
@@ -1183,9 +1269,10 @@ func (e *eosObjects) messagebusAddPutJob(path string)    { e.messagebusAddJob("s
 func (e *eosObjects) messagebusAddDeleteJob(path string) { e.messagebusAddJob("s3.Delete", path) }
 
 //Sometimes EOS needs to breath
-func (e *eosObjects) EOSsleep()     { time.Sleep(0100 * time.Millisecond) }
-func (e *eosObjects) EOSsleepSlow() { time.Sleep(1000 * time.Millisecond) }
-func (e *eosObjects) EOSsleepFast() { time.Sleep(0010 * time.Millisecond) }
+func (e *eosObjects) EOSsleepMs(t int) { time.Sleep(time.Duration(t) * time.Millisecond) }
+func (e *eosObjects) EOSsleep()        { e.EOSsleepMs(0100) }
+func (e *eosObjects) EOSsleepSlow()    { e.EOSsleepMs(1000) }
+func (e *eosObjects) EOSsleepFast()    { e.EOSsleepMs(0010) }
 
 func (e *eosObjects) EOSurlExtras() string {
 	return fmt.Sprintf("&eos.ruid=%s&eos.rgid=%s&mgm.format=json", e.uid, e.gid)
@@ -1239,16 +1326,7 @@ func (e *eosObjects) EOScacheDeleteObject(bucket, object string) {
 }
 
 func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface{}, err error) {
-	if e.procuserMax > 0 {
-		amountWaiting, amountRunning := e.procuserAmountWaitingInc()
-		e.Log(3, "DEBUG: procuserAmountRunning / procuserMax (%d/%d), procuserAmountWaiting: %d Before curl\n", amountRunning, e.procuserMax, amountWaiting)
-		for amountRunning >= e.procuserMax { //limit queries
-			e.Log(4, "DEBUG: procuserAmountRunning >= procuserMax (%d>=%d), procuserAmountWaiting: %d, sleeping\n", amountRunning, e.procuserMax, amountWaiting)
-			e.EOSsleepFast()
-			amountWaiting, amountRunning = e.procuserAmountRead()
-		}
-		amountWaiting, amountRunning = e.procuserAmountRunningIncWaitingDec()
-	}
+	slot := e.procuserWaitForSlot()
 
 	eosurl := fmt.Sprintf("http://%s:8000/proc/user/?%s", e.url, cmd)
 	e.Log(4, "DEBUG: curl '%s'\n", eosurl)
@@ -1268,10 +1346,7 @@ func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface
 	m = make(map[string]interface{})
 	err = json.Unmarshal([]byte(body), &m)
 
-	if e.procuserMax > 0 {
-		amountWaiting, amountRunning := e.procuserAmountRunningDec()
-		e.Log(3, "DEBUG: procuserAmountRunning / procuserMax (%d/%d), procuserAmountWaiting: %d After curl\n", amountRunning, e.procuserMax, amountWaiting)
-	}
+	e.procuserFreeSlot(slot)
 	return body, m, err
 }
 
