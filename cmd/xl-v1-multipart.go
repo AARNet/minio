@@ -198,15 +198,8 @@ func (xl xlObjects) newMultipartUpload(ctx context.Context, bucket string, objec
 	// establish the writeQuorum using this data
 	writeQuorum := dataBlocks + 1
 
-	// If not set default to "application/octet-stream"
 	if meta["content-type"] == "" {
-		contentType := "application/octet-stream"
-		if objectExt := path.Ext(object); objectExt != "" {
-			content, ok := mimedb.DB[strings.ToLower(strings.TrimPrefix(objectExt, "."))]
-			if ok {
-				contentType = content.ContentType
-			}
-		}
+		contentType := mimedb.TypeByExtension(path.Ext(object))
 		meta["content-type"] = contentType
 	}
 	xlMeta.Stat.ModTime = UTCNow()
@@ -227,7 +220,7 @@ func (xl xlObjects) newMultipartUpload(ctx context.Context, bucket string, objec
 	defer xl.deleteObject(ctx, minioMetaTmpBucket, tempUploadIDPath, writeQuorum, false)
 
 	// Attempt to rename temp upload object to actual upload path object
-	_, rErr := renameObject(ctx, disks, minioMetaTmpBucket, tempUploadIDPath, minioMetaMultipartBucket, uploadIDPath, writeQuorum)
+	_, rErr := rename(ctx, disks, minioMetaTmpBucket, tempUploadIDPath, minioMetaMultipartBucket, uploadIDPath, true, writeQuorum, nil)
 	if rErr != nil {
 		return "", toObjectErr(rErr, minioMetaMultipartBucket, uploadIDPath)
 	}
@@ -350,7 +343,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	// Delete the temporary object part. If PutObjectPart succeeds there would be nothing to delete.
 	defer xl.deleteObject(ctx, minioMetaTmpBucket, tmpPart, writeQuorum, false)
 	if data.Size() > 0 || data.Size() == -1 {
-		if pErr := xl.prepareFile(ctx, minioMetaTmpBucket, tmpPartPath, data.Size(), onlineDisks, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks, writeQuorum); err != nil {
+		if pErr := xl.prepareFile(ctx, minioMetaTmpBucket, tmpPartPath, data.Size(), onlineDisks, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks, writeQuorum); pErr != nil {
 			return pi, toObjectErr(pErr, bucket, object)
 
 		}
@@ -366,7 +359,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	switch size := data.Size(); {
 	case size == 0:
 		buffer = make([]byte, 1) // Allocate atleast a byte to reach EOF
-	case size == -1 || size > blockSizeV1:
+	case size == -1 || size >= blockSizeV1:
 		buffer = xl.bp.Get()
 		defer xl.bp.Put(buffer)
 	case size < blockSizeV1:
@@ -416,7 +409,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 
 	// Rename temporary part file to its final location.
 	partPath := path.Join(uploadIDPath, partSuffix)
-	onlineDisks, err = renamePart(ctx, onlineDisks, minioMetaTmpBucket, tmpPartPath, minioMetaMultipartBucket, partPath, writeQuorum)
+	onlineDisks, err = rename(ctx, onlineDisks, minioMetaTmpBucket, tmpPartPath, minioMetaMultipartBucket, partPath, false, writeQuorum, nil)
 	if err != nil {
 		return pi, toObjectErr(err, minioMetaMultipartBucket, partPath)
 	}
@@ -746,16 +739,21 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	}
 
 	if xl.isObject(bucket, object) {
+		// Deny if WORM is enabled
+		if globalWORMEnabled {
+			return ObjectInfo{}, ObjectAlreadyExists{Bucket: bucket, Object: object}
+		}
+
 		// Rename if an object already exists to temporary location.
 		newUniqueID := mustGetUUID()
 
 		// Delete success renamed object.
 		defer xl.deleteObject(ctx, minioMetaTmpBucket, newUniqueID, writeQuorum, false)
 
-		// NOTE: Do not use online disks slice here.
-		// The reason is that existing object should be purged
-		// regardless of `xl.json` status and rolled back in case of errors.
-		_, err = renameObject(ctx, xl.getDisks(), bucket, object, minioMetaTmpBucket, newUniqueID, writeQuorum)
+		// NOTE: Do not use online disks slice here: the reason is that existing object should be purged
+		// regardless of `xl.json` status and rolled back in case of errors. Also allow renaming of the
+		// existing object if it is not present in quorum disks so users can overwrite stale objects.
+		_, err = rename(ctx, xl.getDisks(), bucket, object, minioMetaTmpBucket, newUniqueID, true, writeQuorum, []error{errFileNotFound})
 		if err != nil {
 			return oi, toObjectErr(err, bucket, object)
 		}
@@ -774,15 +772,8 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 		}
 	}
 
-	// Deny if WORM is enabled
-	if globalWORMEnabled {
-		if xl.isObject(bucket, object) {
-			return ObjectInfo{}, ObjectAlreadyExists{Bucket: bucket, Object: object}
-		}
-	}
-
 	// Rename the multipart object to final location.
-	if _, err = renameObject(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath, bucket, object, writeQuorum); err != nil {
+	if _, err = rename(ctx, onlineDisks, minioMetaMultipartBucket, uploadIDPath, bucket, object, true, writeQuorum, nil); err != nil {
 		return oi, toObjectErr(err, bucket, object)
 	}
 
