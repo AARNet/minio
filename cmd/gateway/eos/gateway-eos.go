@@ -1312,7 +1312,7 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 		return nil, err
 	}
 
-	e.Log(2, "EOS: procuser.fileinfo %s", eospath)
+	e.Log(2, "EOScmd: procuser.fileinfo %s", eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: EOSreadDir 1 can not json.Unmarshal()")
@@ -1392,7 +1392,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	}
 	e.Log(4, "cache miss: %s", eospath)
 
-	e.Log(2, "EOS: procuser.fileinfo %s", eospath)
+	e.Log(2, "EOScmd: procuser.fileinfo %s", eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: EOSfsStat can not json.Unmarshal()")
@@ -1449,7 +1449,7 @@ func (e *eosObjects) EOSmkdirWithOption(p, option string) error {
 		return err
 	}
 
-	e.Log(2, "EOS: procuser.mkdir %s", eospath)
+	e.Log(2, "EOScmd: procuser.mkdir %s", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1472,7 +1472,7 @@ func (e *eosObjects) EOSrmdir(p string) error {
 		return err
 	}
 
-	e.Log(2, "EOS: procuser.rmdir %s", eospath)
+	e.Log(2, "EOScmd: procuser.rmdir %s", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rmdir&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1495,7 +1495,7 @@ func (e *eosObjects) EOSrm(p string) error {
 		return err
 	}
 
-	e.Log(2, "EOS: procuser.rm %s", eospath)
+	e.Log(2, "EOScmd: procuser.rm %s", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=rf&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1525,7 +1525,7 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 
 	//need to wait for file, it is possible it is uploaded via a background job
 	for {
-		e.Log(2, "EOS: procuser.fileinfo %s", eossrcpath)
+		e.Log(2, "EOScmd: procuser.fileinfo %s", eossrcpath)
 		_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eossrcpath), e.EOSurlExtras()))
 		if err == nil {
 			if e.interfaceToInt64(m["size"]) >= size {
@@ -1537,7 +1537,7 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 		e.EOSsleepSlow()
 	}
 
-	e.Log(2, "EOS: procuser.file.copy %s %s", eossrcpath, eosdstpath)
+	e.Log(2, "EOScmd: procuser.file.copy %s %s", eossrcpath, eosdstpath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1562,7 +1562,7 @@ func (e *eosObjects) EOStouch(p string, size int64) error {
 		return err
 	}
 
-	e.Log(2, "EOS: procuser.file.touch %s", eospath)
+	e.Log(2, "EOScmd: procuser.file.touch %s", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.EOSurlExtras(), size))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1587,7 +1587,7 @@ func (e *eosObjects) EOSrename(from, to string) error {
 		return err
 	}
 
-	e.Log(2, "EOS: procuser.file.rename %s %s", eosfrompath, eostopath)
+	e.Log(2, "EOScmd: procuser.file.rename %s %s", eosfrompath, eostopath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=rename&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eosfrompath), url.QueryEscape(eostopath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1607,7 +1607,7 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	if err != nil {
 		return err
 	}
-	e.Log(2, "EOS: procuser.attr.set %s=%s %s", key, value, eospath)
+	e.Log(2, "EOScmd: procuser.attr.set %s=%s %s", key, value, eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras()))
 	e.Log(3, "Meta Tag return body : %s", strings.Replace(string(body), "\n", " ", -1))
 	if err != nil {
@@ -1637,7 +1637,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 	e.Log(3, "%s", eosurl)
 
-	e.Log(2, "EOS: webdav.PUT : %s", eosurl)
+	e.Log(2, "EOScmd: webdav.PUT : %s", eosurl)
 
 	maxRetry := 10
 	retry := 0
@@ -1687,7 +1687,7 @@ func (e *eosObjects) EOSxrootdWriteChunk(p string, offset, size int64, checksum 
 		return err
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-	e.Log(2, "EOS: xrootd.PUT : %s %s %d %d %s %d %d", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
+	e.Log(2, "EOScmd: xrootd.PUT : %s %s %d %d %s %d %d", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
 	slot := e.xrootdJobs.waitForSlot()
 
 	cmd := exec.Command(e.scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.uid, e.gid)
@@ -1713,7 +1713,7 @@ func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
 		return err
 	}
 
-	e.Log(2, "EOS: xrdcp.PUT : %s", eosurl)
+	e.Log(2, "EOScmd: xrdcp.PUT : %s", eosurl)
 	slot := e.xrdcpJobs.waitForSlot()
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
@@ -1738,7 +1738,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 
 	if e.readmethod == "xrootd" {
 		eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-		e.Log(2, "EOS: xrootd.GET : %s", eosurl)
+		e.Log(2, "EOScmd: xrootd.GET : %s", eosurl)
 		slot := e.xrootdJobs.waitForSlot()
 
 		cmd := exec.Command(e.scripts+"/readChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(length, 10), e.uid, e.gid)
@@ -1759,7 +1759,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 			return err
 		}
 
-		e.Log(2, "EOS: xrdcp.GET : %s", eosurl)
+		e.Log(2, "EOScmd: xrdcp.GET : %s", eosurl)
 		slot := e.xrdcpJobs.waitForSlot()
 
 		cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
@@ -1788,7 +1788,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 		//e.Log(3,"%s", eosurl)
 		//e.Log(3,"Range: bytes=%d-%d", offset, offset+length-1)
-		e.Log(2, "EOS: webdav.GET : %s", eosurl)
+		e.Log(2, "EOScmd: webdav.GET : %s", eosurl)
 
 		slot := e.webdavJobs.waitForSlot()
 		client := &http.Client{
@@ -1822,7 +1822,7 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 		return "00000000000000000000000000000000", err
 	}
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
-	e.Log(2, "EOS: webdav.GET : %s", eosurl)
+	e.Log(2, "EOScmd: webdav.GET : %s", eosurl)
 
 	slot := e.webdavJobs.waitForSlot()
 	client := &http.Client{
