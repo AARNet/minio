@@ -1496,7 +1496,7 @@ func (e *eosObjects) EOSrm(p string) error {
 	}
 
 	e.Log(2, "EOScmd: procuser.rm %s", eospath)
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=rf&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
 		return err
