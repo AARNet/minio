@@ -266,8 +266,8 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 
 	// Executes the query on data-set
 	if err = s3select.Execute(w, s3s); err != nil {
-		logger.LogIf(ctx, err)
-
+		writeErrorResponse(w, toAPIErrorCode(err), r.URL)
+		return
 	}
 
 	for k, v := range objInfo.UserDefined {
@@ -675,6 +675,11 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		return
+	}
+
+	if s3Error := checkRequestAuthType(ctx, r, policy.GetObjectAction, srcBucket, srcObject); s3Error != ErrNone {
+		writeErrorResponse(w, s3Error, r.URL)
 		return
 	}
 
@@ -1390,6 +1395,11 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
 		writeErrorResponse(w, ErrInvalidCopySource, r.URL)
+		return
+	}
+
+	if s3Error := checkRequestAuthType(ctx, r, policy.GetObjectAction, srcBucket, srcObject); s3Error != ErrNone {
+		writeErrorResponse(w, s3Error, r.URL)
 		return
 	}
 
