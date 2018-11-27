@@ -21,6 +21,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	jwtgo "github.com/dgrijalva/jwt-go"
@@ -60,8 +61,8 @@ func IsAccessKeyValid(accessKey string) bool {
 	return len(accessKey) >= accessKeyMinLen
 }
 
-// isSecretKeyValid - validate secret key for right length.
-func isSecretKeyValid(secretKey string) bool {
+// IsSecretKeyValid - validate secret key for right length.
+func IsSecretKeyValid(secretKey string) bool {
 	return len(secretKey) >= secretKeyMinLen
 }
 
@@ -87,7 +88,7 @@ func (cred Credentials) IsExpired() bool {
 func (cred Credentials) IsValid() bool {
 	// Verify credentials if its enabled or not set.
 	if cred.Status == "enabled" || cred.Status == "" {
-		return IsAccessKeyValid(cred.AccessKey) && isSecretKeyValid(cred.SecretKey) && !cred.IsExpired()
+		return IsAccessKeyValid(cred.AccessKey) && IsSecretKeyValid(cred.SecretKey) && !cred.IsExpired()
 	}
 	return false
 }
@@ -131,7 +132,7 @@ func GetNewCredentialsWithMetadata(m map[string]interface{}, tokenSecret string)
 	if err != nil {
 		return cred, err
 	}
-	cred.SecretKey = string([]byte(base64.URLEncoding.EncodeToString(keyBytes))[:secretKeyMaxLen])
+	cred.SecretKey = strings.Replace(string([]byte(base64.StdEncoding.EncodeToString(keyBytes))[:secretKeyMaxLen]), "/", "+", -1)
 	cred.Status = "enabled"
 
 	expiry, ok := m["exp"].(float64)
@@ -163,7 +164,7 @@ func CreateCredentials(accessKey, secretKey string) (cred Credentials, err error
 	if !IsAccessKeyValid(accessKey) {
 		return cred, ErrInvalidAccessKeyLength
 	}
-	if !isSecretKeyValid(secretKey) {
+	if !IsSecretKeyValid(secretKey) {
 		return cred, ErrInvalidSecretKeyLength
 	}
 	cred.AccessKey = accessKey

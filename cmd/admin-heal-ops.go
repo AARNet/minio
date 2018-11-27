@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"runtime"
 	"strings"
 	"sync"
@@ -61,8 +62,8 @@ var (
 	errHealPushStopNDiscard = fmt.Errorf("heal push stopped due to heal stop signal")
 	errHealStopSignalled    = fmt.Errorf("heal stop signaled")
 
-	errFnHealFromAPIErr = func(err error) error {
-		errCode := toAPIErrorCode(err)
+	errFnHealFromAPIErr = func(ctx context.Context, err error) error {
+		errCode := toAPIErrorCode(ctx, err)
 		apiErr := getAPIError(errCode)
 		return fmt.Errorf("Heal internal error: %s: %s",
 			apiErr.Code, apiErr.Description)
@@ -112,6 +113,32 @@ func initAllHealState(isErasureMode bool) {
 	globalAllHealState = allHealState{
 		healSeqMap: make(map[string]*healSequence),
 	}
+
+	go globalAllHealState.periodicHealSeqsClean()
+}
+
+func (ahs *allHealState) periodicHealSeqsClean() {
+	// Launch clean-up routine to remove this heal sequence (after
+	// it ends) from the global state after timeout has elapsed.
+	ticker := time.NewTicker(time.Minute * 5)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			now := UTCNow()
+			ahs.Lock()
+			for path, h := range ahs.healSeqMap {
+				if h.hasEnded() && h.endTime.Add(keepHealSeqStateDuration).Before(now) {
+					delete(ahs.healSeqMap, path)
+				}
+			}
+			ahs.Unlock()
+		case <-globalServiceDoneCh:
+			// server could be restarting - need
+			// to exit immediately
+			return
+		}
+	}
 }
 
 // getHealSequence - Retrieve a heal sequence by path. The second
@@ -121,6 +148,35 @@ func (ahs *allHealState) getHealSequence(path string) (h *healSequence, exists b
 	defer ahs.Unlock()
 	h, exists = ahs.healSeqMap[path]
 	return h, exists
+}
+
+func (ahs *allHealState) stopHealSequence(path string) ([]byte, APIErrorCode) {
+	var hsp madmin.HealStopSuccess
+	he, exists := ahs.getHealSequence(path)
+	if !exists {
+		hsp = madmin.HealStopSuccess{
+			ClientToken: "invalid",
+			StartTime:   UTCNow(),
+		}
+	} else {
+		hsp = madmin.HealStopSuccess{
+			ClientToken:   he.clientToken,
+			ClientAddress: he.clientAddress,
+			StartTime:     he.startTime,
+		}
+
+		he.stop()
+		for !he.hasEnded() {
+			time.Sleep(1 * time.Second)
+		}
+		ahs.Lock()
+		defer ahs.Unlock()
+		// Heal sequence explicitly stopped, remove it.
+		delete(ahs.healSeqMap, path)
+	}
+
+	b, err := json.Marshal(&hsp)
+	return b, toAdminAPIErrCode(context.Background(), err)
 }
 
 // LaunchNewHealSequence - launches a background routine that performs
@@ -143,20 +199,20 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 			existsAndLive = true
 		}
 	}
+
 	if existsAndLive {
 		// A heal sequence exists on the given path.
 		if h.forceStarted {
-			// stop the running heal sequence - wait for
-			// it to finish.
+			// stop the running heal sequence - wait for it to finish.
 			he.stop()
 			for !he.hasEnded() {
-				time.Sleep(10 * time.Second)
+				time.Sleep(1 * time.Second)
 			}
 		} else {
 			errMsg = "Heal is already running on the given path " +
 				"(use force-start option to stop and start afresh). " +
-				fmt.Sprintf("The heal was started by IP %s at %s",
-					h.clientAddress, h.startTime)
+				fmt.Sprintf("The heal was started by IP %s at %s, token is %s",
+					h.clientAddress, h.startTime.Format(http.TimeFormat), h.clientToken)
 
 			return nil, ErrHealAlreadyRunning, errMsg
 		}
@@ -183,48 +239,13 @@ func (ahs *allHealState) LaunchNewHealSequence(h *healSequence) (
 	// Launch top-level background heal go-routine
 	go h.healSequenceStart()
 
-	// Launch clean-up routine to remove this heal sequence (after
-	// it ends) from the global state after timeout has elapsed.
-	go func() {
-		var keepStateTimeout <-chan time.Time
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		everyMinute := ticker.C
-		for {
-			select {
-			// Check every minute if heal sequence has ended.
-			case <-everyMinute:
-				if h.hasEnded() {
-					keepStateTimeout = time.After(keepHealSeqStateDuration)
-					everyMinute = nil
-				}
-
-			// This case does not fire until the heal
-			// sequence completes.
-			case <-keepStateTimeout:
-				// Heal sequence has ended, keep
-				// results state duration has elapsed,
-				// so purge state.
-				ahs.Lock()
-				defer ahs.Unlock()
-				delete(ahs.healSeqMap, h.path)
-				return
-
-			case <-globalServiceDoneCh:
-				// server could be restarting - need
-				// to exit immediately
-				return
-			}
-		}
-	}()
-
 	b, err := json.Marshal(madmin.HealStartSuccess{
 		ClientToken:   h.clientToken,
 		ClientAddress: h.clientAddress,
 		StartTime:     h.startTime,
 	})
 	if err != nil {
-		logger.LogIf(context.Background(), err)
+		logger.LogIf(h.ctx, err)
 		return nil, ErrInternalError, ""
 	}
 	return b, ErrNone, ""
@@ -272,7 +293,7 @@ func (ahs *allHealState) PopHealStatusJSON(path string,
 
 	jbytes, err := json.Marshal(h.currentStatus)
 	if err != nil {
-		logger.LogIf(context.Background(), err)
+		logger.LogIf(h.ctx, err)
 		return nil, ErrInternalError
 	}
 
@@ -285,11 +306,14 @@ type healSequence struct {
 	// bucket, and prefix on which heal seq. was initiated
 	bucket, objPrefix string
 
-	// path is just bucket + "/" + objPrefix
+	// path is just pathJoin(bucket, objPrefix)
 	path string
 
 	// time at which heal sequence was started
 	startTime time.Time
+
+	// time at which heal sequence has ended
+	endTime time.Time
 
 	// Heal client info
 	clientToken, clientAddress string
@@ -330,7 +354,7 @@ func newHealSequence(bucket, objPrefix, clientAddr string,
 	return &healSequence{
 		bucket:        bucket,
 		objPrefix:     objPrefix,
-		path:          bucket + "/" + objPrefix,
+		path:          pathJoin(bucket, objPrefix),
 		startTime:     UTCNow(),
 		clientToken:   mustGetUUID(),
 		clientAddress: clientAddr,
@@ -468,6 +492,7 @@ func (h *healSequence) healSequenceStart() {
 
 	select {
 	case err, ok := <-h.traverseAndHealDoneCh:
+		h.endTime = UTCNow()
 		h.currentStatus.updateLock.Lock()
 		defer h.currentStatus.updateLock.Unlock()
 		// Heal traversal is complete.
@@ -481,6 +506,7 @@ func (h *healSequence) healSequenceStart() {
 		}
 
 	case <-h.stopSignalCh:
+		h.endTime = UTCNow()
 		h.currentStatus.updateLock.Lock()
 		h.currentStatus.Summary = healStoppedStatus
 		h.currentStatus.FailureDetail = errHealStopSignalled.Error()
@@ -552,7 +578,7 @@ func (h *healSequence) healConfig() error {
 			// before proceeding to heal
 			waitCount := 60
 			// Any requests in progress, delay the heal.
-			for globalHTTPServer.GetRequestCount() > 0 && waitCount > 0 {
+			for globalHTTPServer.GetRequestCount() > 2 && waitCount > 0 {
 				waitCount--
 				time.Sleep(1 * time.Second)
 			}
@@ -562,7 +588,7 @@ func (h *healSequence) healConfig() error {
 		objectInfos, err := objectAPI.ListObjectsHeal(h.ctx, minioMetaBucket, minioConfigPrefix,
 			marker, "", 1000)
 		if err != nil {
-			return errFnHealFromAPIErr(err)
+			return errFnHealFromAPIErr(h.ctx, err)
 		}
 
 		for index := range objectInfos.Objects {
@@ -609,7 +635,7 @@ func (h *healSequence) healDiskFormat() error {
 	// return any error, ignore error returned when disks have
 	// already healed.
 	if err != nil && err != errNoHealRequired {
-		return errFnHealFromAPIErr(err)
+		return errFnHealFromAPIErr(h.ctx, err)
 	}
 
 	// Healing succeeded notify the peers to reload format and re-initialize disks.
@@ -641,7 +667,7 @@ func (h *healSequence) healBuckets() error {
 
 	buckets, err := objectAPI.ListBucketsHeal(h.ctx)
 	if err != nil {
-		return errFnHealFromAPIErr(err)
+		return errFnHealFromAPIErr(h.ctx, err)
 	}
 
 	for _, bucket := range buckets {
@@ -698,7 +724,7 @@ func (h *healSequence) healBucket(bucket string) error {
 			// before proceeding to heal
 			waitCount := 60
 			// Any requests in progress, delay the heal.
-			for globalHTTPServer.GetRequestCount() > 0 && waitCount > 0 {
+			for globalHTTPServer.GetRequestCount() > 2 && waitCount > 0 {
 				waitCount--
 				time.Sleep(1 * time.Second)
 			}
@@ -708,7 +734,7 @@ func (h *healSequence) healBucket(bucket string) error {
 		objectInfos, err := objectAPI.ListObjectsHeal(h.ctx, bucket,
 			h.objPrefix, marker, "", entries)
 		if err != nil {
-			return errFnHealFromAPIErr(err)
+			return errFnHealFromAPIErr(h.ctx, err)
 		}
 
 		g := errgroup.WithNErrs(len(objectInfos.Objects))

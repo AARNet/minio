@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"crypto/tls"
 	"errors"
 	"net"
 	"os"
@@ -31,8 +32,11 @@ import (
 	"github.com/minio/minio-go/pkg/set"
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/cmd/logger/target/console"
+	"github.com/minio/minio/cmd/logger/target/http"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/dns"
+	xnet "github.com/minio/minio/pkg/net"
 )
 
 // Check for updates and print a notification message
@@ -49,23 +53,30 @@ func checkUpdate(mode string) {
 
 // Load logger targets based on user's configuration
 func loadLoggers() {
-	if endpoint, ok := os.LookupEnv("MINIO_LOGGER_HTTP_ENDPOINT"); ok {
-		// Enable http logging through ENV, this is specifically added gateway audit logging.
-		logger.AddTarget(logger.NewHTTP(endpoint, NewCustomHTTPTransport()))
-		return
+	auditEndpoint, ok := os.LookupEnv("MINIO_AUDIT_LOGGER_HTTP_ENDPOINT")
+	if ok {
+		// Enable audit HTTP logging through ENV.
+		logger.AddAuditTarget(http.New(auditEndpoint, NewCustomHTTPTransport()))
+	}
+
+	loggerEndpoint, ok := os.LookupEnv("MINIO_LOGGER_HTTP_ENDPOINT")
+	if ok {
+		// Enable HTTP logging through ENV.
+		logger.AddTarget(http.New(loggerEndpoint, NewCustomHTTPTransport()))
+	} else {
+		for _, l := range globalServerConfig.Logger.HTTP {
+			if l.Enabled {
+				// Enable http logging
+				logger.AddTarget(http.New(l.Endpoint, NewCustomHTTPTransport()))
+			}
+		}
 	}
 
 	if globalServerConfig.Logger.Console.Enabled {
 		// Enable console logging
-		logger.AddTarget(logger.NewConsole())
+		logger.AddTarget(console.New())
 	}
 
-	for _, l := range globalServerConfig.Logger.HTTP {
-		if l.Enabled {
-			// Enable http logging
-			logger.AddTarget(logger.NewHTTP(l.Endpoint, NewCustomHTTPTransport()))
-		}
-	}
 }
 
 func handleCommonCmdArgs(ctx *cli.Context) {
@@ -157,12 +168,46 @@ func handleCommonEnvVars() {
 	etcdEndpointsEnv, ok := os.LookupEnv("MINIO_ETCD_ENDPOINTS")
 	if ok {
 		etcdEndpoints := strings.Split(etcdEndpointsEnv, ",")
+
+		var etcdSecure bool
+		for _, endpoint := range etcdEndpoints {
+			u, err := xnet.ParseURL(endpoint)
+			if err != nil {
+				logger.FatalIf(err, "Unable to initialize etcd with %s", etcdEndpoints)
+			}
+			// If one of the endpoint is https, we will use https directly.
+			etcdSecure = etcdSecure || u.Scheme == "https"
+		}
+
 		var err error
-		globalEtcdClient, err = etcd.New(etcd.Config{
-			Endpoints:         etcdEndpoints,
-			DialTimeout:       defaultDialTimeout,
-			DialKeepAliveTime: defaultDialKeepAlive,
-		})
+		if etcdSecure {
+			// This is only to support client side certificate authentication
+			// https://coreos.com/etcd/docs/latest/op-guide/security.html
+			etcdClientCertFile, ok1 := os.LookupEnv("MINIO_ETCD_CLIENT_CERT")
+			etcdClientCertKey, ok2 := os.LookupEnv("MINIO_ETCD_CLIENT_CERT_KEY")
+			var getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
+			if ok1 && ok2 {
+				getClientCertificate = func(unused *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+					cert, terr := tls.LoadX509KeyPair(etcdClientCertFile, etcdClientCertKey)
+					return &cert, terr
+				}
+			}
+			globalEtcdClient, err = etcd.New(etcd.Config{
+				Endpoints:         etcdEndpoints,
+				DialTimeout:       defaultDialTimeout,
+				DialKeepAliveTime: defaultDialKeepAlive,
+				TLS: &tls.Config{
+					RootCAs:              globalRootCAs,
+					GetClientCertificate: getClientCertificate,
+				},
+			})
+		} else {
+			globalEtcdClient, err = etcd.New(etcd.Config{
+				Endpoints:         etcdEndpoints,
+				DialTimeout:       defaultDialTimeout,
+				DialKeepAliveTime: defaultDialKeepAlive,
+			})
+		}
 		logger.FatalIf(err, "Unable to initialize etcd with %s", etcdEndpoints)
 	}
 

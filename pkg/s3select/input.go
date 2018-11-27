@@ -18,10 +18,14 @@ package s3select
 
 import (
 	"bytes"
+	"compress/bzip2"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	humanize "github.com/dustin/go-humanize"
+	"github.com/klauspost/pgzip"
 
 	"github.com/minio/minio/pkg/s3select/format"
 	"github.com/minio/minio/pkg/s3select/format/csv"
@@ -36,18 +40,6 @@ const (
 	continuationTime time.Duration = 5 * time.Second
 )
 
-// ParseSelectTokens tokenizes the select query into required Columns, Alias, limit value
-// where clause, aggregate functions, myFunctions, error.
-type ParseSelectTokens struct {
-	reqCols          []string
-	alias            string
-	myLimit          int64
-	whereClause      interface{}
-	aggFunctionNames []string
-	myFuncs          *SelectFuncs
-	myErr            error
-}
-
 // Row is a Struct for keeping track of key aspects of a row.
 type Row struct {
 	record string
@@ -56,12 +48,21 @@ type Row struct {
 
 // This function replaces "",'' with `` for the select parser
 func cleanExpr(expr string) string {
-	r := strings.NewReplacer("\"", "`", "'", "`")
+	r := strings.NewReplacer("\"", "`")
 	return r.Replace(expr)
 }
 
 // New - initialize new select format
-func New(gr io.Reader, size int64, req ObjectSelectRequest) (s3s format.Select, err error) {
+func New(reader io.Reader, size int64, req ObjectSelectRequest) (s3s format.Select, err error) {
+	switch req.InputSerialization.CompressionType {
+	case SelectCompressionGZIP:
+		if reader, err = pgzip.NewReader(reader); err != nil {
+			return nil, format.ErrTruncatedInput
+		}
+	case SelectCompressionBZIP:
+		reader = bzip2.NewReader(reader)
+	}
+
 	//  Initializating options for CSV
 	if req.InputSerialization.CSV != nil {
 		if req.OutputSerialization.CSV.FieldDelimiter == "" {
@@ -74,12 +75,12 @@ func New(gr io.Reader, size int64, req ObjectSelectRequest) (s3s format.Select, 
 			req.InputSerialization.CSV.RecordDelimiter = "\n"
 		}
 		s3s, err = csv.New(&csv.Options{
-			HasHeader:            req.InputSerialization.CSV.FileHeaderInfo != CSVFileHeaderInfoNone,
+			HasHeader:            req.InputSerialization.CSV.FileHeaderInfo == CSVFileHeaderInfoUse,
 			RecordDelimiter:      req.InputSerialization.CSV.RecordDelimiter,
 			FieldDelimiter:       req.InputSerialization.CSV.FieldDelimiter,
 			Comments:             req.InputSerialization.CSV.Comments,
 			Name:                 "S3Object", // Default table name for all objects
-			ReadFrom:             gr,
+			ReadFrom:             reader,
 			Compressed:           string(req.InputSerialization.CompressionType),
 			Expression:           cleanExpr(req.Expression),
 			OutputFieldDelimiter: req.OutputSerialization.CSV.FieldDelimiter,
@@ -91,7 +92,7 @@ func New(gr io.Reader, size int64, req ObjectSelectRequest) (s3s format.Select, 
 		//  Initializating options for JSON
 		s3s, err = json.New(&json.Options{
 			Name:       "S3Object", // Default table name for all objects
-			ReadFrom:   gr,
+			ReadFrom:   reader,
 			Compressed: string(req.InputSerialization.CompressionType),
 			Expression: cleanExpr(req.Expression),
 			StreamSize: size,
@@ -106,22 +107,20 @@ func New(gr io.Reader, size int64, req ObjectSelectRequest) (s3s format.Select, 
 // response writer in a streaming fashion so that the client can actively use
 // the results before the query is finally finished executing. The
 func Execute(writer io.Writer, f format.Select) error {
-	myRow := make(chan *Row)
-	curBuf := bytes.NewBuffer(make([]byte, 1000000))
+	rowCh := make(chan Row)
+	curBuf := bytes.NewBuffer(make([]byte, humanize.MiByte))
 	curBuf.Reset()
 	progressTicker := time.NewTicker(progressTime)
 	continuationTimer := time.NewTimer(continuationTime)
 	defer progressTicker.Stop()
 	defer continuationTimer.Stop()
 
-	go runSelectParser(f, myRow)
-
+	go runSelectParser(f, rowCh)
 	for {
 		select {
-		case row, ok := <-myRow:
+		case row, ok := <-rowCh:
 			if ok && row.err != nil {
-				errorMessage := writeErrorMessage(row.err, curBuf)
-				_, err := errorMessage.WriteTo(writer)
+				_, err := writeErrorMessage(row.err, curBuf).WriteTo(writer)
 				flusher, okFlush := writer.(http.Flusher)
 				if okFlush {
 					flusher.Flush()
@@ -130,11 +129,10 @@ func Execute(writer io.Writer, f format.Select) error {
 					return err
 				}
 				curBuf.Reset()
-				close(myRow)
+				close(rowCh)
 				return nil
 			} else if ok {
-				message := writeRecordMessage(row.record, curBuf)
-				_, err := message.WriteTo(writer)
+				_, err := writeRecordMessage(row.record, curBuf).WriteTo(writer)
 				flusher, okFlush := writer.(http.Flusher)
 				if okFlush {
 					flusher.Flush()
@@ -153,8 +151,7 @@ func Execute(writer io.Writer, f format.Select) error {
 				if err != nil {
 					return err
 				}
-				statMessage := writeStatMessage(statPayload, curBuf)
-				_, err = statMessage.WriteTo(writer)
+				_, err = writeStatMessage(statPayload, curBuf).WriteTo(writer)
 				flusher, ok := writer.(http.Flusher)
 				if ok {
 					flusher.Flush()
@@ -163,8 +160,7 @@ func Execute(writer io.Writer, f format.Select) error {
 					return err
 				}
 				curBuf.Reset()
-				message := writeEndMessage(curBuf)
-				_, err = message.WriteTo(writer)
+				_, err = writeEndMessage(curBuf).WriteTo(writer)
 				flusher, ok = writer.(http.Flusher)
 				if ok {
 					flusher.Flush()
@@ -182,8 +178,7 @@ func Execute(writer io.Writer, f format.Select) error {
 				if err != nil {
 					return err
 				}
-				progressMessage := writeProgressMessage(progressPayload, curBuf)
-				_, err = progressMessage.WriteTo(writer)
+				_, err = writeProgressMessage(progressPayload, curBuf).WriteTo(writer)
 				flusher, ok := writer.(http.Flusher)
 				if ok {
 					flusher.Flush()
@@ -194,8 +189,7 @@ func Execute(writer io.Writer, f format.Select) error {
 				curBuf.Reset()
 			}
 		case <-continuationTimer.C:
-			message := writeContinuationMessage(curBuf)
-			_, err := message.WriteTo(writer)
+			_, err := writeContinuationMessage(curBuf).WriteTo(writer)
 			flusher, ok := writer.(http.Flusher)
 			if ok {
 				flusher.Flush()

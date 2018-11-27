@@ -305,11 +305,14 @@ func readXLMeta(ctx context.Context, disk StorageAPI, bucket string, object stri
 	// Reads entire `xl.json`.
 	xlMetaBuf, err := disk.ReadAll(bucket, path.Join(object, xlMetaJSONFile))
 	if err != nil {
-		if err != errFileNotFound {
+		if err != errFileNotFound && err != errVolumeNotFound {
 			logger.GetReqInfo(ctx).AppendTags("disk", disk.String())
 			logger.LogIf(ctx, err)
 		}
 		return xlMetaV1{}, err
+	}
+	if len(xlMetaBuf) == 0 {
+		return xlMetaV1{}, errFileNotFound
 	}
 	// obtain xlMetaV1{} using `github.com/tidwall/gjson`.
 	xlMeta, err = xlMetaV1UnmarshalJSON(ctx, xlMetaBuf)
