@@ -37,7 +37,6 @@ import (
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
-	miniohash "github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/policy"
 	"github.com/minio/minio/pkg/policy/condition"
@@ -88,6 +87,7 @@ ENVIRONMENT VARIABLES:
      VOLUME_PATH: path on eos
      HOOKSURL: url to s3 hooks (not setting this will disable hooks)
      SCRIPTS: path to xroot script
+     EOSVALIDBUCKETS: true/false (DEFAULT: true)
 
   CACHE:
      MINIO_CACHE_DRIVES: List of mounted drives or directories delimited by ";".
@@ -217,6 +217,11 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		waitSleep = ret
 	}
 
+	validbuckets := true
+	if os.Getenv("EOSVALIDBUCKETS") == "false" {
+		validbuckets = false
+	}
+
 	logger.Info("EOS URL: %s", os.Getenv("EOS"))
 	logger.Info("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
 	logger.Info("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
@@ -231,6 +236,10 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	if readonly {
 		logger.Info("EOS read only mode: ENABLED")
+	}
+
+	if !validbuckets {
+		logger.Info("EOS allowing invalid bucket names (RISK)")
 	}
 
 	logger.Info("EOS READ METHOD: %s", readmethod)
@@ -295,6 +304,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		webdavJobs:   webdavJobs,
 		xrdcpJobs:    xrdcpJobs,
 		xrootdJobs:   xrootdJobs,
+		validbuckets: validbuckets,
 	}, nil
 }
 
@@ -321,6 +331,7 @@ type eosObjects struct {
 	webdavJobs   eosJobs
 	xrdcpJobs    eosJobs
 	xrootdJobs   eosJobs
+	validbuckets bool
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -389,7 +400,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		var stat *eosFileStat
 		stat, err = e.EOSfsStat(dir)
 		if stat != nil {
-			if stat.IsDir() && minio.IsValidBucketName(strings.TrimRight(dir, "/")) {
+			if stat.IsDir() && e.IsValidBucketName(strings.TrimRight(dir, "/")) {
 				b := minio.BucketInfo{
 					Name:    dir,
 					Created: stat.ModTime()}
@@ -399,7 +410,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 				if !stat.IsDir() {
 					e.Log(3, "Bucket: %s not a directory", dir)
 				}
-				if !minio.IsValidBucketName(strings.TrimRight(dir, "/")) {
+				if !e.IsValidBucketName(strings.TrimRight(dir, "/")) {
 					e.Log(3, "Bucket: %s not a valid name", dir)
 				}
 			}
@@ -424,7 +435,7 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, locatio
 	}
 
 	// Verify if bucket is valid.
-	if !minio.IsValidBucketName(bucket) {
+	if !e.IsValidBucketName(bucket) {
 		return minio.BucketNameInvalid{Bucket: bucket}
 	}
 
@@ -545,7 +556,7 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 }
 
 // PutObject - Create a new blob with the incoming data
-func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *miniohash.Reader, metadata map[string]string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, metadata map[string]string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	e.Log(2, "S3cmd: PutObject: %s/%s", bucket, object)
 
 	if e.readonly {
@@ -732,7 +743,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 }
 
 // PutObjectPart
-func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *miniohash.Reader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
+func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
 	e.Log(2, "S3cmd: PutObjectPart: %s/%s %s [%d] %d", bucket, object, uploadID, partID, data.Size())
 
 	if e.readonly {
@@ -814,7 +825,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 }
 
 // CompleteMultipartUpload
-func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	e.Log(2, "S3cmd: CompleteMultipartUpload: %s size : %d firstByte : %d", uploadID, eosMultiParts[uploadID].size, eosMultiParts[uploadID].firstByte)
 
 	if e.readonly {
@@ -1195,6 +1206,13 @@ func (e *eosObjects) Log(level int, format string, a ...interface{}) {
 	}
 }
 
+func (e *eosObjects) IsValidBucketName(name string) bool {
+	if e.validbuckets {
+		return minio.IsValidBucketName(name)
+	}
+	return true
+}
+
 func (e *eosObjects) messagebusAddJob(jobType, path string) {
 	if e.hookurl == "" {
 		return
@@ -1399,7 +1417,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 		return nil, err
 	}
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.fileinfo %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(3, "EOS procuser.fileinfo %s : %s", eospath, e.interfaceToString(m["errormsg"]))
 		return nil, eoserrFileNotFound
 	}
 
