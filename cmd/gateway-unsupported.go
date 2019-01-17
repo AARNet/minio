@@ -49,7 +49,7 @@ func (a GatewayUnsupported) PutObjectPart(ctx context.Context, bucket string, ob
 }
 
 // ListObjectParts returns all object parts for specified object in specified bucket
-func (a GatewayUnsupported) ListObjectParts(ctx context.Context, bucket string, object string, uploadID string, partNumberMarker int, maxParts int) (lpi ListPartsInfo, err error) {
+func (a GatewayUnsupported) ListObjectParts(ctx context.Context, bucket string, object string, uploadID string, partNumberMarker int, maxParts int, opts ObjectOptions) (lpi ListPartsInfo, err error) {
 	logger.LogIf(ctx, NotImplemented{})
 	return lpi, NotImplemented{}
 }
@@ -132,7 +132,12 @@ func (a GatewayUnsupported) IsNotificationSupported() bool {
 	return false
 }
 
-// IsEncryptionSupported returns whether server side encryption is applicable for this layer.
+// IsListenBucketSupported returns whether listen bucket notification is applicable for this layer.
+func (a GatewayUnsupported) IsListenBucketSupported() bool {
+	return false
+}
+
+// IsEncryptionSupported returns whether server side encryption is implemented for this layer.
 func (a GatewayUnsupported) IsEncryptionSupported() bool {
 	return false
 }

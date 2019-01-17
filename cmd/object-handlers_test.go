@@ -21,9 +21,11 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 
 	"io/ioutil"
@@ -1522,14 +1524,15 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 
 	// test cases with inputs and expected result for Copy Object.
 	testCases := []struct {
-		bucketName        string
-		copySourceHeader  string // data for "X-Amz-Copy-Source" header. Contains the object to be copied in the URL.
-		copySourceRange   string // data for "X-Amz-Copy-Source-Range" header, contains the byte range offsets of data to be copied.
-		uploadID          string // uploadID of the transaction.
-		invalidPartNumber bool   // Sets an invalid multipart.
-		maximumPartNumber bool   // Sets a maximum parts.
-		accessKey         string
-		secretKey         string
+		bucketName          string
+		copySourceHeader    string // data for "X-Amz-Copy-Source" header. Contains the object to be copied in the URL.
+		copySourceVersionID string // data for "X-Amz-Copy-Source-Version-Id" header.
+		copySourceRange     string // data for "X-Amz-Copy-Source-Range" header, contains the byte range offsets of data to be copied.
+		uploadID            string // uploadID of the transaction.
+		invalidPartNumber   bool   // Sets an invalid multipart.
+		maximumPartNumber   bool   // Sets a maximum parts.
+		accessKey           string
+		secretKey           string
 		// expected output.
 		expectedRespStatus int
 	}{
@@ -1693,6 +1696,44 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 			secretKey:          credentials.SecretKey,
 			expectedRespStatus: http.StatusOK,
 		},
+		// Test case - 14, copy part 1 from from newObject1 with null versionId
+		{
+			bucketName:         bucketName,
+			uploadID:           uploadID,
+			copySourceHeader:   url.QueryEscape("/"+bucketName+"/"+objectName) + "?versionId=null",
+			accessKey:          credentials.AccessKey,
+			secretKey:          credentials.SecretKey,
+			expectedRespStatus: http.StatusOK,
+		},
+		// Test case - 15, copy part 1 from from newObject1 with non null versionId
+		{
+			bucketName:         bucketName,
+			uploadID:           uploadID,
+			copySourceHeader:   url.QueryEscape("/"+bucketName+"/"+objectName) + "?versionId=17",
+			accessKey:          credentials.AccessKey,
+			secretKey:          credentials.SecretKey,
+			expectedRespStatus: http.StatusNotFound,
+		},
+		// Test case - 16, copy part 1 from from newObject1 with null X-Amz-Copy-Source-Version-Id
+		{
+			bucketName:          bucketName,
+			uploadID:            uploadID,
+			copySourceHeader:    url.QueryEscape("/" + bucketName + "/" + objectName),
+			copySourceVersionID: "null",
+			accessKey:           credentials.AccessKey,
+			secretKey:           credentials.SecretKey,
+			expectedRespStatus:  http.StatusOK,
+		},
+		// Test case - 16, copy part 1 from from newObject1 with non null X-Amz-Copy-Source-Version-Id
+		{
+			bucketName:          bucketName,
+			uploadID:            uploadID,
+			copySourceHeader:    url.QueryEscape("/" + bucketName + "/" + objectName),
+			copySourceVersionID: "17",
+			accessKey:           credentials.AccessKey,
+			secretKey:           credentials.SecretKey,
+			expectedRespStatus:  http.StatusNotFound,
+		},
 	}
 
 	for i, testCase := range testCases {
@@ -1716,6 +1757,9 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 		if testCase.copySourceHeader != "" {
 			req.Header.Set("X-Amz-Copy-Source", testCase.copySourceHeader)
 		}
+		if testCase.copySourceVersionID != "" {
+			req.Header.Set("X-Amz-Copy-Source-Version-Id", testCase.copySourceVersionID)
+		}
 		if testCase.copySourceRange != "" {
 			req.Header.Set("X-Amz-Copy-Source-Range", testCase.copySourceRange)
 		}
@@ -1730,7 +1774,7 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 			// See if the new part has been uploaded.
 			// testing whether the copy was successful.
 			var results ListPartsInfo
-			results, err = obj.ListObjectParts(context.Background(), testCase.bucketName, testObject, testCase.uploadID, 0, 1)
+			results, err = obj.ListObjectParts(context.Background(), testCase.bucketName, testObject, testCase.uploadID, 0, 1, ObjectOptions{})
 			if err != nil {
 				t.Fatalf("Test %d: %s: Failed to look for copied object part: <ERROR> %s", i+1, instanceType, err)
 			}
@@ -1750,6 +1794,9 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 		// "X-Amz-Copy-Source" header contains the information about the source bucket and the object to copied.
 		if testCase.copySourceHeader != "" {
 			reqV2.Header.Set("X-Amz-Copy-Source", testCase.copySourceHeader)
+		}
+		if testCase.copySourceVersionID != "" {
+			reqV2.Header.Set("X-Amz-Copy-Source-Version-Id", testCase.copySourceVersionID)
 		}
 		if testCase.copySourceRange != "" {
 			reqV2.Header.Set("X-Amz-Copy-Source-Range", testCase.copySourceRange)
@@ -1801,7 +1848,10 @@ func TestAPICopyObjectHandler(t *testing.T) {
 func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, apiRouter http.Handler,
 	credentials auth.Credentials, t *testing.T) {
 
-	objectName := "test-object"
+	objectName := "test?object" // use file with ? to test URL parsing...
+	if runtime.GOOS == "windows" {
+		objectName = "test-object" // ...except on Windows
+	}
 	// object used for anonymous HTTP request test.
 	anonObject := "anon-object"
 	var err error
@@ -1811,9 +1861,13 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 	// this is required even to assert the copied object,
 	bytesData := []struct {
 		byteData []byte
+		md5sum   string
 	}{
-		{generateBytesData(6 * humanize.KiByte)},
+		{byteData: generateBytesData(6 * humanize.KiByte)},
 	}
+	h := md5.New()
+	h.Write(bytesData[0].byteData)
+	bytesData[0].md5sum = hex.EncodeToString(h.Sum(nil))
 
 	buffers := []*bytes.Buffer{
 		new(bytes.Buffer),
@@ -1826,22 +1880,28 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 		objectName    string
 		contentLength int64
 		textData      []byte
+		md5sum        string
 		metaData      map[string]string
 	}{
 		// case - 1.
-		{bucketName, objectName, int64(len(bytesData[0].byteData)), bytesData[0].byteData, make(map[string]string)},
+		{bucketName, objectName, int64(len(bytesData[0].byteData)), bytesData[0].byteData, bytesData[0].md5sum, make(map[string]string)},
 
 		// case - 2.
 		// used for anonymous HTTP request test.
-		{bucketName, anonObject, int64(len(bytesData[0].byteData)), bytesData[0].byteData, make(map[string]string)},
+		{bucketName, anonObject, int64(len(bytesData[0].byteData)), bytesData[0].byteData, bytesData[0].md5sum, make(map[string]string)},
 	}
+
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
+		var objInfo ObjectInfo
+		objInfo, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
+		}
+		if objInfo.ETag != input.md5sum {
+			t.Fatalf("Put Object case %d:  Checksum mismatched: <ERROR> got %s, expected %s", i+1, input.md5sum, objInfo.ETag)
 		}
 	}
 
@@ -1850,6 +1910,7 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 		bucketName           string
 		newObjectName        string // name of the newly copied object.
 		copySourceHeader     string // data for "X-Amz-Copy-Source" header. Contains the object to be copied in the URL.
+		copySourceVersionID  string // data for "X-Amz-Copy-Source-Version-Id" header.
 		copyModifiedHeader   string // data for "X-Amz-Copy-Source-If-Modified-Since" header
 		copyUnmodifiedHeader string // data for "X-Amz-Copy-Source-If-Unmodified-Since" header
 		metadataGarbage      bool
@@ -2060,6 +2121,44 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 			secretKey:            credentials.SecretKey,
 			expectedRespStatus:   http.StatusOK,
 		},
+		// Test case - 17, copy metadata from newObject1 with null versionId
+		{
+			bucketName:         bucketName,
+			newObjectName:      "newObject1",
+			copySourceHeader:   url.QueryEscape("/"+bucketName+"/"+objectName) + "?versionId=null",
+			accessKey:          credentials.AccessKey,
+			secretKey:          credentials.SecretKey,
+			expectedRespStatus: http.StatusOK,
+		},
+		// Test case - 18, copy metadata from newObject1 with non null versionId
+		{
+			bucketName:         bucketName,
+			newObjectName:      "newObject1",
+			copySourceHeader:   url.QueryEscape("/"+bucketName+"/"+objectName) + "?versionId=17",
+			accessKey:          credentials.AccessKey,
+			secretKey:          credentials.SecretKey,
+			expectedRespStatus: http.StatusNotFound,
+		},
+		// Test case - 19, copy metadata from newObject1 with null X-Amz-Copy-Source-Version-Id
+		{
+			bucketName:          bucketName,
+			newObjectName:       "newObject1",
+			copySourceHeader:    url.QueryEscape("/" + bucketName + "/" + objectName),
+			copySourceVersionID: "null",
+			accessKey:           credentials.AccessKey,
+			secretKey:           credentials.SecretKey,
+			expectedRespStatus:  http.StatusOK,
+		},
+		// Test case - 20, copy metadata from newObject1 with non null X-Amz-Copy-Source-Version-Id
+		{
+			bucketName:          bucketName,
+			newObjectName:       "newObject1",
+			copySourceHeader:    url.QueryEscape("/" + bucketName + "/" + objectName),
+			copySourceVersionID: "17",
+			accessKey:           credentials.AccessKey,
+			secretKey:           credentials.SecretKey,
+			expectedRespStatus:  http.StatusNotFound,
+		},
 	}
 
 	for i, testCase := range testCases {
@@ -2077,6 +2176,9 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 		// "X-Amz-Copy-Source" header contains the information about the source bucket and the object to copied.
 		if testCase.copySourceHeader != "" {
 			req.Header.Set("X-Amz-Copy-Source", testCase.copySourceHeader)
+		}
+		if testCase.copySourceVersionID != "" {
+			req.Header.Set("X-Amz-Copy-Source-Version-Id", testCase.copySourceVersionID)
 		}
 		if testCase.copyModifiedHeader != "" {
 			req.Header.Set("X-Amz-Copy-Source-If-Modified-Since", testCase.copyModifiedHeader)
@@ -2105,6 +2207,16 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 			t.Fatalf("Test %d: %s:  Expected the response status to be `%d`, but instead found `%d`", i+1, instanceType, testCase.expectedRespStatus, rec.Code)
 		}
 		if rec.Code == http.StatusOK {
+			var cpObjResp CopyObjectResponse
+			if err = xml.Unmarshal(rec.Body.Bytes(), &cpObjResp); err != nil {
+				t.Fatalf("Test %d: %s: Failed to parse the CopyObjectResult response: <ERROR> %s", i+1, instanceType, err)
+			}
+
+			retag := canonicalizeETag(cpObjResp.ETag)
+			if retag != bytesData[0].md5sum {
+				t.Fatalf("Test %d: %s: Failed to CopyObject: <ERROR> got %s, expected %s", i+1, instanceType, retag, bytesData[0].md5sum)
+			}
+
 			// See if the new object is formed.
 			// testing whether the copy was successful.
 			err = obj.GetObject(context.Background(), testCase.bucketName, testCase.newObjectName, 0, int64(len(bytesData[0].byteData)), buffers[0], "", opts)
@@ -2128,6 +2240,9 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 		// "X-Amz-Copy-Source" header contains the information about the source bucket and the object to copied.
 		if testCase.copySourceHeader != "" {
 			reqV2.Header.Set("X-Amz-Copy-Source", testCase.copySourceHeader)
+		}
+		if testCase.copySourceVersionID != "" {
+			reqV2.Header.Set("X-Amz-Copy-Source-Version-Id", testCase.copySourceVersionID)
 		}
 		if testCase.copyModifiedHeader != "" {
 			reqV2.Header.Set("X-Amz-Copy-Source-If-Modified-Since", testCase.copyModifiedHeader)
@@ -2224,7 +2339,7 @@ func testAPINewMultipartHandler(obj ObjectLayer, instanceType, bucketName string
 		t.Fatalf("Error decoding the recorded response Body")
 	}
 	// verify the uploadID my making an attempt to list parts.
-	_, err = obj.ListObjectParts(context.Background(), bucketName, objectName, multipartResponse.UploadID, 0, 1)
+	_, err = obj.ListObjectParts(context.Background(), bucketName, objectName, multipartResponse.UploadID, 0, 1, ObjectOptions{})
 	if err != nil {
 		t.Fatalf("Invalid UploadID: <ERROR> %s", err)
 	}
@@ -2276,7 +2391,7 @@ func testAPINewMultipartHandler(obj ObjectLayer, instanceType, bucketName string
 		t.Fatalf("Error decoding the recorded response Body")
 	}
 	// verify the uploadID my making an attempt to list parts.
-	_, err = obj.ListObjectParts(context.Background(), bucketName, objectName, multipartResponse.UploadID, 0, 1)
+	_, err = obj.ListObjectParts(context.Background(), bucketName, objectName, multipartResponse.UploadID, 0, 1, ObjectOptions{})
 	if err != nil {
 		t.Fatalf("Invalid UploadID: <ERROR> %s", err)
 	}
@@ -2391,7 +2506,7 @@ func testAPINewMultipartHandlerParallel(obj ObjectLayer, instanceType, bucketNam
 	wg.Wait()
 	// Validate the upload ID by an attempt to list parts using it.
 	for _, uploadID := range testUploads.uploads {
-		_, err := obj.ListObjectParts(context.Background(), bucketName, objectName, uploadID, 0, 1)
+		_, err := obj.ListObjectParts(context.Background(), bucketName, objectName, uploadID, 0, 1, ObjectOptions{})
 		if err != nil {
 			t.Fatalf("Invalid UploadID: <ERROR> %s", err)
 		}

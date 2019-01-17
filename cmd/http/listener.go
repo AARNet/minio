@@ -178,6 +178,9 @@ type httpListener struct {
 // isRoutineNetErr returns true if error is due to a network timeout,
 // connect reset or io.EOF and false otherwise
 func isRoutineNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
 	if nErr, ok := err.(*net.OpError); ok {
 		// Check if the error is a tcp connection reset
 		if syscallErr, ok := nErr.Err.(*os.SyscallError); ok {
@@ -188,7 +191,8 @@ func isRoutineNetErr(err error) bool {
 		// Check if the error is a timeout
 		return nErr.Timeout()
 	}
-	return err == io.EOF
+	// check for io.EOF and also some times io.EOF is wrapped is another error type.
+	return err == io.EOF || err.Error() == "EOF"
 }
 
 // start - starts separate goroutine for each TCP listener.  A valid insecure/TLS HTTP new connection is passed to httpListener.acceptCh.
@@ -218,7 +222,7 @@ func (listener *httpListener) start() {
 		tcpConn.SetKeepAlive(true)
 		tcpConn.SetKeepAlivePeriod(listener.tcpKeepAliveTimeout)
 
-		bufconn := newBufConn(tcpConn, listener.readTimeout, listener.writeTimeout)
+		bufconn := newBufConn(tcpConn, listener.readTimeout, listener.writeTimeout, listener.maxHeaderBytes)
 		if listener.tlsConfig != nil {
 			ok, err := getPlainText(bufconn)
 			if err != nil {
@@ -257,7 +261,7 @@ func (listener *httpListener) start() {
 				return
 			}
 
-			bufconn = newBufConn(tlsConn, listener.readTimeout, listener.writeTimeout)
+			bufconn = newBufConn(tlsConn, listener.readTimeout, listener.writeTimeout, listener.maxHeaderBytes)
 		}
 
 		method, resource, host, err := getMethodResourceHost(bufconn, listener.maxHeaderBytes)
@@ -395,8 +399,8 @@ func newHTTPListener(serverAddrs []string,
 
 	for _, serverAddr := range serverAddrs {
 		var l net.Listener
-		if l, err = listen("tcp4", serverAddr); err != nil {
-			if l, err = fallbackListen("tcp4", serverAddr); err != nil {
+		if l, err = listen("tcp", serverAddr); err != nil {
+			if l, err = fallbackListen("tcp", serverAddr); err != nil {
 				return nil, err
 			}
 		}

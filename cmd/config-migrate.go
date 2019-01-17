@@ -231,7 +231,7 @@ func migrateConfig() error {
 
 // Version '1' is not supported anymore and deprecated, safe to delete.
 func purgeV1() error {
-	configFile := filepath.Join(getConfigDir(), "fsUsers.json")
+	configFile := filepath.Join(globalConfigDir.Get(), "fsUsers.json")
 
 	cv1 := &configV1{}
 	_, err := Load(configFile, cv1)
@@ -2413,8 +2413,79 @@ func migrateV27ToV28() error {
 	return nil
 }
 
-// Migrates '.minio.sys/config.json' to v32.
+// Migrates ${HOME}/.minio/config.json to '<export_path>/.minio.sys/config/config.json'
+func migrateConfigToMinioSys(objAPI ObjectLayer) (err error) {
+	// Construct path to config.json for the given bucket.
+	configFile := path.Join(minioConfigPrefix, minioConfigFile)
+
+	// Verify if config was already available in .minio.sys in which case, nothing more to be done.
+	if err = checkConfig(context.Background(), objAPI, configFile); err != errConfigNotFound {
+		return err
+	}
+
+	defer func() {
+		// Rename config.json to config.json.deprecated only upon
+		// success of this function.
+		if err == nil {
+			os.Rename(getConfigFile(), getConfigFile()+".deprecated")
+		}
+	}()
+
+	transactionConfigFile := configFile + ".transaction"
+
+	// As object layer's GetObject() and PutObject() take respective lock on minioMetaBucket
+	// and configFile, take a transaction lock to avoid data race between readConfig()
+	// and saveConfig().
+	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionConfigFile)
+	if err = objLock.GetLock(globalOperationTimeout); err != nil {
+		return err
+	}
+	defer objLock.Unlock()
+
+	// Verify if backend already has the file (after holding lock)
+	if err = checkConfig(context.Background(), objAPI, configFile); err != errConfigNotFound {
+		return err
+	} // if errConfigNotFound proceed to migrate..
+
+	var config = &serverConfig{}
+	if _, err = Load(getConfigFile(), config); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		// Read from deprecate file as well if necessary.
+		if _, err = Load(getConfigFile()+".deprecated", config); err != nil {
+			return err
+		}
+	}
+
+	return saveServerConfig(context.Background(), objAPI, config)
+}
+
+// Migrates '.minio.sys/config.json' to v33.
 func migrateMinioSysConfig(objAPI ObjectLayer) error {
+	configFile := path.Join(minioConfigPrefix, minioConfigFile)
+
+	// Check if the config version is latest, if not migrate.
+	ok, _, err := checkConfigVersion(objAPI, configFile, serverConfigVersion)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+
+	// Construct path to config.json for the given bucket.
+	transactionConfigFile := configFile + ".transaction"
+
+	// As object layer's GetObject() and PutObject() take respective lock on minioMetaBucket
+	// and configFile, take a transaction lock to avoid data race between readConfig()
+	// and saveConfig().
+	objLock := globalNSMutex.NewNSLock(minioMetaBucket, transactionConfigFile)
+	if err := objLock.GetLock(globalOperationTimeout); err != nil {
+		return err
+	}
+	defer objLock.Unlock()
+
 	if err := migrateV27ToV28MinioSys(objAPI); err != nil {
 		return err
 	}
@@ -2427,7 +2498,10 @@ func migrateMinioSysConfig(objAPI ObjectLayer) error {
 	if err := migrateV30ToV31MinioSys(objAPI); err != nil {
 		return err
 	}
-	return migrateV31ToV32MinioSys(objAPI)
+	if err := migrateV31ToV32MinioSys(objAPI); err != nil {
+		return err
+	}
+	return migrateV32ToV33MinioSys(objAPI)
 }
 
 func checkConfigVersion(objAPI ObjectLayer, configFile string, version string) (bool, []byte, error) {
@@ -2621,5 +2695,38 @@ func migrateV31ToV32MinioSys(objAPI ObjectLayer) error {
 	}
 
 	logger.Info(configMigrateMSGTemplate, configFile, "31", "32")
+	return nil
+}
+
+func migrateV32ToV33MinioSys(objAPI ObjectLayer) error {
+	configFile := path.Join(minioConfigPrefix, minioConfigFile)
+
+	ok, data, err := checkConfigVersion(objAPI, configFile, "32")
+	if err == errConfigNotFound {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("Unable to load config file. %v", err)
+	}
+	if !ok {
+		return nil
+	}
+
+	cfg := &serverConfigV33{}
+	if err = json.Unmarshal(data, cfg); err != nil {
+		return err
+	}
+
+	cfg.Version = "33"
+
+	data, err = json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	if err = saveConfig(context.Background(), objAPI, configFile, data); err != nil {
+		return fmt.Errorf("Failed to migrate config from  32  to  33 . %v", err)
+	}
+
+	logger.Info(configMigrateMSGTemplate, configFile, "32", "33")
 	return nil
 }

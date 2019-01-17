@@ -353,7 +353,7 @@ func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 // Implements S3 compatible ListObjectParts API. The resulting
 // ListPartsInfo structure is unmarshalled directly into XML and
 // replied back to the client.
-func (fs *FSObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int) (result ListPartsInfo, e error) {
+func (fs *FSObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, opts ObjectOptions) (result ListPartsInfo, e error) {
 	if err := checkListPartsArgs(ctx, bucket, object, fs); err != nil {
 		return result, toObjectErr(err)
 	}
@@ -515,7 +515,7 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 	fsMeta := fsMetaV1{}
 
 	// Allocate parts similar to incoming slice.
-	fsMeta.Parts = make([]objectPartInfo, len(parts))
+	fsMeta.Parts = make([]ObjectPartInfo, len(parts))
 
 	entries, err := readDir(uploadIDDir)
 	if err != nil {
@@ -560,7 +560,7 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 			partSize = actualSize
 		}
 
-		fsMeta.Parts[i] = objectPartInfo{
+		fsMeta.Parts[i] = ObjectPartInfo{
 			Number:     part.PartNumber,
 			ETag:       part.ETag,
 			Size:       fi.Size(),
@@ -682,6 +682,8 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 		return oi, toObjectErr(err, bucket, object)
 	}
 	fsRemoveAll(ctx, uploadIDDir)
+	// It is safe to ignore any directory not empty error (in case there were multiple uploadIDs on the same object)
+	fsRemoveDir(ctx, fs.getMultipartSHADir(bucket, object))
 	fi, err := fsStatFile(ctx, pathJoin(fs.fsPath, bucket, object))
 	if err != nil {
 		return oi, toObjectErr(err, bucket, object)
@@ -769,6 +771,9 @@ func (fs *FSObjects) cleanupStaleMultipartUploads(ctx context.Context, cleanupIn
 					}
 					if now.Sub(fi.ModTime()) > expiry {
 						fsRemoveAll(ctx, pathJoin(fs.fsPath, minioMetaMultipartBucket, entry, uploadID))
+						// It is safe to ignore any directory not empty error (in case there were multiple uploadIDs on the same object)
+						fsRemoveDir(ctx, pathJoin(fs.fsPath, minioMetaMultipartBucket, entry))
+
 					}
 				}
 			}

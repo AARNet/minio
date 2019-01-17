@@ -60,9 +60,9 @@ type IAMSys struct {
 	iamCannedPolicyMap map[string]iampolicy.Policy
 }
 
-// Load - load iam.json
+// Load - loads iam subsystem
 func (sys *IAMSys) Load(objAPI ObjectLayer) error {
-	return sys.Init(objAPI)
+	return sys.refresh(objAPI)
 }
 
 // Init - initializes config system from iam.json
@@ -78,7 +78,7 @@ func (sys *IAMSys) Init(objAPI ObjectLayer) error {
 			defer ticker.Stop()
 			for {
 				select {
-				case <-globalServiceDoneCh:
+				case <-GlobalServiceDoneCh:
 					return
 				case <-ticker.C:
 					sys.refresh(objAPI)

@@ -482,7 +482,14 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		writeErrorResponse(w, ErrServerNotInitialized, r.URL, guessIsBrowserReq(r))
 		return
 	}
-
+	if crypto.S3KMS.IsRequested(r.Header) { // SSE-KMS is not supported
+		writeErrorResponse(w, ErrNotImplemented, r.URL, guessIsBrowserReq(r))
+		return
+	}
+	if !api.EncryptionEnabled() && hasServerSideEncryptionHeader(r.Header) {
+		writeErrorResponse(w, ErrNotImplemented, r.URL, guessIsBrowserReq(r))
+		return
+	}
 	bucket := mux.Vars(r)["bucket"]
 
 	// Require Content-Length to be set in the request
@@ -572,30 +579,33 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	postPolicyForm, err := parsePostPolicyForm(string(policyBytes))
-	if err != nil {
-		writeErrorResponse(w, ErrMalformedPOSTRequest, r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Make sure formValues adhere to policy restrictions.
-	if apiErr = checkPostPolicy(formValues, postPolicyForm); apiErr != ErrNone {
-		writeErrorResponse(w, apiErr, r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Ensure that the object size is within expected range, also the file size
-	// should not exceed the maximum single Put size (5 GiB)
-	lengthRange := postPolicyForm.Conditions.ContentLengthRange
-	if lengthRange.Valid {
-		if fileSize < lengthRange.Min {
-			writeErrorResponse(w, toAPIErrorCode(ctx, errDataTooSmall), r.URL, guessIsBrowserReq(r))
+	// Handle policy if it is set.
+	if len(policyBytes) > 0 {
+		postPolicyForm, err := parsePostPolicyForm(string(policyBytes))
+		if err != nil {
+			writeErrorResponse(w, ErrMalformedPOSTRequest, r.URL, guessIsBrowserReq(r))
 			return
 		}
 
-		if fileSize > lengthRange.Max || isMaxObjectSize(fileSize) {
-			writeErrorResponse(w, toAPIErrorCode(ctx, errDataTooLarge), r.URL, guessIsBrowserReq(r))
+		// Make sure formValues adhere to policy restrictions.
+		if apiErr = checkPostPolicy(formValues, postPolicyForm); apiErr != ErrNone {
+			writeErrorResponse(w, apiErr, r.URL, guessIsBrowserReq(r))
 			return
+		}
+
+		// Ensure that the object size is within expected range, also the file size
+		// should not exceed the maximum single Put size (5 GiB)
+		lengthRange := postPolicyForm.Conditions.ContentLengthRange
+		if lengthRange.Valid {
+			if fileSize < lengthRange.Min {
+				writeErrorResponse(w, toAPIErrorCode(ctx, errDataTooSmall), r.URL, guessIsBrowserReq(r))
+				return
+			}
+
+			if fileSize > lengthRange.Max || isMaxObjectSize(fileSize) {
+				writeErrorResponse(w, toAPIErrorCode(ctx, errDataTooLarge), r.URL, guessIsBrowserReq(r))
+				return
+			}
 		}
 	}
 
@@ -616,6 +626,18 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	rawReader := hashReader
 	pReader := NewPutObjReader(rawReader, nil, nil)
 	var objectEncryptionKey []byte
+
+	// This request header needs to be set prior to setting ObjectOptions
+	if globalAutoEncryption && !crypto.SSEC.IsRequested(r.Header) {
+		r.Header.Add(crypto.SSEHeader, crypto.SSEAlgorithmAES256)
+	}
+	// get gateway encryption options
+	var opts ObjectOptions
+	opts, err = putEncryptionOpts(ctx, r, bucket, object, nil)
+	if err != nil {
+		writeErrorResponseHeadersOnly(w, toAPIErrorCode(ctx, err))
+		return
+	}
 	if objectAPI.IsEncryptionSupported() {
 		if hasServerSideEncryptionHeader(formValues) && !hasSuffix(object, slashSeparator) { // handle SSE-C and SSE-S3 requests
 			var reader io.Reader
@@ -642,7 +664,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		}
 	}
 
-	objInfo, err := objectAPI.PutObject(ctx, bucket, object, pReader, metadata, ObjectOptions{})
+	objInfo, err := objectAPI.PutObject(ctx, bucket, object, pReader, metadata, opts)
 	if err != nil {
 		writeErrorResponse(w, toAPIErrorCode(ctx, err), r.URL, guessIsBrowserReq(r))
 		return

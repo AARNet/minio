@@ -115,12 +115,89 @@ func (rpcClient *PeerRPCClient) SendEvent(bucketName string, targetID, remoteTar
 	return err
 }
 
+// ReloadFormat - calls reload format RPC.
+func (rpcClient *PeerRPCClient) ReloadFormat(dryRun bool) error {
+	args := ReloadFormatArgs{
+		DryRun: dryRun,
+	}
+	reply := VoidReply{}
+
+	return rpcClient.Call(peerServiceName+".ReloadFormat", &args, &reply)
+}
+
+// LoadUsers - calls load users RPC.
+func (rpcClient *PeerRPCClient) LoadUsers() error {
+	args := AuthArgs{}
+	reply := VoidReply{}
+
+	return rpcClient.Call(peerServiceName+".LoadUsers", &args, &reply)
+}
+
 // LoadCredentials - calls load credentials RPC.
 func (rpcClient *PeerRPCClient) LoadCredentials() error {
 	args := AuthArgs{}
 	reply := VoidReply{}
 
-	return rpcClient.Call(peerServiceName+".SetCredentials", &args, &reply)
+	return rpcClient.Call(peerServiceName+".LoadCredentials", &args, &reply)
+}
+
+// DrivePerfInfo - returns drive performance info for remote server.
+func (rpcClient *PeerRPCClient) DrivePerfInfo() (ServerDrivesPerfInfo, error) {
+	args := AuthArgs{}
+	var reply ServerDrivesPerfInfo
+
+	err := rpcClient.Call(peerServiceName+".DrivePerfInfo", &args, &reply)
+	return reply, err
+}
+
+// MemUsageInfo - returns mem utilization info for remote server
+func (rpcClient *PeerRPCClient) MemUsageInfo() (ServerMemUsageInfo, error) {
+	args := AuthArgs{}
+	var reply ServerMemUsageInfo
+
+	err := rpcClient.Call(peerServiceName+".MemUsageInfo", &args, &reply)
+	return reply, err
+}
+
+// CPULoadInfo - returns cpu performance info for remote server
+func (rpcClient *PeerRPCClient) CPULoadInfo() (ServerCPULoadInfo, error) {
+	args := AuthArgs{}
+	var reply ServerCPULoadInfo
+
+	err := rpcClient.Call(peerServiceName+".CPULoadInfo", &args, &reply)
+	return reply, err
+}
+
+// StartProfiling - starts profiling on the remote server.
+func (rpcClient *PeerRPCClient) StartProfiling(profiler string) error {
+	args := StartProfilingArgs{Profiler: profiler}
+	reply := VoidReply{}
+	return rpcClient.Call(peerServiceName+".StartProfiling", &args, &reply)
+}
+
+// DownloadProfilingData - download already running profiling on the remote server.
+func (rpcClient *PeerRPCClient) DownloadProfilingData() ([]byte, error) {
+	args := AuthArgs{}
+	var reply []byte
+	err := rpcClient.Call(peerServiceName+".DownloadProfilingData", &args, &reply)
+	return reply, err
+}
+
+// SignalService - calls load server info RPC.
+func (rpcClient *PeerRPCClient) SignalService(sig serviceSignal) error {
+	args := SignalServiceArgs{Sig: sig}
+	reply := VoidReply{}
+
+	return rpcClient.Call(peerServiceName+".SignalService", &args, &reply)
+}
+
+// ServerInfo - calls load server info RPC.
+func (rpcClient *PeerRPCClient) ServerInfo() (ServerInfoData, error) {
+	args := AuthArgs{}
+	reply := ServerInfoData{}
+
+	err := rpcClient.Call(peerServiceName+".ServerInfo", &args, &reply)
+	return reply, err
 }
 
 // NewPeerRPCClient - returns new peer RPC client.

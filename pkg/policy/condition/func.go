@@ -71,7 +71,13 @@ func (functions Functions) MarshalJSON() ([]byte, error) {
 	nm := make(map[name]map[Key]ValueSet)
 
 	for _, f := range functions {
-		nm[f.name()] = f.toMap()
+		if _, ok := nm[f.name()]; ok {
+			for k, v := range f.toMap() {
+				nm[f.name()][k] = v
+			}
+		} else {
+			nm[f.name()] = f.toMap()
+		}
 	}
 
 	return json.Marshal(nm)
@@ -86,6 +92,21 @@ func (functions Functions) String() string {
 	sort.Strings(funcStrings)
 
 	return fmt.Sprintf("%v", funcStrings)
+}
+
+var conditionFuncMap = map[name]func(Key, ValueSet) (Function, error){
+	stringEquals:              newStringEqualsFunc,
+	stringNotEquals:           newStringNotEqualsFunc,
+	stringEqualsIgnoreCase:    newStringEqualsIgnoreCaseFunc,
+	stringNotEqualsIgnoreCase: newStringNotEqualsIgnoreCaseFunc,
+	binaryEquals:              newBinaryEqualsFunc,
+	stringLike:                newStringLikeFunc,
+	stringNotLike:             newStringNotLikeFunc,
+	ipAddress:                 newIPAddressFunc,
+	notIPAddress:              newNotIPAddressFunc,
+	null:                      newNullFunc,
+	boolean:                   newBooleanFunc,
+	// Add new conditions here.
 }
 
 // UnmarshalJSON - decodes JSON data to Functions.
@@ -119,38 +140,14 @@ func (functions *Functions) UnmarshalJSON(data []byte) error {
 				return err
 			}
 
-			var f Function
-			switch n {
-			case stringEquals:
-				if f, err = newStringEqualsFunc(key, values); err != nil {
-					return err
-				}
-			case stringNotEquals:
-				if f, err = newStringNotEqualsFunc(key, values); err != nil {
-					return err
-				}
-			case stringLike:
-				if f, err = newStringLikeFunc(key, values); err != nil {
-					return err
-				}
-			case stringNotLike:
-				if f, err = newStringNotLikeFunc(key, values); err != nil {
-					return err
-				}
-			case ipAddress:
-				if f, err = newIPAddressFunc(key, values); err != nil {
-					return err
-				}
-			case notIPAddress:
-				if f, err = newNotIPAddressFunc(key, values); err != nil {
-					return err
-				}
-			case null:
-				if f, err = newNullFunc(key, values); err != nil {
-					return err
-				}
-			default:
-				return fmt.Errorf("%v is not handled", n)
+			vfn, ok := conditionFuncMap[n]
+			if !ok {
+				return fmt.Errorf("condition %v is not handled", n)
+			}
+
+			f, err := vfn(key, values)
+			if err != nil {
+				return err
 			}
 
 			funcs = append(funcs, f)

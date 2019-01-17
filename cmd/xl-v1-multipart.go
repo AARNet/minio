@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"path"
 	"sort"
 	"strconv"
@@ -32,6 +33,14 @@ import (
 
 func (xl xlObjects) getUploadIDDir(bucket, object, uploadID string) string {
 	return pathJoin(xl.getMultipartSHADir(bucket, object), uploadID)
+}
+
+// getUploadIDLockPath returns the name of the Lock in the form of
+// bucket/object/uploadID. For locking, the path bucket/object/uploadID
+// is locked instead of multipart-sha256-Dir/uploadID as it is more
+// readable in the list-locks output which helps in debugging.
+func (xl xlObjects) getUploadIDLockPath(bucket, object, uploadID string) string {
+	return pathJoin(bucket, object, uploadID)
 }
 
 func (xl xlObjects) getMultipartSHADir(bucket, object string) string {
@@ -290,9 +299,10 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	var partsMetadata []xlMetaV1
 	var errs []error
 	uploadIDPath := xl.getUploadIDDir(bucket, object, uploadID)
+	uploadIDLockPath := xl.getUploadIDLockPath(bucket, object, uploadID)
 
 	// pre-check upload id lock.
-	preUploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDPath)
+	preUploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
 	if err := preUploadIDLock.GetRLock(globalOperationTimeout); err != nil {
 		return pi, err
 	}
@@ -342,14 +352,6 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	// Delete the temporary object part. If PutObjectPart succeeds there would be nothing to delete.
 	defer xl.deleteObject(ctx, minioMetaTmpBucket, tmpPart, writeQuorum, false)
 
-	if data.Size() >= 0 {
-		if pErr := xl.prepareFile(ctx, minioMetaTmpBucket, tmpPartPath, data.Size(),
-			onlineDisks, xlMeta.Erasure.BlockSize, xlMeta.Erasure.DataBlocks, writeQuorum); pErr != nil {
-			return pi, toObjectErr(pErr, bucket, object)
-
-		}
-	}
-
 	erasure, err := NewErasure(ctx, xlMeta.Erasure.DataBlocks, xlMeta.Erasure.ParityBlocks, xlMeta.Erasure.BlockSize)
 	if err != nil {
 		return pi, toObjectErr(err, bucket, object)
@@ -371,16 +373,16 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	if len(buffer) > int(xlMeta.Erasure.BlockSize) {
 		buffer = buffer[:xlMeta.Erasure.BlockSize]
 	}
-
-	writers := make([]*bitrotWriter, len(onlineDisks))
+	writers := make([]io.Writer, len(onlineDisks))
 	for i, disk := range onlineDisks {
 		if disk == nil {
 			continue
 		}
-		writers[i] = newBitrotWriter(disk, minioMetaTmpBucket, tmpPartPath, DefaultBitrotAlgorithm)
+		writers[i] = newBitrotWriter(disk, minioMetaTmpBucket, tmpPartPath, erasure.ShardFileSize(data.Size()), DefaultBitrotAlgorithm, erasure.ShardSize())
 	}
 
 	n, err := erasure.Encode(ctx, data, writers, buffer, erasure.dataBlocks+1)
+	closeBitrotWriters(writers)
 	if err != nil {
 		return pi, toObjectErr(err, bucket, object)
 	}
@@ -398,7 +400,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 	}
 
 	// post-upload check (write) lock
-	postUploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDPath)
+	postUploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
 	if err = postUploadIDLock.GetLock(globalOperationTimeout); err != nil {
 		return pi, err
 	}
@@ -446,7 +448,7 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 		}
 		partsMetadata[i].Stat = xlMeta.Stat
 		partsMetadata[i].Parts = xlMeta.Parts
-		partsMetadata[i].Erasure.AddChecksumInfo(ChecksumInfo{partSuffix, DefaultBitrotAlgorithm, writers[i].Sum()})
+		partsMetadata[i].Erasure.AddChecksumInfo(ChecksumInfo{partSuffix, DefaultBitrotAlgorithm, bitrotWriterSum(writers[i])})
 	}
 
 	// Write all the checksum metadata.
@@ -484,14 +486,14 @@ func (xl xlObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID 
 // Implements S3 compatible ListObjectParts API. The resulting
 // ListPartsInfo structure is marshaled directly into XML and
 // replied back to the client.
-func (xl xlObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int) (result ListPartsInfo, e error) {
+func (xl xlObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, opts ObjectOptions) (result ListPartsInfo, e error) {
 	if err := checkListPartsArgs(ctx, bucket, object, xl); err != nil {
 		return result, err
 	}
 	// Hold lock so that there is no competing
 	// abort-multipart-upload or complete-multipart-upload.
 	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket,
-		xl.getUploadIDDir(bucket, object, uploadID))
+		xl.getUploadIDLockPath(bucket, object, uploadID))
 	if err := uploadIDLock.GetLock(globalListingTimeout); err != nil {
 		return result, err
 	}
@@ -579,6 +581,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	defer destLock.Unlock()
 
 	uploadIDPath := xl.getUploadIDDir(bucket, object, uploadID)
+	uploadIDLockPath := xl.getUploadIDLockPath(bucket, object, uploadID)
 
 	// Hold lock so that
 	//
@@ -586,7 +589,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	//
 	// 2) no one does a parallel complete-multipart-upload on this
 	// multipart upload
-	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDPath)
+	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
 	if err := uploadIDLock.GetLock(globalOperationTimeout); err != nil {
 		return oi, err
 	}
@@ -646,7 +649,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 	var currentXLMeta = xlMeta
 
 	// Allocate parts similar to incoming slice.
-	xlMeta.Parts = make([]objectPartInfo, len(parts))
+	xlMeta.Parts = make([]ObjectPartInfo, len(parts))
 
 	// Validate each part and then commit to disk.
 	for i, part := range parts {
@@ -685,7 +688,7 @@ func (xl xlObjects) CompleteMultipartUpload(ctx context.Context, bucket string, 
 		objectActualSize += currentXLMeta.Parts[partIdx].ActualSize
 
 		// Add incoming parts.
-		xlMeta.Parts[i] = objectPartInfo{
+		xlMeta.Parts[i] = ObjectPartInfo{
 			Number:     part.PartNumber,
 			ETag:       part.ETag,
 			Size:       currentXLMeta.Parts[partIdx].Size,
@@ -785,9 +788,10 @@ func (xl xlObjects) AbortMultipartUpload(ctx context.Context, bucket, object, up
 	}
 	// Construct uploadIDPath.
 	uploadIDPath := xl.getUploadIDDir(bucket, object, uploadID)
+	uploadIDLockPath := xl.getUploadIDLockPath(bucket, object, uploadID)
 	// Hold lock so that there is no competing
 	// complete-multipart-upload or put-object-part.
-	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDPath)
+	uploadIDLock := xl.nsMutex.NewNSLock(minioMetaMultipartBucket, uploadIDLockPath)
 	if err := uploadIDLock.GetLock(globalOperationTimeout); err != nil {
 		return err
 	}

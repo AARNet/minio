@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"net"
 	"net/http"
 	"path"
 	"runtime"
@@ -299,11 +300,11 @@ func getHostsSlice(records []dns.SrvRecord) []string {
 	return hosts
 }
 
-// returns a random host (and corresponding port) from a slice of DNS records
-func getRandomHostPort(records []dns.SrvRecord) (string, int) {
+// returns a host (and corresponding port) from a slice of DNS records
+func getHostFromSrv(records []dns.SrvRecord) string {
 	rand.Seed(time.Now().Unix())
 	srvRecord := records[rand.Intn(len(records))]
-	return srvRecord.Host, srvRecord.Port
+	return net.JoinHostPort(srvRecord.Host, fmt.Sprintf("%d", srvRecord.Port))
 }
 
 // IsCompressed returns true if the object is marked as compressed.
@@ -486,7 +487,6 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, cleanUpFns ...func()) 
 		// encrypted bytes. The header parameter is used to
 		// provide encryption parameters.
 		fn = func(inputReader io.Reader, h http.Header, cFns ...func()) (r *GetObjectReader, err error) {
-
 			copySource := h.Get(crypto.SSECopyAlgorithm) != ""
 
 			cFns = append(cleanUpFns, cFns...)
@@ -501,6 +501,9 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, cleanUpFns ...func()) 
 				}
 				return nil, err
 			}
+
+			// Decrypt the ETag before top layer consumes this value.
+			oi.ETag = getDecryptedETag(h, oi, copySource)
 
 			// Apply the skipLen and limit on the
 			// decrypted stream
@@ -573,7 +576,6 @@ func NewGetObjectReader(rs *HTTPRangeSpec, oi ObjectInfo, cleanUpFns ...func()) 
 			return r, nil
 		}
 	}
-
 	return fn, off, length, nil
 }
 
@@ -635,12 +637,13 @@ func (p *PutObjReader) MD5CurrentHexString() string {
 func NewPutObjReader(rawReader *hash.Reader, encReader *hash.Reader, encKey []byte) *PutObjReader {
 	p := PutObjReader{Reader: rawReader, rawReader: rawReader}
 
-	var objKey crypto.ObjectKey
-	copy(objKey[:], encKey)
-	p.sealMD5Fn = sealETagFn(objKey)
-	if encReader != nil {
+	if len(encKey) != 0 && encReader != nil {
+		var objKey crypto.ObjectKey
+		copy(objKey[:], encKey)
+		p.sealMD5Fn = sealETagFn(objKey)
 		p.Reader = encReader
 	}
+
 	return &p
 }
 
@@ -651,9 +654,24 @@ func sealETag(encKey crypto.ObjectKey, md5CurrSum []byte) []byte {
 	}
 	return encKey.SealETag(md5CurrSum)
 }
+
 func sealETagFn(key crypto.ObjectKey) SealMD5CurrFn {
-	fn1 := func(md5sumcurr []byte) []byte {
+	fn := func(md5sumcurr []byte) []byte {
 		return sealETag(key, md5sumcurr)
 	}
-	return fn1
+	return fn
+}
+
+// CleanMinioInternalMetadataKeys removes X-Amz-Meta- prefix from minio internal
+// encryption metadata that was sent by minio gateway
+func CleanMinioInternalMetadataKeys(metadata map[string]string) map[string]string {
+	var newMeta = make(map[string]string, len(metadata))
+	for k, v := range metadata {
+		if strings.HasPrefix(k, "X-Amz-Meta-X-Minio-Internal-") {
+			newMeta[strings.TrimPrefix(k, "X-Amz-Meta-")] = v
+		} else {
+			newMeta[k] = v
+		}
+	}
+	return newMeta
 }
