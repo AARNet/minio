@@ -508,6 +508,11 @@ func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) erro
 	return minio.NotImplemented{}
 }
 
+// IsListenBucketSupported returns whether listen bucket notification is applicable for this gateway.
+func (e *eosObjects) IsListenBucketSupported() bool {
+	return false
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////
 //  Object
 
@@ -948,7 +953,7 @@ func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, u
 }
 
 // ListObjectParts
-func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int) (result minio.ListPartsInfo, err error) {
+func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, options minio.ObjectOptions) (result minio.ListPartsInfo, err error) {
 	e.Log(2, "S3cmd: ListObjectParts: %s %d %d", uploadID, partNumberMarker, maxParts)
 
 	result.Bucket = bucket
@@ -1308,7 +1313,7 @@ func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface
 		Timeout: 0,
 	}
 	req, _ := http.NewRequest("GET", eosurl, nil)
-	req.Header.Set("Remote-User", "minio")
+	req.Header.Set("Remote-User", e.user)
 	res, _ := client.Do(req)
 	defer res.Body.Close()
 	body, _ = ioutil.ReadAll(res.Body)
