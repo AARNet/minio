@@ -85,7 +85,7 @@ func testAPIHeadObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, ObjectOptions{})
+		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), ObjectOptions{UserDefined: input.metaData})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -357,12 +357,14 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, ObjectOptions{})
+		_, err := obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), ObjectOptions{UserDefined: input.metaData})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
 		}
 	}
+
+	ctx := context.Background()
 
 	// test cases with inputs and expected result for GetObject.
 	testCases := []struct {
@@ -396,7 +398,9 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  credentials.AccessKey,
 			secretKey:  credentials.SecretKey,
 
-			expectedContent:    encodeResponse(getAPIErrorResponse(getAPIError(ErrNoSuchKey), getGetObjectURL("", bucketName, "abcd"), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrNoSuchKey),
+				getGetObjectURL("", bucketName, "abcd"), "", "")),
 			expectedRespStatus: http.StatusNotFound,
 		},
 		// Test case - 3.
@@ -420,7 +424,9 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  credentials.AccessKey,
 			secretKey:  credentials.SecretKey,
 
-			expectedContent:    encodeResponse(getAPIErrorResponse(getAPIError(ErrInvalidRange), getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrInvalidRange),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusRequestedRangeNotSatisfiable,
 		},
 		// Test case - 5.
@@ -446,7 +452,9 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  "Invalid-AccessID",
 			secretKey:  credentials.SecretKey,
 
-			expectedContent:    encodeResponse(getAPIErrorResponse(getAPIError(ErrInvalidAccessKeyID), getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrInvalidAccessKeyID),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusForbidden,
 		},
 		// Test case - 7.
@@ -458,8 +466,9 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  credentials.AccessKey,
 			secretKey:  credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrInvalidObjectName),
-				getGetObjectURL("", bucketName, "../../etc"), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrInvalidObjectName),
+				getGetObjectURL("", bucketName, "../../etc"), "", "")),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 8.
@@ -471,8 +480,9 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  credentials.AccessKey,
 			secretKey:  credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrNoSuchKey),
-				"/"+bucketName+"/"+". ./. ./etc", "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrNoSuchKey),
+				"/"+bucketName+"/"+". ./. ./etc", "", "")),
 			expectedRespStatus: http.StatusNotFound,
 		},
 		// Test case - 9.
@@ -484,8 +494,9 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  credentials.AccessKey,
 			secretKey:  credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrInvalidObjectName),
-				"/"+bucketName+"/"+". ./../etc", "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrInvalidObjectName),
+				"/"+bucketName+"/"+". ./../etc", "", "")),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 10.
@@ -497,8 +508,10 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 			accessKey:  credentials.AccessKey,
 			secretKey:  credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrNoSuchKey),
-				getGetObjectURL("", bucketName, "etc/path/proper/.../etc"), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrNoSuchKey),
+				getGetObjectURL("", bucketName, "etc/path/proper/.../etc"),
+				"", "")),
 			expectedRespStatus: http.StatusNotFound,
 		},
 	}
@@ -527,11 +540,28 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 		// read the response body.
 		actualContent, err := ioutil.ReadAll(rec.Body)
 		if err != nil {
+			t.Fatalf("Test %d: %s: Failed reading response body: <ERROR> %v", i+1, instanceType, err)
+		}
+
+		if rec.Code == http.StatusOK || rec.Code == http.StatusPartialContent {
+			if !bytes.Equal(testCase.expectedContent, actualContent) {
+				t.Errorf("Test %d: %s: Object content differs from expected value %s, got %s", i+1, instanceType, testCase.expectedContent, string(actualContent))
+			}
+			continue
+		}
+
+		// Verify whether the bucket obtained object is same as the one created.
+		actualError := &APIErrorResponse{}
+		if err = xml.Unmarshal(actualContent, actualError); err != nil {
 			t.Fatalf("Test %d: %s: Failed parsing response body: <ERROR> %v", i+1, instanceType, err)
 		}
-		// Verify whether the bucket obtained object is same as the one created.
-		if !bytes.Equal(testCase.expectedContent, actualContent) {
-			t.Errorf("Test %d: %s: Object content differs from expected value %s, got %s", i+1, instanceType, testCase.expectedContent, string(actualContent))
+
+		if actualError.BucketName != testCase.bucketName {
+			t.Fatalf("Test %d: %s: Unexpected bucket name, expected %s, got %s", i+1, instanceType, testCase.bucketName, actualError.BucketName)
+		}
+
+		if actualError.Key != testCase.objectName {
+			t.Fatalf("Test %d: %s: Unexpected object name, expected %s, got %s", i+1, instanceType, testCase.objectName, actualError.Key)
 		}
 
 		// Verify response of the V2 signed HTTP request.
@@ -559,11 +589,28 @@ func testAPIGetObjectHandler(obj ObjectLayer, instanceType, bucketName string, a
 		// read the response body.
 		actualContent, err = ioutil.ReadAll(recV2.Body)
 		if err != nil {
+			t.Fatalf("Test %d: %s: Failed to read response body: <ERROR> %v", i+1, instanceType, err)
+		}
+
+		if rec.Code == http.StatusOK || rec.Code == http.StatusPartialContent {
+			// Verify whether the bucket obtained object is same as the one created.
+			if !bytes.Equal(testCase.expectedContent, actualContent) {
+				t.Errorf("Test %d: %s: Object content differs from expected value.", i+1, instanceType)
+			}
+			continue
+		}
+
+		actualError = &APIErrorResponse{}
+		if err = xml.Unmarshal(actualContent, actualError); err != nil {
 			t.Fatalf("Test %d: %s: Failed parsing response body: <ERROR> %v", i+1, instanceType, err)
 		}
-		// Verify whether the bucket obtained object is same as the one created.
-		if !bytes.Equal(testCase.expectedContent, actualContent) {
-			t.Errorf("Test %d: %s: Object content differs from expected value.", i+1, instanceType)
+
+		if actualError.BucketName != testCase.bucketName {
+			t.Fatalf("Test %d: %s: Unexpected bucket name, expected %s, got %s", i+1, instanceType, testCase.bucketName, actualError.BucketName)
+		}
+
+		if actualError.Key != testCase.objectName {
+			t.Fatalf("Test %d: %s: Unexpected object name, expected %s, got %s", i+1, instanceType, testCase.objectName, actualError.Key)
 		}
 	}
 
@@ -855,6 +902,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 			accessKey:          credentials.AccessKey,
 			secretKey:          credentials.SecretKey,
 			shouldPass:         true,
+			fault:              None,
 		},
 		// Test case - 2
 		// Small chunk size.
@@ -869,6 +917,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 			accessKey:          credentials.AccessKey,
 			secretKey:          credentials.SecretKey,
 			shouldPass:         true,
+			fault:              None,
 		},
 		// Test case - 3
 		// Empty data
@@ -897,6 +946,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 			accessKey:          "",
 			secretKey:          "",
 			shouldPass:         false,
+			fault:              None,
 		},
 		// Test case - 5
 		// Wrong auth header returns as bad request.
@@ -912,6 +962,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 			secretKey:          credentials.SecretKey,
 			shouldPass:         false,
 			removeAuthHeader:   true,
+			fault:              None,
 		},
 		// Test case - 6
 		// Large chunk size.. also passes.
@@ -926,6 +977,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 			accessKey:          credentials.AccessKey,
 			secretKey:          credentials.SecretKey,
 			shouldPass:         true,
+			fault:              None,
 		},
 		// Test case - 7
 		// Chunk with malformed encoding.
@@ -1017,6 +1069,7 @@ func testAPIPutObjectStreamSigV4Handler(obj ObjectLayer, instanceType, bucketNam
 			secretKey:          credentials.SecretKey,
 			shouldPass:         true,
 			contentEncoding:    "aws-chunked,gzip",
+			fault:              None,
 		},
 	}
 	// Iterating over the cases, fetching the object validating the response.
@@ -1393,7 +1446,7 @@ func testAPICopyObjectPartHandlerSanity(obj ObjectLayer, instanceType, bucketNam
 	for i, input := range putObjectInputs {
 		// uploading the object.
 		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName,
-			mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
+			mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), ObjectOptions{UserDefined: input.metaData})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -1406,7 +1459,7 @@ func testAPICopyObjectPartHandlerSanity(obj ObjectLayer, instanceType, bucketNam
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, opts)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, opts)
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -1503,7 +1556,7 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
+		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), ObjectOptions{UserDefined: input.metaData})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -1516,7 +1569,7 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, opts)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, opts)
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -1738,7 +1791,6 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 
 	for i, testCase := range testCases {
 		var req *http.Request
-		var reqV2 *http.Request
 		// initialize HTTP NewRecorder, this records any mutations to response writer inside the handler.
 		rec := httptest.NewRecorder()
 		if !testCase.invalidPartNumber || !testCase.maximumPartNumber {
@@ -1781,37 +1833,6 @@ func testAPICopyObjectPartHandler(obj ObjectLayer, instanceType, bucketName stri
 			if instanceType != FSTestStr && len(results.Parts) != 1 {
 				t.Fatalf("Test %d: %s: Expected only one entry returned %d entries", i+1, instanceType, len(results.Parts))
 			}
-		}
-
-		// Verify response of the V2 signed HTTP request.
-		// initialize HTTP NewRecorder, this records any mutations to response writer inside the handler.
-		recV2 := httptest.NewRecorder()
-
-		reqV2, err = newTestRequest("PUT", getCopyObjectPartURL("", testCase.bucketName, testObject, testCase.uploadID, "1"), 0, nil)
-		if err != nil {
-			t.Fatalf("Test %d: Failed to create HTTP request for copy Object: <ERROR> %v", i+1, err)
-		}
-		// "X-Amz-Copy-Source" header contains the information about the source bucket and the object to copied.
-		if testCase.copySourceHeader != "" {
-			reqV2.Header.Set("X-Amz-Copy-Source", testCase.copySourceHeader)
-		}
-		if testCase.copySourceVersionID != "" {
-			reqV2.Header.Set("X-Amz-Copy-Source-Version-Id", testCase.copySourceVersionID)
-		}
-		if testCase.copySourceRange != "" {
-			reqV2.Header.Set("X-Amz-Copy-Source-Range", testCase.copySourceRange)
-		}
-
-		err = signRequestV2(reqV2, testCase.accessKey, testCase.secretKey)
-		if err != nil {
-			t.Fatalf("Failed to V2 Sign the HTTP request: %v.", err)
-		}
-
-		// Since `apiRouter` satisfies `http.Handler` it has a ServeHTTP to execute the logic of the handler.
-		// Call the ServeHTTP to execute the handler.
-		apiRouter.ServeHTTP(recV2, reqV2)
-		if recV2.Code != testCase.expectedRespStatus {
-			t.Errorf("Test %d: %s: Expected the response status to be `%d`, but instead found `%d`", i+1, instanceType, testCase.expectedRespStatus, recV2.Code)
 		}
 	}
 
@@ -1895,7 +1916,7 @@ func testAPICopyObjectHandler(obj ObjectLayer, instanceType, bucketName string, 
 	for i, input := range putObjectInputs {
 		// uploading the object.
 		var objInfo ObjectInfo
-		objInfo, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
+		objInfo, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), ObjectOptions{UserDefined: input.metaData})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -2535,7 +2556,7 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 
 	for i := 0; i < 2; i++ {
 		// initiate new multipart uploadID.
-		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, nil, opts)
+		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, opts)
 		if err != nil {
 			// Failed to create NewMultipartUpload, abort.
 			t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -2672,8 +2693,9 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			accessKey: credentials.AccessKey,
 			secretKey: credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(toAPIErrorCode(ctx, InvalidPart{})),
-				getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				toAPIError(ctx, InvalidPart{}),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 2.
@@ -2687,8 +2709,9 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			accessKey: credentials.AccessKey,
 			secretKey: credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrMalformedXML),
-				getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrMalformedXML),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 3.
@@ -2702,8 +2725,9 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			accessKey: credentials.AccessKey,
 			secretKey: credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(toAPIErrorCode(ctx, InvalidUploadID{UploadID: "abc"})),
-				getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				toAPIError(ctx, InvalidUploadID{UploadID: "abc"}),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusNotFound,
 		},
 		// Test case - 4.
@@ -2717,8 +2741,8 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			secretKey: credentials.SecretKey,
 
 			expectedContent: encodeResponse(completeMultipartAPIError{int64(4), int64(5242880), 1, "e2fc714c4727ee9395f324cd2e7f331f",
-				getAPIErrorResponse(getAPIError(toAPIErrorCode(ctx, PartTooSmall{PartNumber: 1})),
-					getGetObjectURL("", bucketName, objectName), "")}),
+				getAPIErrorResponse(ctx, toAPIError(ctx, PartTooSmall{PartNumber: 1}),
+					getGetObjectURL("", bucketName, objectName), "", "")}),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 5.
@@ -2731,8 +2755,9 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			accessKey: credentials.AccessKey,
 			secretKey: credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(toAPIErrorCode(ctx, InvalidPart{})),
-				getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				toAPIError(ctx, InvalidPart{}),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 6.
@@ -2746,8 +2771,9 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			accessKey: credentials.AccessKey,
 			secretKey: credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrInvalidPartOrder),
-				getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrInvalidPartOrder),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusBadRequest,
 		},
 		// Test case - 7.
@@ -2761,8 +2787,9 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 			accessKey: "Invalid-AccessID",
 			secretKey: credentials.SecretKey,
 
-			expectedContent: encodeResponse(getAPIErrorResponse(getAPIError(ErrInvalidAccessKeyID),
-				getGetObjectURL("", bucketName, objectName), "")),
+			expectedContent: encodeResponse(getAPIErrorResponse(ctx,
+				getAPIError(ErrInvalidAccessKeyID),
+				getGetObjectURL("", bucketName, objectName), "", "")),
 			expectedRespStatus: http.StatusForbidden,
 		},
 		// Test case - 8.
@@ -2814,11 +2841,27 @@ func testAPICompleteMultipartHandler(obj ObjectLayer, instanceType, bucketName s
 		if err != nil {
 			t.Fatalf("Test %d : Minio %s: Failed parsing response body: <ERROR> %v", i+1, instanceType, err)
 		}
-		// Verify whether the bucket obtained object is same as the one created.
-		if !bytes.Equal(testCase.expectedContent, actualContent) {
-			t.Errorf("Test %d : Minio %s: Object content differs from expected value.", i+1, instanceType)
+
+		if rec.Code == http.StatusOK {
+			// Verify whether the bucket obtained object is same as the one created.
+			if !bytes.Equal(testCase.expectedContent, actualContent) {
+				t.Errorf("Test %d : Minio %s: Object content differs from expected value.", i+1, instanceType)
+			}
+			continue
 		}
 
+		actualError := &APIErrorResponse{}
+		if err = xml.Unmarshal(actualContent, actualError); err != nil {
+			t.Errorf("Minio %s: error response failed to parse error XML", instanceType)
+		}
+
+		if actualError.BucketName != bucketName {
+			t.Errorf("Minio %s: error response bucket name differs from expected value", instanceType)
+		}
+
+		if actualError.Key != objectName {
+			t.Errorf("Minio %s: error response object name differs from expected value", instanceType)
+		}
 	}
 
 	// Testing for anonymous API request.
@@ -2886,7 +2929,7 @@ func testAPIAbortMultipartHandler(obj ObjectLayer, instanceType, bucketName stri
 
 	for i := 0; i < 2; i++ {
 		// initiate new multipart uploadID.
-		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, nil, opts)
+		uploadID, err = obj.NewMultipartUpload(context.Background(), bucketName, objectName, opts)
 		if err != nil {
 			// Failed to create NewMultipartUpload, abort.
 			t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -3038,7 +3081,6 @@ func testAPIDeleteObjectHandler(obj ObjectLayer, instanceType, bucketName string
 	credentials auth.Credentials, t *testing.T) {
 
 	var err error
-	var opts ObjectOptions
 	objectName := "test-object"
 	// Object used for anonymous API request test.
 	anonObjectName := "test-anon-obj"
@@ -3066,7 +3108,7 @@ func testAPIDeleteObjectHandler(obj ObjectLayer, instanceType, bucketName string
 	// iterate through the above set of inputs and upload the object.
 	for i, input := range putObjectInputs {
 		// uploading the object.
-		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), input.metaData, opts)
+		_, err = obj.PutObject(context.Background(), input.bucketName, input.objectName, mustGetPutObjReader(t, bytes.NewBuffer(input.textData), input.contentLength, input.metaData[""], ""), ObjectOptions{UserDefined: input.metaData})
 		// if object upload fails stop the test.
 		if err != nil {
 			t.Fatalf("Put Object case %d:  Error uploading object: <ERROR> %v", i+1, err)
@@ -3189,73 +3231,6 @@ func testAPIDeleteObjectHandler(obj ObjectLayer, instanceType, bucketName string
 	ExecObjectLayerAPINilTest(t, nilBucket, nilObject, instanceType, apiRouter, nilReq)
 }
 
-// TestAPIPutObjectPartHandlerPreSign - Tests validate the response of PutObjectPart HTTP handler
-// when the request signature type is PreSign.
-func TestAPIPutObjectPartHandlerPreSign(t *testing.T) {
-	defer DetectTestLeak(t)()
-	ExecObjectLayerAPITest(t, testAPIPutObjectPartHandlerPreSign, []string{"NewMultipart", "PutObjectPart"})
-}
-
-func testAPIPutObjectPartHandlerPreSign(obj ObjectLayer, instanceType, bucketName string, apiRouter http.Handler,
-	credentials auth.Credentials, t *testing.T) {
-	testObject := "testobject"
-	rec := httptest.NewRecorder()
-	req, err := newTestSignedRequestV4("POST", getNewMultipartURL("", bucketName, "testobject"),
-		0, nil, credentials.AccessKey, credentials.SecretKey, nil)
-	if err != nil {
-		t.Fatalf("[%s] - Failed to create a signed request to initiate multipart upload for %s/%s: <ERROR> %v",
-			instanceType, bucketName, testObject, err)
-	}
-	apiRouter.ServeHTTP(rec, req)
-
-	// Get uploadID of the mulitpart upload initiated.
-	var mpartResp InitiateMultipartUploadResponse
-	mpartRespBytes, err := ioutil.ReadAll(rec.Result().Body)
-	if err != nil {
-		t.Fatalf("[%s] Failed to read NewMultipartUpload response <ERROR> %v", instanceType, err)
-
-	}
-	err = xml.Unmarshal(mpartRespBytes, &mpartResp)
-	if err != nil {
-		t.Fatalf("[%s] Failed to unmarshal NewMultipartUpload response <ERROR> %v", instanceType, err)
-	}
-
-	rec = httptest.NewRecorder()
-	req, err = newTestRequest("PUT", getPutObjectPartURL("", bucketName, testObject, mpartResp.UploadID, "1"),
-		int64(len("hello")), bytes.NewReader([]byte("hello")))
-	if err != nil {
-		t.Fatalf("[%s] - Failed to create an unsigned request to put object part for %s/%s <ERROR> %v",
-			instanceType, bucketName, testObject, err)
-	}
-
-	err = preSignV2(req, credentials.AccessKey, credentials.SecretKey, int64(10*60*60))
-	if err != nil {
-		t.Fatalf("[%s] - Failed to presign an unsigned request to put object part for %s/%s <ERROR> %v",
-			instanceType, bucketName, testObject, err)
-	}
-	apiRouter.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Errorf("Test %d %s expected to succeed but failed with HTTP status code %d", 1, instanceType, rec.Code)
-	}
-
-	rec = httptest.NewRecorder()
-	req, err = newTestRequest("PUT", getPutObjectPartURL("", bucketName, testObject, mpartResp.UploadID, "1"),
-		int64(len("hello")), bytes.NewReader([]byte("hello")))
-	if err != nil {
-		t.Fatalf("[%s] - Failed to create an unsigned request to put object part for %s/%s <ERROR> %v",
-			instanceType, bucketName, testObject, err)
-	}
-	err = preSignV4(req, credentials.AccessKey, credentials.SecretKey, int64(10*60*60))
-	if err != nil {
-		t.Fatalf("[%s] - Failed to presign an unsigned request to put object part for %s/%s <ERROR> %v",
-			instanceType, bucketName, testObject, err)
-	}
-	apiRouter.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Errorf("Test %d %s expected to succeed but failed with HTTP status code %d", 1, instanceType, rec.Code)
-	}
-}
-
 // TestAPIPutObjectPartHandlerStreaming - Tests validate the response of PutObjectPart HTTP handler
 // when the request signature type is `streaming signature`.
 func TestAPIPutObjectPartHandlerStreaming(t *testing.T) {
@@ -3360,7 +3335,7 @@ func testAPIPutObjectPartHandler(obj ObjectLayer, instanceType, bucketName strin
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, opts)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, opts)
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)
@@ -3763,7 +3738,7 @@ func testAPIListObjectPartsHandler(obj ObjectLayer, instanceType, bucketName str
 	// PutObjectPart API HTTP Handler has to be tested in isolation,
 	// that is without any other handler being registered,
 	// That's why NewMultipartUpload is initiated using ObjectLayer.
-	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, nil, opts)
+	uploadID, err := obj.NewMultipartUpload(context.Background(), bucketName, testObject, opts)
 	if err != nil {
 		// Failed to create NewMultipartUpload, abort.
 		t.Fatalf("Minio %s : <ERROR>  %s", instanceType, err)

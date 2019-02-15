@@ -36,12 +36,12 @@ func main() {
 
 ```
 
-| Service operations         | Info operations  | Healing operations                    | Config operations        | IAM operations | Misc                                |
-|:----------------------------|:----------------------------|:--------------------------------------|:--------------------------|:------------------------------------|:------------------------------------|
-| [`ServiceStatus`](#ServiceStatus) | [`ServerInfo`](#ServerInfo) | [`Heal`](#Heal) | [`GetConfig`](#GetConfig) | [`AddUser`](#AddUser) | [`SetAdminCredentials`](#SetAdminCredentials) |
-| [`ServiceSendAction`](#ServiceSendAction) | [`ServerDrivesPerfInfo`](#ServerDrivesPerfInfo) | [`ServerCPULoadInfo`](#ServerCPULoadInfo) | [`ServerMemUsageInfo`](#ServerMemUsageInfo)  | [`SetConfig`](#SetConfig) | [`SetUserPolicy`](#SetUserPolicy) | [`StartProfiling`](#StartProfiling) |
-| | |            | [`GetConfigKeys`](#GetConfigKeys) | [`ListUsers`](#ListUsers) | [`DownloadProfilingData`](#DownloadProfilingData) |
-| | |            | [`SetConfigKeys`](#SetConfigKeys) | [`AddCannedPolicy`](#AddCannedPolicy) | |
+| Service operations         | Info operations  | Healing operations                    | Config operations        | Top operations        | IAM operations | Misc                                |
+|:----------------------------|:----------------------------|:--------------------------------------|:--------------------------|:--------------------------|:------------------------------------|:------------------------------------|
+| [`ServiceStatus`](#ServiceStatus) | [`ServerInfo`](#ServerInfo) | [`Heal`](#Heal) | [`GetConfig`](#GetConfig) | [`TopLocks`](#TopLocks) | [`AddUser`](#AddUser) | [`SetAdminCredentials`](#SetAdminCredentials) |
+| [`ServiceSendAction`](#ServiceSendAction) | [`ServerCPULoadInfo`](#ServerCPULoadInfo) | | [`SetConfig`](#SetConfig) | |  [`SetUserPolicy`](#SetUserPolicy) | [`StartProfiling`](#StartProfiling) |
+| |[`ServerMemUsageInfo`](#ServerMemUsageInfo) |            | [`GetConfigKeys`](#GetConfigKeys) | | [`ListUsers`](#ListUsers) | [`DownloadProfilingData`](#DownloadProfilingData) |
+| | |            | [`SetConfigKeys`](#SetConfigKeys) | | [`AddCannedPolicy`](#AddCannedPolicy) | |
 
 
 ## 1. Constructor
@@ -235,9 +235,9 @@ Fetches CPU utilization for all cluster nodes. Returned value is in Bytes.
 
 | Param | Type | Description |
 |-------|------|-------------|
-|`cpu.Load.Avg` | _string_ | The average utilization % of the CPU measured in a 200ms interval |
-|`cpu.Load.Min` | _string_ | The minimum utilization % of the CPU measured in a 200ms interval |
-|`cpu.Load.Max` | _string_ | The maximum utilization % of the CPU measured in a 200ms interval |
+|`cpu.Load.Avg` | _float64_ | The average utilization of the CPU measured in a 200ms interval |
+|`cpu.Load.Min` | _float64_ | The minimum utilization of the CPU measured in a 200ms interval |
+|`cpu.Load.Max` | _float64_ | The maximum utilization of the CPU measured in a 200ms interval |
 |`cpu.Load.Error` | _string_ | Error (if any) encountered while accesing the CPU info |
 
 <a name="ServerMemUsageInfo"></a>
@@ -253,7 +253,7 @@ Fetches Mem utilization for all cluster nodes. Returned value is in Bytes.
 
 | Param | Type | Description |
 |-------|------|-------------|
-|`mem.Usage.Mem` | _string_ | The total number of bytes obtained from the OS |
+|`mem.Usage.Mem` | _uint64_ | The total number of bytes obtained from the OS |
 |`mem.Usage.Error` | _string_ | Error (if any) encountered while accesing the CPU info |
 
 ## 6. Heal operations
@@ -399,7 +399,29 @@ __Example__
     log.Println("New configuration successfully set")
 ```
 
-## 8. IAM operations
+## 8. Top operations
+
+<a name="TopLocks"></a>
+### TopLocks() (LockEntries, error)
+Get the oldest locks from Minio server.
+
+__Example__
+
+``` go
+    locks, err := madmClnt.TopLocks()
+    if err != nil {
+        log.Fatalf("failed due to: %v", err)
+    }
+
+    out, err := json.Marshal(locks)
+    if err != nil {
+        log.Fatalf("Marshal failed due to: %v", err)
+    }
+
+    log.Println("TopLocks received successfully: ", string(out))
+```
+
+## 9. IAM operations
 
 <a name="AddCannedPolicy"></a>
 ### AddCannedPolicy(policyName string, policy string) error
@@ -455,7 +477,7 @@ __Example__
     }
 ```
 
-## 9. Misc operations
+## 10. Misc operations
 
 <a name="SetAdminCredentials"></a>
 ### SetAdminCredentials() error

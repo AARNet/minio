@@ -179,7 +179,7 @@ func TestListOnlineDisks(t *testing.T) {
 			t.Fatalf("Failed to make a bucket %v", err)
 		}
 
-		_, err = obj.PutObject(context.Background(), bucket, object, mustGetPutObjReader(t, bytes.NewReader(data), int64(len(data)), "", ""), nil, ObjectOptions{})
+		_, err = obj.PutObject(context.Background(), bucket, object, mustGetPutObjReader(t, bytes.NewReader(data), int64(len(data)), "", ""), ObjectOptions{})
 		if err != nil {
 			t.Fatalf("Failed to putObject %v", err)
 		}
@@ -273,12 +273,12 @@ func TestDisksWithAllParts(t *testing.T) {
 		t.Fatalf("Failed to make a bucket %v", err)
 	}
 
-	_, err = obj.PutObject(ctx, bucket, object, mustGetPutObjReader(t, bytes.NewReader(data), int64(len(data)), "", ""), nil, ObjectOptions{})
+	_, err = obj.PutObject(ctx, bucket, object, mustGetPutObjReader(t, bytes.NewReader(data), int64(len(data)), "", ""), ObjectOptions{})
 	if err != nil {
 		t.Fatalf("Failed to putObject %v", err)
 	}
 
-	partsMetadata, errs := readAllXLMetadata(ctx, xlDisks, bucket, object)
+	_, errs := readAllXLMetadata(ctx, xlDisks, bucket, object)
 	readQuorum := len(xl.storageDisks) / 2
 	if reducedErr := reduceReadQuorumErrs(ctx, errs, objectOpIgnoredErrs, readQuorum); reducedErr != nil {
 		t.Fatalf("Failed to read xl meta data %v", reducedErr)
@@ -286,7 +286,7 @@ func TestDisksWithAllParts(t *testing.T) {
 
 	// Test that all disks are returned without any failures with
 	// unmodified meta data
-	partsMetadata, errs = readAllXLMetadata(ctx, xlDisks, bucket, object)
+	partsMetadata, errs := readAllXLMetadata(ctx, xlDisks, bucket, object)
 	if err != nil {
 		t.Fatalf("Failed to read xl meta data %v", err)
 	}

@@ -155,9 +155,12 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		registerSTSRouter(router)
 	}
 
+	enableConfigOps := globalEtcdClient != nil && gatewayName == "nas"
+	enableIAMOps := globalEtcdClient != nil
+
 	// Enable IAM admin APIs if etcd is enabled, if not just enable basic
 	// operations such as profiling, server info etc.
-	registerAdminRouter(router, globalEtcdClient != nil)
+	registerAdminRouter(router, enableConfigOps, enableIAMOps)
 
 	// Add healthcheck router
 	registerHealthCheckRouter(router)
@@ -200,6 +203,9 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		// Override any values from ENVs.
 		srvCfg.loadFromEnvs()
 
+		// Load values to cached global values.
+		srvCfg.loadToCachedConfigs()
+
 		// hold the mutex lock before a new config is assigned.
 		globalServerConfigMu.Lock()
 		globalServerConfig = srvCfg
@@ -215,12 +221,12 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		logger.FatalIf(err, "Unable to initialize gateway backend")
 	}
 
-	if globalEtcdClient != nil && gatewayName == "nas" {
+	if enableConfigOps {
 		// Create a new config system.
 		globalConfigSys = NewConfigSys()
 
 		// Load globalServerConfig from etcd
-		_ = globalConfigSys.Init(newObject)
+		logger.LogIf(context.Background(), globalConfigSys.Init(newObject))
 	}
 
 	// Load logger subsystem
@@ -242,9 +248,9 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 
 	// Create new IAM system.
 	globalIAMSys = NewIAMSys()
-	if globalEtcdClient != nil {
+	if enableIAMOps {
 		// Initialize IAM sys.
-		_ = globalIAMSys.Init(newObject)
+		logger.LogIf(context.Background(), globalIAMSys.Init(newObject))
 	}
 
 	// Create new policy system.
@@ -256,7 +262,7 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 	// Create new notification system.
 	globalNotificationSys = NewNotificationSys(globalServerConfig, globalEndpoints)
 	if globalEtcdClient != nil && newObject.IsNotificationSupported() {
-		_ = globalNotificationSys.Init(newObject)
+		logger.LogIf(context.Background(), globalNotificationSys.Init(newObject))
 	}
 
 	// Encryption support checks in gateway mode.

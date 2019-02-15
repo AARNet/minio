@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017, 2018 Minio, Inc.
+ * Minio Cloud Storage, (C) 2017, 2018, 2019 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -168,35 +169,61 @@ func randString(n int, src rand.Source, prefix string) string {
 	return prefix + string(b[0:30-len(prefix)])
 }
 
+func isAmazonS3Endpoint(urlStr string) bool {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		panic(err)
+	}
+	return s3utils.IsAmazonEndpoint(*u)
+}
+
+// Chains all credential types, in the following order:
+//  - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
+//  - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
+//  - Static credentials provided by user (i.e. MINIO_ACCESS_KEY)
+var defaultProviders = []credentials.Provider{
+	&credentials.EnvAWS{},
+	&credentials.FileAWSCredentials{},
+	&credentials.EnvMinio{},
+}
+
+// Chains all credential types, in the following order:
+//  - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
+//  - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
+//  - IAM profile based credentials. (performs an HTTP
+//    call to a pre-defined endpoint, only valid inside
+//    configured ec2 instances)
+var defaultAWSCredProviders = []credentials.Provider{
+	&credentials.EnvAWS{},
+	&credentials.FileAWSCredentials{},
+	&credentials.IAM{
+		Client: &http.Client{
+			Transport: minio.NewCustomHTTPTransport(),
+		},
+	},
+	&credentials.EnvMinio{},
+}
+
 // newS3 - Initializes a new client by auto probing S3 server signature.
-func newS3(url string) (*miniogo.Core, error) {
-	if url == "" {
-		url = "https://s3.amazonaws.com"
+func newS3(urlStr string) (*miniogo.Core, error) {
+	if urlStr == "" {
+		urlStr = "https://s3.amazonaws.com"
 	}
 
 	// Override default params if the host is provided
-	endpoint, secure, err := minio.ParseGatewayEndpoint(url)
+	endpoint, secure, err := minio.ParseGatewayEndpoint(urlStr)
 	if err != nil {
 		return nil, err
 	}
 
-	// Chains all credential types, in the following order:
-	//  - AWS env vars (i.e. AWS_ACCESS_KEY_ID)
-	//  - AWS creds file (i.e. AWS_SHARED_CREDENTIALS_FILE or ~/.aws/credentials)
-	//  - IAM profile based credentials. (performs an HTTP
-	//    call to a pre-defined endpoint, only valid inside
-	//    configured ec2 instances)
-	//  - Static credentials provided by user (i.e. MINIO_ACCESS_KEY)
-	creds := credentials.NewChainCredentials([]credentials.Provider{
-		&credentials.EnvAWS{},
-		&credentials.FileAWSCredentials{},
-		&credentials.IAM{
-			Client: &http.Client{
-				Transport: minio.NewCustomHTTPTransport(),
-			},
-		},
-		&credentials.EnvMinio{},
-	})
+	var creds *credentials.Credentials
+	if isAmazonS3Endpoint(urlStr) {
+		// If we see an Amazon S3 endpoint, then we use more ways to fetch backend credentials.
+		// Specifically IAM style rotating credentials are only supported with AWS S3 endpoint.
+		creds = credentials.NewChainCredentials(defaultAWSCredProviders)
+	} else {
+		creds = credentials.NewChainCredentials(defaultProviders)
+	}
 
 	clnt, err := miniogo.NewWithCredentials(endpoint, creds, secure, "")
 	if err != nil {
@@ -421,15 +448,15 @@ func (l *s3Objects) GetObjectInfo(ctx context.Context, bucket string, object str
 }
 
 // PutObject creates a new object with the incoming data,
-func (l *s3Objects) PutObject(ctx context.Context, bucket string, object string, r *minio.PutObjReader, metadata map[string]string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
+func (l *s3Objects) PutObject(ctx context.Context, bucket string, object string, r *minio.PutObjReader, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	data := r.Reader
-	oi, err := l.Client.PutObject(bucket, object, data, data.Size(), data.MD5Base64String(), data.SHA256HexString(), minio.ToMinioClientMetadata(metadata), opts.ServerSideEncryption)
+	oi, err := l.Client.PutObject(bucket, object, data, data.Size(), data.MD5Base64String(), data.SHA256HexString(), minio.ToMinioClientMetadata(opts.UserDefined), opts.ServerSideEncryption)
 	if err != nil {
 		return objInfo, minio.ErrorRespToObjectError(err, bucket, object)
 	}
 	// On success, populate the key & metadata so they are present in the notification
 	oi.Key = object
-	oi.Metadata = minio.ToMinioClientObjectInfoMetadata(metadata)
+	oi.Metadata = minio.ToMinioClientObjectInfoMetadata(opts.UserDefined)
 
 	return minio.FromMinioClientObjectInfo(bucket, oi), nil
 }
@@ -481,9 +508,9 @@ func (l *s3Objects) ListMultipartUploads(ctx context.Context, bucket string, pre
 }
 
 // NewMultipartUpload upload object in multiple parts
-func (l *s3Objects) NewMultipartUpload(ctx context.Context, bucket string, object string, metadata map[string]string, o minio.ObjectOptions) (uploadID string, err error) {
+func (l *s3Objects) NewMultipartUpload(ctx context.Context, bucket string, object string, o minio.ObjectOptions) (uploadID string, err error) {
 	// Create PutObject options
-	opts := miniogo.PutObjectOptions{UserMetadata: metadata, ServerSideEncryption: o.ServerSideEncryption}
+	opts := miniogo.PutObjectOptions{UserMetadata: o.UserDefined, ServerSideEncryption: o.ServerSideEncryption}
 	uploadID, err = l.Client.NewMultipartUpload(bucket, object, opts)
 	if err != nil {
 		return uploadID, minio.ErrorRespToObjectError(err, bucket, object)

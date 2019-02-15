@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * Minio Cloud Storage, (C) 2018, 2019 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -271,6 +271,9 @@ func (sys *NotificationSys) DownloadProfilingData(ctx context.Context, writer io
 		isDir:   false,
 		sys:     nil,
 	})
+	if zerr != nil {
+		return profilingDataFound
+	}
 
 	zwriter, zerr := zipWriter.CreateHeader(header)
 	if zerr != nil {
@@ -338,6 +341,44 @@ func (sys *NotificationSys) ServerInfo(ctx context.Context) []ServerInfo {
 	}
 	wg.Wait()
 	return serverInfo
+}
+
+// GetLocks - makes GetLocks RPC call on all peers.
+func (sys *NotificationSys) GetLocks(ctx context.Context) []*PeerLocks {
+	var idx = 0
+	locksResp := make([]*PeerLocks, len(sys.peerRPCClientMap))
+	var wg sync.WaitGroup
+	for addr, client := range sys.peerRPCClientMap {
+		wg.Add(1)
+		go func(idx int, addr xnet.Host, client *PeerRPCClient) {
+			defer wg.Done()
+			// Try to fetch serverInfo remotely in three attempts.
+			for i := 0; i < 3; i++ {
+				serverLocksResp, err := client.GetLocks()
+				if err == nil {
+					locksResp[idx] = &PeerLocks{
+						Addr:  addr.String(),
+						Locks: serverLocksResp,
+					}
+					return
+				}
+
+				// Last iteration log the error.
+				if i == 2 {
+					reqInfo := (&logger.ReqInfo{}).AppendTags("peerAddress", addr.String())
+					ctx := logger.SetReqInfo(ctx, reqInfo)
+					logger.LogOnceIf(ctx, err, addr.String())
+				}
+				// Wait for one second and no need wait after last attempt.
+				if i < 2 {
+					time.Sleep(1 * time.Second)
+				}
+			}
+		}(idx, addr, client)
+		idx++
+	}
+	wg.Wait()
+	return locksResp
 }
 
 // SetBucketPolicy - calls SetBucketPolicy RPC call on all peers.
@@ -564,22 +605,19 @@ func (sys *NotificationSys) Init(objAPI ObjectLayer) error {
 	// the following reasons:
 	//  - Read quorum is lost just after the initialization
 	//    of the object layer.
-	retryTimerCh := newRetryTimerSimple(doneCh)
-	for {
-		select {
-		case _ = <-retryTimerCh:
-			if err := sys.refresh(objAPI); err != nil {
-				if err == errDiskNotFound ||
-					strings.Contains(err.Error(), InsufficientReadQuorum{}.Error()) ||
-					strings.Contains(err.Error(), InsufficientWriteQuorum{}.Error()) {
-					logger.Info("Waiting for notification subsystem to be initialized..")
-					continue
-				}
-				return err
+	for range newRetryTimerSimple(doneCh) {
+		if err := sys.refresh(objAPI); err != nil {
+			if err == errDiskNotFound ||
+				strings.Contains(err.Error(), InsufficientReadQuorum{}.Error()) ||
+				strings.Contains(err.Error(), InsufficientWriteQuorum{}.Error()) {
+				logger.Info("Waiting for notification subsystem to be initialized..")
+				continue
 			}
-			return nil
+			return err
 		}
+		break
 	}
+	return nil
 }
 
 // AddRulesMap - adds rules map for bucket name.

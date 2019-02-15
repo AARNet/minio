@@ -94,23 +94,20 @@ func (sys *IAMSys) Init(objAPI ObjectLayer) error {
 	// the following reasons:
 	//  - Read quorum is lost just after the initialization
 	//    of the object layer.
-	retryTimerCh := newRetryTimerSimple(doneCh)
-	for {
-		select {
-		case _ = <-retryTimerCh:
-			// Load IAMSys once during boot.
-			if err := sys.refresh(objAPI); err != nil {
-				if err == errDiskNotFound ||
-					strings.Contains(err.Error(), InsufficientReadQuorum{}.Error()) ||
-					strings.Contains(err.Error(), InsufficientWriteQuorum{}.Error()) {
-					logger.Info("Waiting for IAM subsystem to be initialized..")
-					continue
-				}
-				return err
+	for range newRetryTimerSimple(doneCh) {
+		// Load IAMSys once during boot.
+		if err := sys.refresh(objAPI); err != nil {
+			if err == errDiskNotFound ||
+				strings.Contains(err.Error(), InsufficientReadQuorum{}.Error()) ||
+				strings.Contains(err.Error(), InsufficientWriteQuorum{}.Error()) {
+				logger.Info("Waiting for IAM subsystem to be initialized..")
+				continue
 			}
-			return nil
+			return err
 		}
+		break
 	}
+	return nil
 }
 
 // DeleteCannedPolicy - deletes a canned policy.
@@ -464,13 +461,13 @@ func (sys *IAMSys) IsAllowed(args iampolicy.Args) bool {
 	return args.IsOwner
 }
 
-var defaultContextTimeout = 5 * time.Minute
+var defaultContextTimeout = 30 * time.Second
 
 // Similar to reloadUsers but updates users, policies maps from etcd server,
 func reloadEtcdUsers(prefix string, usersMap map[string]auth.Credentials, policyMap map[string]string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultContextTimeout)
-	r, err := globalEtcdClient.Get(ctx, prefix, etcd.WithPrefix(), etcd.WithKeysOnly())
 	defer cancel()
+	r, err := globalEtcdClient.Get(ctx, prefix, etcd.WithPrefix(), etcd.WithKeysOnly())
 	if err != nil {
 		return err
 	}
@@ -536,8 +533,8 @@ func reloadEtcdUsers(prefix string, usersMap map[string]auth.Credentials, policy
 
 func reloadEtcdPolicies(prefix string, cannedPolicyMap map[string]iampolicy.Policy) error {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultContextTimeout)
-	r, err := globalEtcdClient.Get(ctx, prefix, etcd.WithPrefix(), etcd.WithKeysOnly())
 	defer cancel()
+	r, err := globalEtcdClient.Get(ctx, prefix, etcd.WithPrefix(), etcd.WithKeysOnly())
 	if err != nil {
 		return err
 	}

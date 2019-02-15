@@ -324,8 +324,6 @@ func gcsToObjectError(err error, params ...string) error {
 			break
 		}
 		err = minio.BucketNotEmpty{Bucket: bucket}
-	default:
-		err = fmt.Errorf("Unsupported error reason: %s", reason)
 	}
 
 	return err
@@ -877,7 +875,7 @@ func (l *gcsGateway) GetObjectInfo(ctx context.Context, bucket string, object st
 }
 
 // PutObject - Create a new object with the incoming data,
-func (l *gcsGateway) PutObject(ctx context.Context, bucket string, key string, r *minio.PutObjReader, metadata map[string]string, opts minio.ObjectOptions) (minio.ObjectInfo, error) {
+func (l *gcsGateway) PutObject(ctx context.Context, bucket string, key string, r *minio.PutObjReader, opts minio.ObjectOptions) (minio.ObjectInfo, error) {
 	data := r.Reader
 
 	// if we want to mimic S3 behavior exactly, we need to verify if bucket exists first,
@@ -890,12 +888,13 @@ func (l *gcsGateway) PutObject(ctx context.Context, bucket string, key string, r
 	object := l.client.Bucket(bucket).Object(key)
 
 	w := object.NewWriter(ctx)
+
 	// Disable "chunked" uploading in GCS client if the size of the data to be uploaded is below
 	// the current chunk-size of the writer. This avoids an unnecessary memory allocation.
 	if data.Size() < int64(w.ChunkSize) {
 		w.ChunkSize = 0
 	}
-	applyMetadataToGCSAttrs(metadata, &w.ObjectAttrs)
+	applyMetadataToGCSAttrs(opts.UserDefined, &w.ObjectAttrs)
 
 	if _, err := io.Copy(w, data); err != nil {
 		// Close the object writer upon error.
@@ -947,7 +946,7 @@ func (l *gcsGateway) DeleteObject(ctx context.Context, bucket string, object str
 }
 
 // NewMultipartUpload - upload object in multiple parts
-func (l *gcsGateway) NewMultipartUpload(ctx context.Context, bucket string, key string, metadata map[string]string, o minio.ObjectOptions) (uploadID string, err error) {
+func (l *gcsGateway) NewMultipartUpload(ctx context.Context, bucket string, key string, o minio.ObjectOptions) (uploadID string, err error) {
 	// generate new uploadid
 	uploadID = minio.MustGetUUID()
 
@@ -957,7 +956,7 @@ func (l *gcsGateway) NewMultipartUpload(ctx context.Context, bucket string, key 
 	w := l.client.Bucket(bucket).Object(meta).NewWriter(ctx)
 	defer w.Close()
 
-	applyMetadataToGCSAttrs(metadata, &w.ObjectAttrs)
+	applyMetadataToGCSAttrs(o.UserDefined, &w.ObjectAttrs)
 
 	if err = json.NewEncoder(w).Encode(gcsMultipartMetaV1{
 		gcsMinioMultipartMetaCurrentVersion,

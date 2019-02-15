@@ -49,7 +49,6 @@ func runPutObjectBenchmark(b *testing.B, obj ObjectLayer, objSize int) {
 	textData := generateBytesData(objSize)
 	// generate md5sum for the generated data.
 	// md5sum of the data to written is required as input for PutObject.
-	metadata := make(map[string]string)
 
 	md5hex := getMD5Hash(textData)
 	sha256hex := ""
@@ -61,7 +60,7 @@ func runPutObjectBenchmark(b *testing.B, obj ObjectLayer, objSize int) {
 	for i := 0; i < b.N; i++ {
 		// insert the object.
 		objInfo, err := obj.PutObject(context.Background(), bucket, "object"+strconv.Itoa(i),
-			mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), metadata, ObjectOptions{})
+			mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), ObjectOptions{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -96,14 +95,11 @@ func runPutObjectPartBenchmark(b *testing.B, obj ObjectLayer, partSize int) {
 	textData := generateBytesData(objSize)
 	// generate md5sum for the generated data.
 	// md5sum of the data to written is required as input for NewMultipartUpload.
-	metadata := make(map[string]string)
-	opts := ObjectOptions{}
-	uploadID, err = obj.NewMultipartUpload(context.Background(), bucket, object, metadata, opts)
+	uploadID, err = obj.NewMultipartUpload(context.Background(), bucket, object, ObjectOptions{})
 	if err != nil {
 		b.Fatal(err)
 	}
 
-	md5hex := getMD5Hash(textData)
 	sha256hex := ""
 
 	var textPartData []byte
@@ -120,10 +116,10 @@ func runPutObjectPartBenchmark(b *testing.B, obj ObjectLayer, partSize int) {
 			} else {
 				textPartData = textData[j*partSize:]
 			}
-			md5hex = getMD5Hash([]byte(textPartData))
+			md5hex := getMD5Hash([]byte(textPartData))
 			var partInfo PartInfo
 			partInfo, err = obj.PutObjectPart(context.Background(), bucket, object, uploadID, j,
-				mustGetPutObjReader(b, bytes.NewBuffer(textPartData), int64(len(textPartData)), md5hex, sha256hex), opts)
+				mustGetPutObjReader(b, bytes.NewBuffer(textPartData), int64(len(textPartData)), md5hex, sha256hex), ObjectOptions{})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -194,7 +190,6 @@ func runGetObjectBenchmark(b *testing.B, obj ObjectLayer, objSize int) {
 	// generate etag for the generated data.
 	// etag of the data to written is required as input for PutObject.
 	// PutObject is the functions which writes the data onto the FS/XL backend.
-	metadata := make(map[string]string)
 
 	// get text data generated for number of bytes equal to object size.
 	md5hex := getMD5Hash(textData)
@@ -204,7 +199,7 @@ func runGetObjectBenchmark(b *testing.B, obj ObjectLayer, objSize int) {
 		// insert the object.
 		var objInfo ObjectInfo
 		objInfo, err = obj.PutObject(context.Background(), bucket, "object"+strconv.Itoa(i),
-			mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), metadata, ObjectOptions{})
+			mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), ObjectOptions{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -234,10 +229,8 @@ func getRandomByte() []byte {
 	const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	// seeding the random number generator.
 	rand.Seed(UTCNow().UnixNano())
-	var b byte
 	// pick a character randomly.
-	b = letterBytes[rand.Intn(len(letterBytes))]
-	return []byte{b}
+	return []byte{letterBytes[rand.Intn(len(letterBytes))]}
 }
 
 // picks a random byte and repeats it to size bytes.
@@ -289,7 +282,6 @@ func runPutObjectBenchmarkParallel(b *testing.B, obj ObjectLayer, objSize int) {
 	textData := generateBytesData(objSize)
 	// generate md5sum for the generated data.
 	// md5sum of the data to written is required as input for PutObject.
-	metadata := make(map[string]string)
 
 	md5hex := getMD5Hash([]byte(textData))
 	sha256hex := ""
@@ -304,7 +296,7 @@ func runPutObjectBenchmarkParallel(b *testing.B, obj ObjectLayer, objSize int) {
 		for pb.Next() {
 			// insert the object.
 			objInfo, err := obj.PutObject(context.Background(), bucket, "object"+strconv.Itoa(i),
-				mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), metadata, ObjectOptions{})
+				mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), ObjectOptions{})
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -335,7 +327,6 @@ func runGetObjectBenchmarkParallel(b *testing.B, obj ObjectLayer, objSize int) {
 	// generate md5sum for the generated data.
 	// md5sum of the data to written is required as input for PutObject.
 	// PutObject is the functions which writes the data onto the FS/XL backend.
-	metadata := make(map[string]string)
 
 	md5hex := getMD5Hash([]byte(textData))
 	sha256hex := ""
@@ -344,7 +335,7 @@ func runGetObjectBenchmarkParallel(b *testing.B, obj ObjectLayer, objSize int) {
 		// insert the object.
 		var objInfo ObjectInfo
 		objInfo, err = obj.PutObject(context.Background(), bucket, "object"+strconv.Itoa(i),
-			mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), metadata, ObjectOptions{})
+			mustGetPutObjReader(b, bytes.NewBuffer(textData), int64(len(textData)), md5hex, sha256hex), ObjectOptions{})
 		if err != nil {
 			b.Fatal(err)
 		}

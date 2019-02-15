@@ -263,9 +263,6 @@ type serverConfigV7 struct {
 
 	// Notification queue configuration.
 	Notify notifierV1 `json:"notify"`
-
-	// Read Write mutex.
-	rwMutex *sync.RWMutex
 }
 
 // serverConfigV8 server configuration version '8'. Adds NATS notifier
@@ -282,9 +279,6 @@ type serverConfigV8 struct {
 
 	// Notification queue configuration.
 	Notify notifierV1 `json:"notify"`
-
-	// Read Write mutex.
-	rwMutex *sync.RWMutex
 }
 
 // serverConfigV9 server configuration version '9'. Adds PostgreSQL
@@ -301,9 +295,6 @@ type serverConfigV9 struct {
 
 	// Notification queue configuration.
 	Notify notifierV1 `json:"notify"`
-
-	// Read Write mutex.
-	rwMutex *sync.RWMutex
 }
 
 type loggerV7 struct {
@@ -893,7 +884,7 @@ type serverConfigV32 struct {
 	} `json:"policy"`
 }
 
-// serverConfigV33 is just like version '32', removes clientID from NATS and adds queueDir with MQTT.
+// serverConfigV33 is just like version '32', removes clientID from NATS and MQTT, and adds queueDir with MQTT.
 type serverConfigV33 struct {
 	quick.Config `json:"-"` // ignore interfaces
 

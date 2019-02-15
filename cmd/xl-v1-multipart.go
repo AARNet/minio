@@ -241,15 +241,15 @@ func (xl xlObjects) newMultipartUpload(ctx context.Context, bucket string, objec
 // subsequent request each UUID is unique.
 //
 // Implements S3 compatible initiate multipart API.
-func (xl xlObjects) NewMultipartUpload(ctx context.Context, bucket, object string, meta map[string]string, opts ObjectOptions) (string, error) {
+func (xl xlObjects) NewMultipartUpload(ctx context.Context, bucket, object string, opts ObjectOptions) (string, error) {
 	if err := checkNewMultipartArgs(ctx, bucket, object, xl); err != nil {
 		return "", err
 	}
 	// No metadata is set, allocate a new one.
-	if meta == nil {
-		meta = make(map[string]string)
+	if opts.UserDefined == nil {
+		opts.UserDefined = make(map[string]string)
 	}
-	return xl.newMultipartUpload(ctx, bucket, object, meta)
+	return xl.newMultipartUpload(ctx, bucket, object, opts.UserDefined)
 }
 
 // CopyObjectPart - reads incoming stream and internally erasure codes
@@ -505,10 +505,32 @@ func (xl xlObjects) ListObjectParts(ctx context.Context, bucket, object, uploadI
 
 	uploadIDPath := xl.getUploadIDDir(bucket, object, uploadID)
 
-	xlParts, xlMeta, err := xl.readXLMetaParts(ctx, minioMetaMultipartBucket, uploadIDPath)
+	storageDisks := xl.getDisks()
+
+	// Read metadata associated with the object from all disks.
+	partsMetadata, errs := readAllXLMetadata(ctx, storageDisks, minioMetaMultipartBucket, uploadIDPath)
+
+	// get Quorum for this object
+	_, writeQuorum, err := objectQuorumFromMeta(ctx, xl, partsMetadata, errs)
 	if err != nil {
 		return result, toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
 	}
+
+	reducedErr := reduceWriteQuorumErrs(ctx, errs, objectOpIgnoredErrs, writeQuorum)
+	if reducedErr == errXLWriteQuorum {
+		return result, toObjectErr(err, minioMetaMultipartBucket, uploadIDPath)
+	}
+
+	_, modTime := listOnlineDisks(storageDisks, partsMetadata, errs)
+
+	// Pick one from the first valid metadata.
+	xlValidMeta, err := pickValidXLMeta(ctx, partsMetadata, modTime, writeQuorum)
+	if err != nil {
+		return result, err
+	}
+
+	var xlMeta = xlValidMeta.Meta
+	var xlParts = xlValidMeta.Parts
 
 	// Populate the result stub.
 	result.Bucket = bucket

@@ -306,7 +306,6 @@ type TestServer struct {
 	SecretKey string
 	Server    *httptest.Server
 	Obj       ObjectLayer
-	endpoints EndpointList
 }
 
 // UnstartedTestServer - Configures a temp FS/XL backend,
@@ -949,7 +948,7 @@ func preSignV2(req *http.Request, accessKeyID, secretAccessKey string, expires i
 
 // Sign given request using Signature V2.
 func signRequestV2(req *http.Request, accessKey, secretKey string) error {
-	req = s3signer.SignV2(*req, accessKey, secretKey, false)
+	s3signer.SignV2(*req, accessKey, secretKey, false)
 	return nil
 }
 
@@ -1303,36 +1302,6 @@ func getRandomObjectName() string {
 func getRandomBucketName() string {
 	return randString(60)
 
-}
-
-// TruncateWriter - Writes `n` bytes, then returns with number of bytes written.
-// differs from iotest.TruncateWriter, the difference is commented in the Write method.
-func TruncateWriter(w io.Writer, n int64) io.Writer {
-	return &truncateWriter{w, n}
-}
-
-type truncateWriter struct {
-	w io.Writer
-	n int64
-}
-
-func (t *truncateWriter) Write(p []byte) (n int, err error) {
-	if t.n <= 0 {
-		return len(p), nil
-	}
-	// real write
-	n = len(p)
-	if int64(n) > t.n {
-		n = int(t.n)
-	}
-	n, err = t.w.Write(p[0:n])
-	t.n -= int64(n)
-	// Removed from iotest.TruncateWriter.
-	// Need the Write method to return truncated number of bytes written, not the size of the buffer requested to be written.
-	// if err == nil {
-	// 	n = len(p)
-	// }
-	return
 }
 
 // NewEOFWriter returns a Writer that writes to w,
@@ -1696,11 +1665,10 @@ func initAPIHandlerTest(obj ObjectLayer, endpoints []string) (string, http.Handl
 	// Register the API end points with XL object layer.
 	// Registering only the GetObject handler.
 	apiRouter := initTestAPIEndPoints(obj, endpoints)
-	var f http.HandlerFunc
-	f = func(w http.ResponseWriter, r *http.Request) {
+	f := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.RequestURI = r.URL.RequestURI()
 		apiRouter.ServeHTTP(w, r)
-	}
+	})
 	return bucketName, f, nil
 }
 
@@ -1773,9 +1741,6 @@ func ExecObjectLayerAPIAnonTest(t *testing.T, obj ObjectLayer, testName, bucketN
 		t.Fatal(failTestStr(anonTestStr, fmt.Sprintf("Object API Nil Test expected to fail with %d, but failed with %d", accesDeniedHTTPStatus, rec.Code)))
 	}
 
-	// expected error response in bytes when objectLayer is not initialized, or set to `nil`.
-	expectedErrResponse := encodeResponse(getAPIErrorResponse(getAPIError(ErrAccessDenied), getGetObjectURL("", bucketName, objectName), ""))
-
 	// HEAD HTTTP request doesn't contain response body.
 	if anonReq.Method != "HEAD" {
 		// read the response body.
@@ -1784,9 +1749,18 @@ func ExecObjectLayerAPIAnonTest(t *testing.T, obj ObjectLayer, testName, bucketN
 		if err != nil {
 			t.Fatal(failTestStr(anonTestStr, fmt.Sprintf("Failed parsing response body: <ERROR> %v", err)))
 		}
-		// verify whether actual error response (from the response body), matches the expected error response.
-		if !bytes.Equal(expectedErrResponse, actualContent) {
-			t.Fatal(failTestStr(anonTestStr, "error response content differs from expected value"))
+
+		actualError := &APIErrorResponse{}
+		if err = xml.Unmarshal(actualContent, actualError); err != nil {
+			t.Fatal(failTestStr(anonTestStr, "error response failed to parse error XML"))
+		}
+
+		if actualError.BucketName != bucketName {
+			t.Fatal(failTestStr(anonTestStr, "error response bucket name differs from expected value"))
+		}
+
+		if actualError.Key != objectName {
+			t.Fatal(failTestStr(anonTestStr, "error response object name differs from expected value"))
 		}
 	}
 
@@ -1836,11 +1810,18 @@ func ExecObjectLayerAPIAnonTest(t *testing.T, obj ObjectLayer, testName, bucketN
 		if err != nil {
 			t.Fatal(failTestStr(unknownSignTestStr, fmt.Sprintf("Failed parsing response body: <ERROR> %v", err)))
 		}
-		// verify whether actual error response (from the response body), matches the expected error response.
-		if !bytes.Equal(expectedErrResponse, actualContent) {
-			fmt.Println(string(expectedErrResponse))
-			fmt.Println(string(actualContent))
-			t.Fatal(failTestStr(unknownSignTestStr, "error response content differs from expected value"))
+
+		actualError := &APIErrorResponse{}
+		if err = xml.Unmarshal(actualContent, actualError); err != nil {
+			t.Fatal(failTestStr(unknownSignTestStr, "error response failed to parse error XML"))
+		}
+
+		if actualError.BucketName != bucketName {
+			t.Fatal(failTestStr(unknownSignTestStr, "error response bucket name differs from expected value"))
+		}
+
+		if actualError.Key != objectName {
+			t.Fatal(failTestStr(unknownSignTestStr, "error response object name differs from expected value"))
 		}
 	}
 
@@ -1875,9 +1856,6 @@ func ExecObjectLayerAPINilTest(t TestErrHandler, bucketName, objectName, instanc
 	if rec.Code != serverNotInitializedErr {
 		t.Errorf("Object API Nil Test expected to fail with %d, but failed with %d", serverNotInitializedErr, rec.Code)
 	}
-	// expected error response in bytes when objectLayer is not initialized, or set to `nil`.
-	expectedErrResponse := encodeResponse(getAPIErrorResponse(getAPIError(ErrServerNotInitialized),
-		getGetObjectURL("", bucketName, objectName), ""))
 
 	// HEAD HTTP Request doesn't contain body in its response,
 	// for other type of HTTP requests compare the response body content with the expected one.
@@ -1887,9 +1865,18 @@ func ExecObjectLayerAPINilTest(t TestErrHandler, bucketName, objectName, instanc
 		if err != nil {
 			t.Fatalf("Minio %s: Failed parsing response body: <ERROR> %v", instanceType, err)
 		}
-		// verify whether actual error response (from the response body), matches the expected error response.
-		if !bytes.Equal(expectedErrResponse, actualContent) {
-			t.Errorf("Minio %s: Object content differs from expected value", instanceType)
+
+		actualError := &APIErrorResponse{}
+		if err = xml.Unmarshal(actualContent, actualError); err != nil {
+			t.Errorf("Minio %s: error response failed to parse error XML", instanceType)
+		}
+
+		if actualError.BucketName != bucketName {
+			t.Errorf("Minio %s: error response bucket name differs from expected value", instanceType)
+		}
+
+		if actualError.Key != objectName {
+			t.Errorf("Minio %s: error response object name differs from expected value", instanceType)
 		}
 	}
 }
@@ -2173,40 +2160,6 @@ func initTestWebRPCEndPoint(objLayer ObjectLayer) http.Handler {
 	return muxRouter
 }
 
-func StartTestS3PeerRPCServer(t TestErrHandler) (TestServer, []string) {
-	// init disks
-	objLayer, fsDirs, err := prepareXL16()
-	if err != nil {
-		t.Fatalf("%s", err)
-	}
-
-	// Create an instance of TestServer.
-	testRPCServer := TestServer{}
-
-	if err = newTestConfig(globalMinioDefaultRegion, objLayer); err != nil {
-		t.Fatalf("%s", err)
-	}
-
-	// Fetch credentials for the test server.
-	credentials := globalServerConfig.GetCredential()
-	testRPCServer.AccessKey = credentials.AccessKey
-	testRPCServer.SecretKey = credentials.SecretKey
-
-	// set object layer
-	testRPCServer.Obj = objLayer
-	globalObjLayerMutex.Lock()
-	globalObjectAPI = objLayer
-	globalObjLayerMutex.Unlock()
-
-	// Register router on a new mux
-	muxRouter := mux.NewRouter().SkipClean(true)
-	registerPeerRPCRouter(muxRouter)
-
-	// Initialize and run the TestServer.
-	testRPCServer.Server = httptest.NewServer(muxRouter)
-	return testRPCServer, fsDirs
-}
-
 // generateTLSCertKey creates valid key/cert with registered DNS or IP address
 // depending on the passed parameter. That way, we can use tls config without
 // passing InsecureSkipVerify flag.  This code is a simplified version of
@@ -2357,8 +2310,8 @@ func TestToErrIsNil(t *testing.T) {
 		t.Errorf("Test expected to return nil, failed instead got a non-nil value %s", toStorageErr(nil))
 	}
 	ctx := context.Background()
-	if toAPIErrorCode(ctx, nil) != ErrNone {
-		t.Errorf("Test expected error code to be ErrNone, failed instead provided %d", toAPIErrorCode(ctx, nil))
+	if toAPIError(ctx, nil) != noError {
+		t.Errorf("Test expected error code to be ErrNone, failed instead provided %s", toAPIError(ctx, nil).Code)
 	}
 }
 

@@ -33,7 +33,7 @@ func (a GatewayUnsupported) ListMultipartUploads(ctx context.Context, bucket str
 }
 
 // NewMultipartUpload upload object in multiple parts
-func (a GatewayUnsupported) NewMultipartUpload(ctx context.Context, bucket string, object string, metadata map[string]string, opts ObjectOptions) (uploadID string, err error) {
+func (a GatewayUnsupported) NewMultipartUpload(ctx context.Context, bucket string, object string, opts ObjectOptions) (uploadID string, err error) {
 	return "", NotImplemented{}
 }
 
@@ -92,8 +92,8 @@ func (a GatewayUnsupported) HealFormat(ctx context.Context, dryRun bool) (madmin
 }
 
 // HealBucket - Not implemented stub
-func (a GatewayUnsupported) HealBucket(ctx context.Context, bucket string, dryRun bool) ([]madmin.HealResultItem, error) {
-	return nil, NotImplemented{}
+func (a GatewayUnsupported) HealBucket(ctx context.Context, bucket string, dryRun, remove bool) (madmin.HealResultItem, error) {
+	return madmin.HealResultItem{}, NotImplemented{}
 }
 
 // ListBucketsHeal - Not implemented stub
@@ -102,7 +102,7 @@ func (a GatewayUnsupported) ListBucketsHeal(ctx context.Context) (buckets []Buck
 }
 
 // HealObject - Not implemented stub
-func (a GatewayUnsupported) HealObject(ctx context.Context, bucket, object string, dryRun bool) (h madmin.HealResultItem, e error) {
+func (a GatewayUnsupported) HealObject(ctx context.Context, bucket, object string, dryRun, remove bool) (h madmin.HealResultItem, e error) {
 	return h, NotImplemented{}
 }
 

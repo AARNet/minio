@@ -522,7 +522,7 @@ func TestGetXLID(t *testing.T) {
 	}
 
 	formats[2].ID = "bad-id"
-	if id, err = formatXLGetDeploymentID(quorumFormat, formats); err != errCorruptedFormat {
+	if _, err = formatXLGetDeploymentID(quorumFormat, formats); err != errCorruptedFormat {
 		t.Fatal("Unexpected Success")
 	}
 }
@@ -555,5 +555,14 @@ func TestNewFormatSets(t *testing.T) {
 	newFormats := newHealFormatSets(quorumFormat, setCount, disksPerSet, formats, errs)
 	if newFormats == nil {
 		t.Fatal("Unexpected failure")
+	}
+
+	// Check if deployment IDs are preserved.
+	for i := range newFormats {
+		for j := range newFormats[i] {
+			if newFormats[i][j].ID != quorumFormat.ID {
+				t.Fatal("Deployment id in the new format is lost")
+			}
+		}
 	}
 }

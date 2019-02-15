@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016 Minio, Inc.
+ * Minio Cloud Storage, (C) 2016, 2017, 2018, 2019 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,9 +53,9 @@ type RWLocker interface {
 
 // RWLockerSync - internal locker interface.
 type RWLockerSync interface {
-	GetLock(timeout time.Duration) bool
+	GetLock(id, source string, timeout time.Duration) bool
 	Unlock()
-	GetRLock(timeout time.Duration) bool
+	GetRLock(id, source string, timeout time.Duration) bool
 	RUnlock()
 }
 
@@ -102,7 +102,6 @@ func newNSLock(isDistXL bool) *nsLockMap {
 	nsMutex := nsLockMap{
 		isDistXL: isDistXL,
 		lockMap:  make(map[nsParam]*nsLock),
-		counters: &lockStat{},
 	}
 	return &nsMutex
 }
@@ -127,9 +126,6 @@ type nsLock struct {
 // nsLockMap - namespace lock map, provides primitives to Lock,
 // Unlock, RLock and RUnlock.
 type nsLockMap struct {
-	// Lock counter used for lock debugging.
-	counters *lockStat
-
 	// Indicates if namespace is part of a distributed setup.
 	isDistXL     bool
 	lockMap      map[nsParam]*nsLock
@@ -162,9 +158,9 @@ func (n *nsLockMap) lock(volume, path string, lockSource, opsID string, readLock
 
 	// Locking here will block (until timeout).
 	if readLock {
-		locked = nsLk.GetRLock(timeout)
+		locked = nsLk.GetRLock(opsID, lockSource, timeout)
 	} else {
-		locked = nsLk.GetLock(timeout)
+		locked = nsLk.GetLock(opsID, lockSource, timeout)
 	}
 
 	if !locked { // We failed to get the lock
@@ -259,11 +255,8 @@ func (n *nsLockMap) ForceUnlock(volume, path string) {
 		dsync.NewDRWMutex(pathJoin(volume, path), globalDsync).ForceUnlock()
 	}
 
-	param := nsParam{volume, path}
-	if _, found := n.lockMap[param]; found {
-		// Remove lock from the map.
-		delete(n.lockMap, param)
-	}
+	// Remove lock from the map.
+	delete(n.lockMap, nsParam{volume, path})
 }
 
 // lockInstance - frontend/top-level interface for namespace locks.

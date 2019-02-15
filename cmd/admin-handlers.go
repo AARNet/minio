@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * Minio Cloud Storage, (C) 2016, 2017, 2018, 2019 Minio, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -75,15 +76,14 @@ var (
 func (a adminAPIHandlers) VersionHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "Version")
 
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	jsonBytes, err := json.Marshal(adminAPIVersionInfo)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -96,14 +96,8 @@ func (a adminAPIHandlers) VersionHandler(w http.ResponseWriter, r *http.Request)
 func (a adminAPIHandlers) ServiceStatusHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ServiceStatus")
 
-	if globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
@@ -125,7 +119,7 @@ func (a adminAPIHandlers) ServiceStatusHandler(w http.ResponseWriter, r *http.Re
 	// Marshal API response
 	jsonBytes, err := json.Marshal(serverStatus)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -142,21 +136,15 @@ func (a adminAPIHandlers) ServiceStatusHandler(w http.ResponseWriter, r *http.Re
 func (a adminAPIHandlers) ServiceStopNRestartHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ServiceStopNRestart")
 
-	if globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	var sa madmin.ServiceAction
 	err := json.NewDecoder(r.Body).Decode(&sa)
 	if err != nil {
-		writeErrorResponseJSON(w, ErrRequestBodyParse, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrRequestBodyParse), r.URL)
 		return
 	}
 
@@ -167,7 +155,7 @@ func (a adminAPIHandlers) ServiceStopNRestartHandler(w http.ResponseWriter, r *h
 	case madmin.ServiceActionValueStop:
 		serviceSig = serviceStop
 	default:
-		writeErrorResponseJSON(w, ErrMalformedPOSTRequest, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMalformedPOSTRequest), r.URL)
 		logger.LogIf(ctx, errors.New("Invalid service action received"))
 		return
 	}
@@ -247,24 +235,14 @@ type ServerInfo struct {
 func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ServerInfo")
 
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Authenticate request
-
-	// Setting the region as empty so as the mc server info command is irrespective to the region.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	thisAddr, err := xnet.ParseHost(GetLocalPeer(globalEndpoints))
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -290,7 +268,7 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	// Marshal API response
 	jsonBytes, err := json.Marshal(serverInfo)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -299,7 +277,7 @@ func (a adminAPIHandlers) ServerInfoHandler(w http.ResponseWriter, r *http.Reque
 	writeSuccessResponseJSON(w, jsonBytes)
 }
 
-// ServerDrivesPerfInfo holds informantion about address, performance
+// ServerDrivesPerfInfo holds information about address, performance
 // of all drives on one server. It also reports any errors if encountered
 // while trying to reach this server.
 type ServerDrivesPerfInfo struct {
@@ -312,18 +290,20 @@ type ServerDrivesPerfInfo struct {
 // of one minio node. It also reports any errors if encountered
 // while trying to reach this server.
 type ServerCPULoadInfo struct {
-	Addr  string     `json:"addr"`
-	Error string     `json:"error,omitempty"`
-	Load  []cpu.Load `json:"load"`
+	Addr         string     `json:"addr"`
+	Error        string     `json:"error,omitempty"`
+	Load         []cpu.Load `json:"load"`
+	HistoricLoad []cpu.Load `json:"historicLoad"`
 }
 
 // ServerMemUsageInfo holds informantion about memory utilization
 // of one minio node. It also reports any errors if encountered
 // while trying to reach this server.
 type ServerMemUsageInfo struct {
-	Addr  string      `json:"addr"`
-	Error string      `json:"error,omitempty"`
-	Usage []mem.Usage `json:"usage"`
+	Addr          string      `json:"addr"`
+	Error         string      `json:"error,omitempty"`
+	Usage         []mem.Usage `json:"usage"`
+	HistoricUsage []mem.Usage `json:"historicUsage"`
 }
 
 // PerfInfoHandler - GET /minio/admin/v1/performance?perfType={perfType}
@@ -333,18 +313,8 @@ type ServerMemUsageInfo struct {
 func (a adminAPIHandlers) PerfInfoHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PerfInfo")
 
-	// Get object layer instance.
-	objLayer := newObjectLayerFn()
-	if objLayer == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Authenticate request
-	// Setting the region as empty so as the mc server info command is irrespective to the region.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
@@ -352,10 +322,9 @@ func (a adminAPIHandlers) PerfInfoHandler(w http.ResponseWriter, r *http.Request
 	perfType := vars["perfType"]
 
 	if perfType == "drive" {
-		info := objLayer.StorageInfo(ctx)
+		info := objectAPI.StorageInfo(ctx)
 		if !(info.Backend.Type == BackendFS || info.Backend.Type == BackendErasure) {
-
-			writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 			return
 		}
 		// Get drive performance details from local server's drive(s)
@@ -368,7 +337,7 @@ func (a adminAPIHandlers) PerfInfoHandler(w http.ResponseWriter, r *http.Request
 		// Marshal API response
 		jsonBytes, err := json.Marshal(dps)
 		if err != nil {
-			writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 			return
 		}
 
@@ -385,7 +354,7 @@ func (a adminAPIHandlers) PerfInfoHandler(w http.ResponseWriter, r *http.Request
 		// Marshal API response
 		jsonBytes, err := json.Marshal(cpus)
 		if err != nil {
-			writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 			return
 		}
 
@@ -402,7 +371,7 @@ func (a adminAPIHandlers) PerfInfoHandler(w http.ResponseWriter, r *http.Request
 		// Marshal API response
 		jsonBytes, err := json.Marshal(mems)
 		if err != nil {
-			writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+			writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 			return
 		}
 
@@ -410,9 +379,96 @@ func (a adminAPIHandlers) PerfInfoHandler(w http.ResponseWriter, r *http.Request
 		// distributed setup) as json.
 		writeSuccessResponseJSON(w, jsonBytes)
 	} else {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 	}
-	return
+}
+
+func newLockEntry(l lockRequesterInfo, resource, server string) *madmin.LockEntry {
+	entry := &madmin.LockEntry{Timestamp: l.Timestamp, Resource: resource, ServerList: []string{server}, Owner: l.Node, Source: l.Source, ID: l.UID}
+	if l.Writer {
+		entry.Type = "Write"
+	} else {
+		entry.Type = "Read"
+	}
+	return entry
+}
+
+func topLockEntries(peerLocks []*PeerLocks) madmin.LockEntries {
+	const listCount int = 10
+	entryMap := make(map[string]*madmin.LockEntry)
+	for _, peerLock := range peerLocks {
+		if peerLock == nil {
+			continue
+		}
+		for k, v := range peerLock.Locks {
+			for _, lockReqInfo := range v {
+				if val, ok := entryMap[lockReqInfo.UID]; ok {
+					val.ServerList = append(val.ServerList, peerLock.Addr)
+				} else {
+					entryMap[lockReqInfo.UID] = newLockEntry(lockReqInfo, k, peerLock.Addr)
+				}
+			}
+		}
+	}
+	var lockEntries = make(madmin.LockEntries, 0)
+	for _, v := range entryMap {
+		lockEntries = append(lockEntries, *v)
+	}
+	sort.Sort(lockEntries)
+	if len(lockEntries) > listCount {
+		lockEntries = lockEntries[:listCount]
+	}
+	return lockEntries
+}
+
+// PeerLocks holds server information result of one node
+type PeerLocks struct {
+	Addr  string
+	Locks GetLocksResp
+}
+
+// TopLocksHandler Get list of locks in use
+func (a adminAPIHandlers) TopLocksHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "TopLocks")
+
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
+		return
+	}
+
+	// Method only allowed in Distributed XL mode.
+	if !globalIsDistXL {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
+		return
+	}
+
+	thisAddr, err := xnet.ParseHost(GetLocalPeer(globalEndpoints))
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	peerLocks := globalNotificationSys.GetLocks(ctx)
+	// Once we have received all the locks currently used from peers
+	// add the local peer locks list as well.
+	localLocks := globalLockServer.ll.DupLockMap()
+	peerLocks = append(peerLocks, &PeerLocks{
+		Addr:  thisAddr.String(),
+		Locks: localLocks,
+	})
+
+	topLocks := topLockEntries(peerLocks)
+
+	// Marshal API response
+	jsonBytes, err := json.Marshal(topLocks)
+	if err != nil {
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
+		return
+	}
+
+	// Reply with storage information (across nodes in a
+	// distributed setup) as json.
+	writeSuccessResponseJSON(w, jsonBytes)
 }
 
 // StartProfilingResult contains the status of the starting
@@ -429,14 +485,8 @@ type StartProfilingResult struct {
 func (a adminAPIHandlers) StartProfilingHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "StartProfiling")
 
-	if globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
@@ -445,7 +495,7 @@ func (a adminAPIHandlers) StartProfilingHandler(w http.ResponseWriter, r *http.R
 
 	thisAddr, err := xnet.ParseHost(GetLocalPeer(globalEndpoints))
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -486,7 +536,7 @@ func (a adminAPIHandlers) StartProfilingHandler(w http.ResponseWriter, r *http.R
 	// Create JSON result and send it to the client
 	startProfilingResultInBytes, err := json.Marshal(startProfilingResult)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -517,19 +567,13 @@ func (f dummyFileInfo) Sys() interface{}   { return f.sys }
 func (a adminAPIHandlers) DownloadProfilingHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "DownloadProfiling")
 
-	if globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	if !globalNotificationSys.DownloadProfilingData(ctx, w) {
-		writeErrorResponseJSON(w, ErrAdminProfilerNotEnabled, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminProfilerNotEnabled), r.URL)
 		return
 	}
 }
@@ -600,35 +644,26 @@ func extractHealInitParams(r *http.Request) (bucket, objPrefix string,
 func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "Heal")
 
-	// Get object layer instance.
-	objLayer := newObjectLayerFn()
-	if objLayer == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	// Check if this setup has an erasure coded backend.
 	if !globalIsXL {
-		writeErrorResponseJSON(w, ErrHealNotImplemented, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrHealNotImplemented), r.URL)
 		return
 	}
 
-	bucket, objPrefix, hs, clientToken, forceStart, forceStop, apiErr := extractHealInitParams(r)
-	if apiErr != ErrNone {
-		writeErrorResponseJSON(w, apiErr, r.URL)
+	bucket, objPrefix, hs, clientToken, forceStart, forceStop, errCode := extractHealInitParams(r)
+	if errCode != ErrNone {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(errCode), r.URL)
 		return
 	}
 
 	type healResp struct {
 		respBytes []byte
-		errCode   APIErrorCode
+		apiErr    APIError
 		errBody   string
 	}
 
@@ -654,8 +689,8 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 				w.Write([]byte("\n\r"))
 				w.(http.Flusher).Flush()
 			case hr := <-respCh:
-				switch hr.errCode {
-				case ErrNone:
+				switch hr.apiErr {
+				case noError:
 					if started {
 						w.Write(hr.respBytes)
 						w.(http.Flusher).Flush()
@@ -663,23 +698,24 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 						writeSuccessResponseJSON(w, hr.respBytes)
 					}
 				default:
-					apiError := getAPIError(hr.errCode)
 					var errorRespJSON []byte
 					if hr.errBody == "" {
-						errorRespJSON = encodeResponseJSON(getAPIErrorResponse(apiError, r.URL.Path, w.Header().Get(responseRequestIDKey)))
+						errorRespJSON = encodeResponseJSON(getAPIErrorResponse(ctx, hr.apiErr,
+							r.URL.Path, w.Header().Get(responseRequestIDKey),
+							w.Header().Get(responseDeploymentIDKey)))
 					} else {
 						errorRespJSON = encodeResponseJSON(APIErrorResponse{
-							Code:      apiError.Code,
+							Code:      hr.apiErr.Code,
 							Message:   hr.errBody,
 							Resource:  r.URL.Path,
 							RequestID: w.Header().Get(responseRequestIDKey),
-							HostID:    "3L137",
+							HostID:    w.Header().Get(responseDeploymentIDKey),
 						})
 					}
 					if !started {
 						setCommonHeaders(w)
 						w.Header().Set("Content-Type", string(mimeJSON))
-						w.WriteHeader(apiError.HTTPStatusCode)
+						w.WriteHeader(hr.apiErr.HTTPStatusCode)
 					}
 					w.Write(errorRespJSON)
 					w.(http.Flusher).Flush()
@@ -690,7 +726,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// find number of disks in the setup
-	info := objLayer.StorageInfo(ctx)
+	info := objectAPI.StorageInfo(ctx)
 	numDisks := info.Backend.OfflineDisks + info.Backend.OnlineDisks
 
 	healPath := pathJoin(bucket, objPrefix)
@@ -703,7 +739,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 				StartTime:     nh.startTime,
 			})
 			if err != nil {
-				writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+				writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 				return
 			}
 			// Client token not specified but a heal sequence exists on a path,
@@ -719,7 +755,7 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 		respBytes, errCode := globalAllHealState.PopHealStatusJSON(
 			healPath, clientToken)
 		if errCode != ErrNone {
-			writeErrorResponseJSON(w, errCode, r.URL)
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(errCode), r.URL)
 		} else {
 			writeSuccessResponseJSON(w, respBytes)
 		}
@@ -730,15 +766,15 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case forceStop:
 		go func() {
-			respBytes, errCode := globalAllHealState.stopHealSequence(healPath)
-			hr := healResp{respBytes: respBytes, errCode: errCode}
+			respBytes, apiErr := globalAllHealState.stopHealSequence(healPath)
+			hr := healResp{respBytes: respBytes, apiErr: apiErr}
 			respCh <- hr
 		}()
 	case clientToken == "":
 		nh := newHealSequence(bucket, objPrefix, handlers.GetSourceIP(r), numDisks, hs, forceStart)
 		go func() {
-			respBytes, errCode, errMsg := globalAllHealState.LaunchNewHealSequence(nh)
-			hr := healResp{respBytes, errCode, errMsg}
+			respBytes, apiErr, errMsg := globalAllHealState.LaunchNewHealSequence(nh)
+			hr := healResp{respBytes, apiErr, errMsg}
 			respCh <- hr
 		}()
 	}
@@ -754,36 +790,27 @@ func (a adminAPIHandlers) HealHandler(w http.ResponseWriter, r *http.Request) {
 func (a adminAPIHandlers) GetConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "GetConfigHandler")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
+	objectAPI := validateAdminReq(ctx, w, r)
 	if objectAPI == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
 		return
 	}
 
 	config, err := readServerConfig(ctx, objectAPI)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	configData, err := json.MarshalIndent(config, "", "\t")
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	password := config.GetCredential().SecretKey
 	econfigData, err := madmin.EncryptData(password, configData)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -809,22 +836,31 @@ func normalizeJSONKey(input string) (key string) {
 	return
 }
 
-// GetConfigHandler - GET /minio/admin/v1/config-keys
-// Get some keys in config.json of this minio setup.
-func (a adminAPIHandlers) GetConfigKeysHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := newContext(r, w, "GetConfigKeysHandler")
-
+func validateAdminReq(ctx context.Context, w http.ResponseWriter, r *http.Request) ObjectLayer {
 	// Get current object layer instance.
 	objectAPI := newObjectLayerFn()
-	if objectAPI == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
+	if objectAPI == nil || globalNotificationSys == nil || globalIAMSys == nil {
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL)
+		return nil
 	}
 
 	// Validate request signature.
 	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
 	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(adminAPIErr), r.URL)
+		return nil
+	}
+
+	return objectAPI
+}
+
+// GetConfigHandler - GET /minio/admin/v1/config-keys
+// Get some keys in config.json of this minio setup.
+func (a adminAPIHandlers) GetConfigKeysHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := newContext(r, w, "GetConfigKeysHandler")
+
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
@@ -837,13 +873,13 @@ func (a adminAPIHandlers) GetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 
 	config, err := readServerConfig(ctx, objectAPI)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	configData, err := json.Marshal(config)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -865,7 +901,7 @@ func (a adminAPIHandlers) GetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 	password := config.GetCredential().SecretKey
 	econfigData, err := madmin.EncryptData(password, []byte(newConfigStr))
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -883,34 +919,29 @@ func toAdminAPIErrCode(ctx context.Context, err error) APIErrorCode {
 	}
 }
 
+func toAdminAPIErr(ctx context.Context, err error) APIError {
+	return errorCodes.ToAPIErr(toAdminAPIErrCode(ctx, err))
+}
+
 // RemoveUser - DELETE /minio/admin/v1/remove-user?accessKey=<access_key>
 func (a adminAPIHandlers) RemoveUser(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "RemoveUser")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
+	objectAPI := validateAdminReq(ctx, w, r)
 	if objectAPI == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
 		return
 	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	vars := mux.Vars(r)
 	accessKey := vars["accessKey"]
 	if err := globalIAMSys.DeleteUser(accessKey); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 	}
 }
 
@@ -918,36 +949,27 @@ func (a adminAPIHandlers) RemoveUser(w http.ResponseWriter, r *http.Request) {
 func (a adminAPIHandlers) ListUsers(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ListUsers")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
+	objectAPI := validateAdminReq(ctx, w, r)
 	if objectAPI == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
 		return
 	}
 
 	allCredentials, err := globalIAMSys.ListUsers()
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	data, err := json.Marshal(allCredentials)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	password := globalServerConfig.GetCredential().SecretKey
 	econfigData, err := madmin.EncryptData(password, data)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -958,28 +980,14 @@ func (a adminAPIHandlers) ListUsers(w http.ResponseWriter, r *http.Request) {
 func (a adminAPIHandlers) SetUserStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "SetUserStatus")
 
-	if globalNotificationSys == nil || globalIAMSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
+	objectAPI := validateAdminReq(ctx, w, r)
 	if objectAPI == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
 		return
 	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
@@ -989,12 +997,12 @@ func (a adminAPIHandlers) SetUserStatus(w http.ResponseWriter, r *http.Request) 
 
 	// Custom IAM policies not allowed for admin user.
 	if accessKey == globalServerConfig.GetCredential().AccessKey {
-		writeErrorResponseJSON(w, ErrInvalidRequest, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL)
 		return
 	}
 
 	if err := globalIAMSys.SetUserStatus(accessKey, madmin.AccountStatus(status)); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1011,23 +1019,14 @@ func (a adminAPIHandlers) SetUserStatus(w http.ResponseWriter, r *http.Request) 
 func (a adminAPIHandlers) AddUser(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "AddUser")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalNotificationSys == nil || globalIAMSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
@@ -1036,13 +1035,13 @@ func (a adminAPIHandlers) AddUser(w http.ResponseWriter, r *http.Request) {
 
 	// Custom IAM policies not allowed for admin user.
 	if accessKey == globalServerConfig.GetCredential().AccessKey {
-		writeErrorResponseJSON(w, ErrInvalidRequest, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAddUserInvalidArgument), r.URL)
 		return
 	}
 
 	if r.ContentLength > maxEConfigJSONSize || r.ContentLength == -1 {
 		// More than maxConfigSize bytes were available
-		writeErrorResponseJSON(w, ErrAdminConfigTooLarge, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigTooLarge), r.URL)
 		return
 	}
 
@@ -1050,19 +1049,19 @@ func (a adminAPIHandlers) AddUser(w http.ResponseWriter, r *http.Request) {
 	configBytes, err := madmin.DecryptData(password, io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), r.URL)
 		return
 	}
 
 	var uinfo madmin.UserInfo
 	if err = json.Unmarshal(configBytes, &uinfo); err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), r.URL)
 		return
 	}
 
 	if err = globalIAMSys.SetUser(accessKey, uinfo); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1079,28 +1078,19 @@ func (a adminAPIHandlers) AddUser(w http.ResponseWriter, r *http.Request) {
 func (a adminAPIHandlers) ListCannedPolicies(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ListCannedPolicies")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalIAMSys == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	policies, err := globalIAMSys.ListCannedPolicies()
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	if err = json.NewEncoder(w).Encode(policies); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1111,31 +1101,22 @@ func (a adminAPIHandlers) ListCannedPolicies(w http.ResponseWriter, r *http.Requ
 func (a adminAPIHandlers) RemoveCannedPolicy(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "RemoveCannedPolicy")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalIAMSys == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	vars := mux.Vars(r)
 	policyName := vars["name"]
 
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
-		return
-	}
-
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	if err := globalIAMSys.DeleteCannedPolicy(policyName); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1152,55 +1133,46 @@ func (a adminAPIHandlers) RemoveCannedPolicy(w http.ResponseWriter, r *http.Requ
 func (a adminAPIHandlers) AddCannedPolicy(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "AddCannedPolicy")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalIAMSys == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	vars := mux.Vars(r)
 	policyName := vars["name"]
 
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
-		return
-	}
-
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	// Error out if Content-Length is missing.
 	if r.ContentLength <= 0 {
-		writeErrorResponseJSON(w, ErrMissingContentLength, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL)
 		return
 	}
 
 	// Error out if Content-Length is beyond allowed size.
 	if r.ContentLength > maxBucketPolicySize {
-		writeErrorResponseJSON(w, ErrEntityTooLarge, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrEntityTooLarge), r.URL)
 		return
 	}
 
 	iamPolicy, err := iampolicy.ParseConfig(io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
-		writeErrorResponseJSON(w, ErrMalformedPolicy, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMalformedPolicy), r.URL)
 		return
 	}
 
 	// Version in policy must not be empty
 	if iamPolicy.Version == "" {
-		writeErrorResponseJSON(w, ErrMalformedPolicy, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMalformedPolicy), r.URL)
 		return
 	}
 
 	if err = globalIAMSys.SetCannedPolicy(policyName, *iamPolicy); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1217,10 +1189,8 @@ func (a adminAPIHandlers) AddCannedPolicy(w http.ResponseWriter, r *http.Request
 func (a adminAPIHandlers) SetUserPolicy(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "SetUserPolicy")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalIAMSys == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
@@ -1228,27 +1198,20 @@ func (a adminAPIHandlers) SetUserPolicy(w http.ResponseWriter, r *http.Request) 
 	accessKey := vars["accessKey"]
 	policyName := vars["name"]
 
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
-		return
-	}
-
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	// Custom IAM policies not allowed for admin user.
 	if accessKey == globalServerConfig.GetCredential().AccessKey {
-		writeErrorResponseJSON(w, ErrInvalidRequest, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL)
 		return
 	}
 
 	if err := globalIAMSys.SetUserPolicy(accessKey, policyName); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 	}
 
 	// Notify all other Minio peers to reload users
@@ -1264,29 +1227,20 @@ func (a adminAPIHandlers) SetUserPolicy(w http.ResponseWriter, r *http.Request) 
 func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "SetConfigHandler")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	if r.ContentLength > maxEConfigJSONSize || r.ContentLength == -1 {
 		// More than maxConfigSize bytes were available
-		writeErrorResponseJSON(w, ErrAdminConfigTooLarge, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigTooLarge), r.URL)
 		return
 	}
 
@@ -1294,7 +1248,7 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 	configBytes, err := madmin.DecryptData(password, io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), r.URL)
 		return
 	}
 
@@ -1302,40 +1256,38 @@ func (a adminAPIHandlers) SetConfigHandler(w http.ResponseWriter, r *http.Reques
 	// client has not sent JSON objects with duplicate keys.
 	if err = quick.CheckDuplicateKeys(string(configBytes)); err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), r.URL)
 		return
 	}
 
 	var config serverConfig
 	if err = json.Unmarshal(configBytes, &config); err != nil {
 		logger.LogIf(ctx, err)
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
 	// If credentials for the server are provided via environment,
 	// then credentials in the provided configuration must match.
 	if globalIsEnvCreds {
-		creds := globalServerConfig.GetCredential()
-		if config.Credential.AccessKey != creds.AccessKey ||
-			config.Credential.SecretKey != creds.SecretKey {
-			writeErrorResponseJSON(w, ErrAdminCredentialsMismatch, r.URL)
+		if !globalServerConfig.GetCredential().Equal(config.Credential) {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminCredentialsMismatch), r.URL)
 			return
 		}
 	}
 
 	if err = config.Validate(); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
 	if err = config.TestNotificationTargets(); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
 	if err = saveServerConfig(ctx, objectAPI, &config); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1363,37 +1315,28 @@ func convertValueType(elem []byte, jsonType gjson.Type) (interface{}, error) {
 func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "SetConfigKeysHandler")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
+	objectAPI := validateAdminReq(ctx, w, r)
 	if objectAPI == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
 		return
 	}
 
 	// Deny if WORM is enabled
 	if globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
-		return
-	}
-
-	// Validate request signature.
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	// Load config
 	configStruct, err := readServerConfig(ctx, objectAPI)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
 	// Convert config to json bytes
 	configBytes, err := json.Marshal(configStruct)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1410,22 +1353,24 @@ func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 			reqInfo := (&logger.ReqInfo{}).AppendTags("key", k)
 			ctx = logger.SetReqInfo(ctx, reqInfo)
 			logger.LogIf(ctx, dErr)
-			writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+			writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), dErr.Error(), r.URL)
 			return
 		}
+
 		elem, dErr := madmin.DecryptData(password, bytes.NewBuffer([]byte(encryptedElem)))
 		if dErr != nil {
 			logger.LogIf(ctx, dErr)
-			writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+			writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), dErr.Error(), r.URL)
 			return
 		}
+
 		// Calculate the type of the current key from the
 		// original config json
 		jsonFieldType := gjson.Get(configStr, k).Type
 		// Convert passed value to json filed type
 		val, cErr := convertValueType(elem, jsonFieldType)
 		if cErr != nil {
-			writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, cErr.Error(), r.URL)
+			writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), cErr.Error(), r.URL)
 			return
 		}
 		// Set the key/value in the new json document
@@ -1439,33 +1384,31 @@ func (a adminAPIHandlers) SetConfigKeysHandler(w http.ResponseWriter, r *http.Re
 	// Validate config
 	var config serverConfig
 	if err = json.Unmarshal(configBytes, &config); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
 	if err = config.Validate(); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
 	if err = config.TestNotificationTargets(); err != nil {
-		writeCustomErrorResponseJSON(w, ErrAdminConfigBadJSON, err.Error(), r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
 	// If credentials for the server are provided via environment,
 	// then credentials in the provided configuration must match.
 	if globalIsEnvCreds {
-		creds := globalServerConfig.GetCredential()
-		if config.Credential.AccessKey != creds.AccessKey ||
-			config.Credential.SecretKey != creds.SecretKey {
-			writeErrorResponseJSON(w, ErrAdminCredentialsMismatch, r.URL)
+		if !globalServerConfig.GetCredential().Equal(config.Credential) {
+			writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminCredentialsMismatch), r.URL)
 			return
 		}
 	}
 
 	if err = saveServerConfig(ctx, objectAPI, &config); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1481,30 +1424,21 @@ func (a adminAPIHandlers) UpdateAdminCredentialsHandler(w http.ResponseWriter,
 
 	ctx := newContext(r, w, "UpdateCredentialsHandler")
 
-	// Get current object layer instance.
-	objectAPI := newObjectLayerFn()
-	if objectAPI == nil || globalNotificationSys == nil {
-		writeErrorResponseJSON(w, ErrServerNotInitialized, r.URL)
+	objectAPI := validateAdminReq(ctx, w, r)
+	if objectAPI == nil {
 		return
 	}
 
 	// Avoid setting new credentials when they are already passed
 	// by the environment. Deny if WORM is enabled.
 	if globalIsEnvCreds || globalWORMEnabled {
-		writeErrorResponseJSON(w, ErrMethodNotAllowed, r.URL)
-		return
-	}
-
-	// Authenticate request
-	adminAPIErr := checkAdminRequestAuthType(ctx, r, "")
-	if adminAPIErr != ErrNone {
-		writeErrorResponseJSON(w, adminAPIErr, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL)
 		return
 	}
 
 	if r.ContentLength > maxEConfigJSONSize || r.ContentLength == -1 {
 		// More than maxConfigSize bytes were available
-		writeErrorResponseJSON(w, ErrAdminConfigTooLarge, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigTooLarge), r.URL)
 		return
 	}
 
@@ -1512,7 +1446,7 @@ func (a adminAPIHandlers) UpdateAdminCredentialsHandler(w http.ResponseWriter,
 	configBytes, err := madmin.DecryptData(password, io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(w, ErrAdminConfigBadJSON, r.URL)
+		writeCustomErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrAdminConfigBadJSON), err.Error(), r.URL)
 		return
 	}
 
@@ -1520,13 +1454,13 @@ func (a adminAPIHandlers) UpdateAdminCredentialsHandler(w http.ResponseWriter,
 	var req madmin.SetCredsReq
 	if err = json.Unmarshal(configBytes, &req); err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponseJSON(w, ErrRequestBodyParse, r.URL)
+		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrRequestBodyParse), r.URL)
 		return
 	}
 
 	creds, err := auth.CreateCredentials(req.AccessKey, req.SecretKey)
 	if err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
@@ -1541,7 +1475,7 @@ func (a adminAPIHandlers) UpdateAdminCredentialsHandler(w http.ResponseWriter,
 	globalActiveCred = creds
 
 	if err = saveServerConfig(ctx, objectAPI, globalServerConfig); err != nil {
-		writeErrorResponseJSON(w, toAdminAPIErrCode(ctx, err), r.URL)
+		writeErrorResponseJSON(ctx, w, toAdminAPIErr(ctx, err), r.URL)
 		return
 	}
 
