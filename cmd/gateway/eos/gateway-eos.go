@@ -561,14 +561,14 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 }
 
 // PutObject - Create a new blob with the incoming data
-func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, metadata map[string]string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	e.Log(2, "S3cmd: PutObject: %s/%s", bucket, object)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
 	}
 
-	for key, val := range metadata {
+	for key, val := range opts.UserDefined {
 		e.Log(3, "PutObject %s = %s", key, val)
 	}
 
@@ -590,7 +590,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		e.Log(1, "ERROR: PUT:%+v", err)
 		return objInfo, err
 	}
-	err = e.EOSsetContentType(bucket+"/"+object, metadata["content-type"])
+	err = e.EOSsetContentType(bucket+"/"+object, opts.UserDefined["content-type"])
 	if err != nil {
 		e.Log(1, "ERROR: PUT:%+v", err)
 		return objInfo, err
@@ -696,8 +696,8 @@ func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, k
 }
 
 // NewMultipartUpload
-func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, metadata map[string]string, opts minio.ObjectOptions) (uploadID string, err error) {
-	e.Log(2, "S3cmd: NewMultipartUpload: %s/%s +%v +%v", bucket, object, metadata, opts)
+func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (uploadID string, err error) {
+	e.Log(2, "S3cmd: NewMultipartUpload: %s/%s +%v", bucket, object, opts)
 
 	if e.readonly {
 		return "", minio.NotImplemented{}
@@ -721,7 +721,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		size:        0,
 		chunkSize:   0,
 		firstByte:   0,
-		contenttype: metadata["content-type"],
+		contenttype: opts.UserDefined["content-type"],
 		md5:         md5.New(),
 		md5PartID:   1,
 	}
@@ -1087,9 +1087,9 @@ func (e *eosObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker
 }
 
 // HealObject - no-op for fs.
-func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool) (res madmin.HealResultItem, err error) {
+func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool, remove bool) (results madmin.HealResultItem, err error) {
 	e.Log(2, "S3cmd: HealObject:")
-	return res, minio.NotImplemented{}
+	return results, minio.NotImplemented{}
 }
 
 // ListBucketsHeal - list all buckets to be healed
@@ -1099,9 +1099,9 @@ func (e *eosObjects) ListBucketsHeal(ctx context.Context) ([]minio.BucketInfo, e
 }
 
 // HealBucket - heals inconsistent buckets and bucket metadata on all sets.
-func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool) (results []madmin.HealResultItem, err error) {
+func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool, remove bool) (results madmin.HealResultItem, err error) {
 	e.Log(2, "S3cmd: HealBucket:")
-	return nil, minio.NotImplemented{}
+	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
