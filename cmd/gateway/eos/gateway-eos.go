@@ -1626,12 +1626,17 @@ func (e *eosObjects) EOSrename(from, to string) error {
 }
 
 func (e *eosObjects) EOSsetMeta(p, key, value string) error {
+	if key == "" || value == "" {
+		//dont bother setting if we don't get what we need
+		return nil
+	}
 	eospath, err := e.EOSpath(p)
 	if err != nil {
 		return err
 	}
 	e.Log(2, "EOScmd: procuser.attr.set %s=%s %s", key, value, eospath)
-	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras()))
+	cmd := fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras())
+	body, m, err := e.EOSMGMcurl(cmd)
 	e.Log(3, "Meta Tag return body : %s", strings.Replace(string(body), "\n", " ", -1))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1639,7 +1644,7 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.attr.set %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.attr.set %s : %s : %s", eospath, cmd, e.interfaceToString(m["errormsg"]))
 		//return eoserrSetMeta
 	}
 
