@@ -47,7 +47,7 @@ import (
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/handlers"
 	"github.com/minio/minio/pkg/hash"
-	"github.com/minio/minio/pkg/iam/policy"
+	iampolicy "github.com/minio/minio/pkg/iam/policy"
 	"github.com/minio/minio/pkg/ioutil"
 	"github.com/minio/minio/pkg/policy"
 )
@@ -157,7 +157,7 @@ func (web *webAPIHandlers) MakeBucket(r *http.Request, args *MakeBucketArgs, rep
 	}
 
 	// Check if bucket is a reserved bucket name or invalid.
-	if isReservedOrInvalidBucket(args.BucketName) {
+	if isReservedOrInvalidBucket(args.BucketName, true) {
 		return toJSONError(errInvalidBucketName)
 	}
 
@@ -912,26 +912,15 @@ func (web *webAPIHandlers) Upload(w http.ResponseWriter, r *http.Request) {
 		metadata[ReservedMetadataPrefix+"compression"] = compressionAlgorithmV1
 		metadata[ReservedMetadataPrefix+"actual-size"] = strconv.FormatInt(size, 10)
 
-		pipeReader, pipeWriter := io.Pipe()
-		snappyWriter := snappy.NewBufferedWriter(pipeWriter)
-
-		var actualReader *hash.Reader
-		actualReader, err = hash.NewReader(reader, size, "", "", actualSize)
+		actualReader, err := hash.NewReader(reader, size, "", "", actualSize)
 		if err != nil {
 			writeWebErrorResponse(w, err)
 			return
 		}
 
-		go func() {
-			// Writing to the compressed writer.
-			_, cerr := io.CopyN(snappyWriter, actualReader, actualSize)
-			snappyWriter.Close()
-			pipeWriter.CloseWithError(cerr)
-		}()
-
 		// Set compression metrics.
 		size = -1 // Since compressed size is un-predictable.
-		reader = pipeReader
+		reader = newSnappyCompressReader(actualReader)
 		hashReader, err = hash.NewReader(reader, size, "", "", actualSize)
 		if err != nil {
 			writeWebErrorResponse(w, err)
@@ -1753,7 +1742,7 @@ func presignedGet(host, bucket, object string, expiry int64, creds auth.Credenti
 	extractedSignedHeaders.Set("host", host)
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, unsignedPayload, queryStr, path, "GET")
 	stringToSign := getStringToSign(canonicalRequest, date, getScope(date, region))
-	signingKey := getSigningKey(secretKey, date, region)
+	signingKey := getSigningKey(secretKey, date, region, serviceS3)
 	signature := getSignature(signingKey, stringToSign)
 
 	// Construct the final presigned URL.

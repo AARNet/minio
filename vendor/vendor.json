@@ -632,10 +632,10 @@
 			"revisionTime": "2016-02-29T08:42:30-08:00"
 		},
 		{
-			"checksumSHA1": "Sbze8wr7T6Avtc+4K8BbcHlIx4E=",
+			"checksumSHA1": "0f4Bah8pQ9Vd8Mw3RNPh298BYpQ=",
 			"path": "github.com/minio/minio-go",
-			"revision": "a42b0e14697ffdcb4ef223384c1cac12738f574f",
-			"revisionTime": "2019-01-20T10:05:29Z"
+			"revision": "59af836a7e6d99cbefa093475fbde0a4552d483f",
+			"revisionTime": "2019-02-27T18:09:23Z"
 		},
 		{
 			"checksumSHA1": "kgQZ7iWmuKVboL2d4DUU9l5isng=",
@@ -897,10 +897,10 @@
 			"revisionTime": "2016-08-30T17:39:30Z"
 		},
 		{
-			"checksumSHA1": "j1wNJXkZyuFKjYFpPawESOaXYxk=",
+			"checksumSHA1": "IeRoFAG92dA1jUX27nMz1qczlOw=",
 			"path": "github.com/tidwall/sjson",
-			"revision": "6a22caf2fd45d5e2119bfc3717e984f15a7eb7ee",
-			"revisionTime": "2016-12-12T16:53:56Z"
+			"revision": "25fb082a20e29e83fb7b7ef5f5919166aad1f084",
+			"revisionTime": "2019-02-28T20:39:17Z"
 		},
 		{
 			"checksumSHA1": "R/Mpe0uUp5HeqWrdrH5qE2qZuE8=",

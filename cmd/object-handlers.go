@@ -33,7 +33,6 @@ import (
 
 	"time"
 
-	snappy "github.com/golang/snappy"
 	"github.com/gorilla/mux"
 	miniogo "github.com/minio/minio-go"
 	"github.com/minio/minio-go/pkg/encrypt"
@@ -761,20 +760,22 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	if !cpSrcDstSame {
 		lock = readLock
 	}
-
+	checkCopyPrecondFn := func(o ObjectInfo, encETag string) bool {
+		return checkCopyObjectPreconditions(ctx, w, r, o, encETag)
+	}
+	getOpts.CheckCopyPrecondFn = checkCopyPrecondFn
+	srcOpts.CheckCopyPrecondFn = checkCopyPrecondFn
 	var rs *HTTPRangeSpec
 	gr, err := getObjectNInfo(ctx, srcBucket, srcObject, rs, r.Header, lock, getOpts)
 	if err != nil {
+		if isErrPreconditionFailed(err) {
+			return
+		}
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
 	defer gr.Close()
 	srcInfo := gr.ObjInfo
-
-	// Verify before x-amz-copy-source preconditions before continuing with CopyObject.
-	if checkCopyObjectPreconditions(ctx, w, r, srcInfo) {
-		return
-	}
 
 	/// maximum Upload size for object in a single CopyObject operation.
 	if isMaxObjectSize(srcInfo.Size) {
@@ -831,21 +832,9 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		// Remove all source encrypted related metadata to
 		// avoid copying them in target object.
 		crypto.RemoveInternalEntries(srcInfo.UserDefined)
-		// Open a pipe for compression.
-		// Where pipeWriter is piped to srcInfo.Reader.
-		// gr writes to pipeWriter.
-		pipeReader, pipeWriter := io.Pipe()
-		reader = pipeReader
+
+		reader = newSnappyCompressReader(gr)
 		length = -1
-
-		snappyWriter := snappy.NewBufferedWriter(pipeWriter)
-
-		go func() {
-			// Compress the decompressed source object.
-			_, cerr := io.Copy(snappyWriter, gr)
-			snappyWriter.Close()
-			pipeWriter.CloseWithError(cerr)
-		}()
 	} else {
 		// Remove the metadata for remote calls.
 		delete(srcInfo.UserDefined, ReservedMetadataPrefix+"compression")
@@ -1200,12 +1189,12 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		}
 
 	case authTypePresigned, authTypeSigned:
-		if s3Err = reqSignatureV4Verify(r, globalServerConfig.GetRegion()); s3Err != ErrNone {
+		if s3Err = reqSignatureV4Verify(r, globalServerConfig.GetRegion(), serviceS3); s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
 			return
 		}
 		if !skipContentSha256Cksum(r) {
-			sha256hex = getContentSha256Cksum(r)
+			sha256hex = getContentSha256Cksum(r, serviceS3)
 		}
 	}
 
@@ -1216,28 +1205,17 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		metadata[ReservedMetadataPrefix+"compression"] = compressionAlgorithmV1
 		metadata[ReservedMetadataPrefix+"actual-size"] = strconv.FormatInt(size, 10)
 
-		pipeReader, pipeWriter := io.Pipe()
-		snappyWriter := snappy.NewBufferedWriter(pipeWriter)
-
-		var actualReader *hash.Reader
-		actualReader, err = hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
+		actualReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
 		if err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
-		go func() {
-			// Writing to the compressed writer.
-			_, cerr := io.CopyN(snappyWriter, actualReader, actualSize)
-			snappyWriter.Close()
-			pipeWriter.CloseWithError(cerr)
-		}()
-
 		// Set compression metrics.
+		reader = newSnappyCompressReader(actualReader)
 		size = -1   // Since compressed size is un-predictable.
 		md5hex = "" // Do not try to verify the content.
 		sha256hex = ""
-		reader = pipeReader
 	}
 
 	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
@@ -1597,9 +1575,17 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 
 		}
 	}
+	checkCopyPartPrecondFn := func(o ObjectInfo, encETag string) bool {
+		return checkCopyObjectPartPreconditions(ctx, w, r, o, encETag)
+	}
+	getOpts.CheckCopyPrecondFn = checkCopyPartPrecondFn
+	srcOpts.CheckCopyPrecondFn = checkCopyPartPrecondFn
 
 	gr, err := getObjectNInfo(ctx, srcBucket, srcObject, rs, r.Header, readLock, getOpts)
 	if err != nil {
+		if isErrPreconditionFailed(err) {
+			return
+		}
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
@@ -1618,11 +1604,6 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	// Special care for CopyObjectPart
 	if partRangeErr := checkCopyPartRangeWithSize(rs, actualPartSize); partRangeErr != nil {
 		writeCopyPartErr(ctx, w, partRangeErr, r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Verify before x-amz-copy-source preconditions before continuing with CopyObject.
-	if checkCopyObjectPartPreconditions(ctx, w, r, srcInfo) {
 		return
 	}
 
@@ -1654,21 +1635,8 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 	isCompressed := compressPart
 	// Compress only if the compression is enabled during initial multipart.
 	if isCompressed {
-		// Open a pipe for compression.
-		// Where pipeWriter is piped to srcInfo.Reader.
-		// gr writes to pipeWriter.
-		pipeReader, pipeWriter := io.Pipe()
-		reader = pipeReader
+		reader = newSnappyCompressReader(gr)
 		length = -1
-
-		snappyWriter := snappy.NewBufferedWriter(pipeWriter)
-
-		go func() {
-			// Compress the decompressed source object.
-			_, cerr := io.Copy(snappyWriter, gr)
-			snappyWriter.Close()
-			pipeWriter.CloseWithError(cerr)
-		}()
 	} else {
 		reader = gr
 	}
@@ -1868,19 +1836,17 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 			return
 		}
 	case authTypePresigned, authTypeSigned:
-		if s3Error = reqSignatureV4Verify(r, globalServerConfig.GetRegion()); s3Error != ErrNone {
+		if s3Error = reqSignatureV4Verify(r, globalServerConfig.GetRegion(), serviceS3); s3Error != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
 		if !skipContentSha256Cksum(r) {
-			sha256hex = getContentSha256Cksum(r)
+			sha256hex = getContentSha256Cksum(r, serviceS3)
 		}
 	}
 
 	actualSize := size
-	var pipeReader *io.PipeReader
-	var pipeWriter *io.PipeWriter
 
 	// get encryption options
 	var opts ObjectOptions
@@ -1902,28 +1868,17 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	isCompressed := false
 	if objectAPI.IsCompressionSupported() && compressPart {
-		pipeReader, pipeWriter = io.Pipe()
-		snappyWriter := snappy.NewBufferedWriter(pipeWriter)
-
-		var actualReader *hash.Reader
-		actualReader, err = hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
+		actualReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
 		if err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
-		go func() {
-			// Writing to the compressed writer.
-			_, cerr := io.CopyN(snappyWriter, actualReader, actualSize)
-			snappyWriter.Close()
-			pipeWriter.CloseWithError(cerr)
-		}()
-
 		// Set compression metrics.
+		reader = newSnappyCompressReader(actualReader)
 		size = -1   // Since compressed size is un-predictable.
 		md5hex = "" // Do not try to verify the content.
 		sha256hex = ""
-		reader = pipeReader
 		isCompressed = true
 	}
 
@@ -2016,7 +1971,6 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	etag := partInfo.ETag
 	if isCompressed {
-		pipeWriter.Close()
 		// Suppress compressed ETag.
 		etag = partInfo.ETag + "-1"
 	} else if isEncrypted {

@@ -26,10 +26,11 @@ import (
 	"strings"
 
 	"github.com/aliyun/aliyun-oss-go-sdk/oss"
-	"github.com/dustin/go-humanize"
+	humanize "github.com/dustin/go-humanize"
 
 	"github.com/minio/cli"
 	miniogopolicy "github.com/minio/minio-go/pkg/policy"
+	"github.com/minio/minio-go/pkg/s3utils"
 	minio "github.com/minio/minio/cmd"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
@@ -349,7 +350,7 @@ func ossIsValidBucketName(bucket string) bool {
 	if strings.Contains(bucket, ".") {
 		return false
 	}
-	if !minio.IsValidBucketName(bucket) {
+	if s3utils.CheckValidBucketNameStrict(bucket) != nil {
 		return false
 	}
 	return true
@@ -569,7 +570,7 @@ func (l *ossObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 	// Setup cleanup function to cause the above go-routine to
 	// exit in case of partial read
 	pipeCloser := func() { pr.Close() }
-	return minio.NewGetObjectReaderFromReader(pr, objInfo, pipeCloser), nil
+	return minio.NewGetObjectReaderFromReader(pr, objInfo, opts.CheckCopyPrecondFn, pipeCloser)
 }
 
 // GetObject reads an object on OSS. Supports additional
@@ -664,6 +665,9 @@ func (l *ossObjects) PutObject(ctx context.Context, bucket, object string, r *mi
 
 // CopyObject copies an object from source bucket to a destination bucket.
 func (l *ossObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBucket, dstObject string, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
+	if srcOpts.CheckCopyPrecondFn != nil && srcOpts.CheckCopyPrecondFn(srcInfo, "") {
+		return minio.ObjectInfo{}, minio.PreConditionFailed{}
+	}
 	bkt, err := l.Client.Bucket(srcBucket)
 	if err != nil {
 		logger.LogIf(ctx, err)

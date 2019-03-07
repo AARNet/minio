@@ -407,6 +407,22 @@ func resetGlobalConfigPath() {
 	globalConfigDir = &ConfigDir{path: ""}
 }
 
+func resetGlobalServiceDoneCh() {
+	// Repeatedly send on the service done channel, so that
+	// listening go-routines will quit. This works better than
+	// closing the channel - closing introduces a new race, as the
+	// current thread writes to the variable, and other threads
+	// listening on it, read from it.
+loop:
+	for {
+		select {
+		case GlobalServiceDoneCh <- struct{}{}:
+		default:
+			break loop
+		}
+	}
+}
+
 // sets globalObjectAPI to `nil`.
 func resetGlobalObjectAPI() {
 	globalObjLayerMutex.Lock()
@@ -479,6 +495,9 @@ func resetGlobalIAMSys() {
 // Resets all the globals used modified in tests.
 // Resetting ensures that the changes made to globals by one test doesn't affect others.
 func resetTestGlobals() {
+	// close any indefinitely running go-routines from previous
+	// tests.
+	resetGlobalServiceDoneCh()
 	// set globalObjectAPI to `nil`.
 	resetGlobalObjectAPI()
 	// Reset config path set.
@@ -680,7 +699,7 @@ func signStreamingRequest(req *http.Request, accessKey, secretKey string, currTi
 	scope := strings.Join([]string{
 		currTime.Format(yyyymmdd),
 		globalMinioDefaultRegion,
-		"s3",
+		string(serviceS3),
 		"aws4_request",
 	}, "/")
 
@@ -690,7 +709,7 @@ func signStreamingRequest(req *http.Request, accessKey, secretKey string, currTi
 
 	date := sumHMAC([]byte("AWS4"+secretKey), []byte(currTime.Format(yyyymmdd)))
 	region := sumHMAC(date, []byte(globalMinioDefaultRegion))
-	service := sumHMAC(region, []byte("s3"))
+	service := sumHMAC(region, []byte(string(serviceS3)))
 	signingKey := sumHMAC(service, []byte("aws4_request"))
 
 	signature := hex.EncodeToString(sumHMAC(signingKey, []byte(stringToSign)))
@@ -760,7 +779,7 @@ func assembleStreamingChunks(req *http.Request, body io.ReadSeeker, chunkSize in
 		scope := strings.Join([]string{
 			currTime.Format(yyyymmdd),
 			regionStr,
-			"s3",
+			string(serviceS3),
 			"aws4_request",
 		}, "/")
 
@@ -773,7 +792,7 @@ func assembleStreamingChunks(req *http.Request, body io.ReadSeeker, chunkSize in
 
 		date := sumHMAC([]byte("AWS4"+secretKey), []byte(currTime.Format(yyyymmdd)))
 		region := sumHMAC(date, []byte(regionStr))
-		service := sumHMAC(region, []byte("s3"))
+		service := sumHMAC(region, []byte(serviceS3))
 		signingKey := sumHMAC(service, []byte("aws4_request"))
 
 		signature = hex.EncodeToString(sumHMAC(signingKey, []byte(stringToSign)))
@@ -874,7 +893,7 @@ func preSignV4(req *http.Request, accessKeyID, secretAccessKey string, expires i
 	queryStr := strings.Replace(query.Encode(), "+", "%20", -1)
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, unsignedPayload, queryStr, req.URL.Path, req.Method)
 	stringToSign := getStringToSign(canonicalRequest, date, scope)
-	signingKey := getSigningKey(secretAccessKey, date, region)
+	signingKey := getSigningKey(secretAccessKey, date, region, serviceS3)
 	signature := getSignature(signingKey, stringToSign)
 
 	req.URL.RawQuery = query.Encode()
@@ -1035,7 +1054,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 	scope := strings.Join([]string{
 		currTime.Format(yyyymmdd),
 		region,
-		"s3",
+		string(serviceS3),
 		"aws4_request",
 	}, "/")
 
@@ -1045,7 +1064,7 @@ func signRequestV4(req *http.Request, accessKey, secretKey string) error {
 
 	date := sumHMAC([]byte("AWS4"+secretKey), []byte(currTime.Format(yyyymmdd)))
 	regionHMAC := sumHMAC(date, []byte(region))
-	service := sumHMAC(regionHMAC, []byte("s3"))
+	service := sumHMAC(regionHMAC, []byte(serviceS3))
 	signingKey := sumHMAC(service, []byte("aws4_request"))
 
 	signature := hex.EncodeToString(sumHMAC(signingKey, []byte(stringToSign)))
