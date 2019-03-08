@@ -1943,6 +1943,10 @@ func (j *eosJobs) amountWaitingInc() (waiting, busy int) {
 
 func (j *eosJobs) getFreeSlot() int {
 	slot := -1
+	if j.max == 0 {
+		return -1
+	}
+
 	now := time.Now().Unix()
 	j.mutex.Lock()
 	for i := 0; i < j.max; i++ {
@@ -1974,34 +1978,36 @@ func (j *eosJobs) getFreeSlot() int {
 
 func (j *eosJobs) waitForSlot() int {
 	slot := -1
-	if j.max > 0 {
-		amountWaiting, amountRunning := j.amountWaitingInc()
-		j.Log(3, "%s AmountRunning / Max (%d/%d), AmountWaiting: %d Before curl", j.kind, amountRunning, j.max, amountWaiting)
+	if j.max == 0 {
+		return -1
+	}
 
-		//wait for task to be not busy
-		for amountRunning >= j.max {
-			j.Log(4, "%s AmountRunning >= Max (%d>=%d), AmountWaiting: %d, sleeping %dms", j.kind, amountRunning, j.max, amountWaiting, j.sleep)
+	amountWaiting, amountRunning := j.amountWaitingInc()
+	j.Log(3, "%s AmountRunning / Max (%d/%d), AmountWaiting: %d Before curl", j.kind, amountRunning, j.max, amountWaiting)
+
+	//wait for task to be not busy
+	for amountRunning >= j.max {
+		j.Log(4, "%s AmountRunning >= Max (%d>=%d), AmountWaiting: %d, sleeping %dms", j.kind, amountRunning, j.max, amountWaiting, j.sleep)
+		time.Sleep(time.Duration(j.sleep) * time.Millisecond)
+		amountWaiting, amountRunning = j.amountRead()
+	}
+
+	//wait for non busy slot to age at least 1s
+	for slot == -1 {
+		slot = j.getFreeSlot()
+		if slot == -1 {
+			j.Log(4, "%s slots are maxed out this second, sleeping %dms", j.kind, j.sleep)
 			time.Sleep(time.Duration(j.sleep) * time.Millisecond)
-			amountWaiting, amountRunning = j.amountRead()
-		}
-
-		//wait for non busy slot to age at least 1s
-		for slot == -1 {
-			slot = j.getFreeSlot()
-			if slot == -1 {
-				j.Log(4, "%s slots are maxed out this second, sleeping %dms", j.kind, j.sleep)
-				time.Sleep(time.Duration(j.sleep) * time.Millisecond)
-			}
 		}
 	}
 	return slot
 }
 
 func (j *eosJobs) freeSlot(slot int) {
-	j.Log(5, "%s slot %d try to free", j.kind, slot)
 	if j.max == 0 || slot == -1 {
 		return
 	}
+	j.Log(5, "%s slot %d try to free", j.kind, slot)
 
 	j.mutex.Lock()
 	job, ok := j.jobs[slot]
