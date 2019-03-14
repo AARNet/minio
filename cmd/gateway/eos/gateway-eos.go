@@ -1092,6 +1092,12 @@ func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryR
 	return results, minio.NotImplemented{}
 }
 
+// HealObjects - no-op for fs.
+func (e *eosObjects) HealObjects(ctx context.Context, bucket, prefix string, fn func(string, string) error) (err error) {
+	e.Log(2, "S3cmd: HealObjects:")
+	return minio.NotImplemented{}
+}
+
 // ListBucketsHeal - list all buckets to be healed
 func (e *eosObjects) ListBucketsHeal(ctx context.Context) ([]minio.BucketInfo, error) {
 	e.Log(2, "S3cmd: ListBucketsHeal:")
