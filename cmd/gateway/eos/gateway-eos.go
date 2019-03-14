@@ -1495,15 +1495,16 @@ func (e *eosObjects) EOSrmdir(p string) error {
 		return err
 	}
 
-	e.Log(2, "EOScmd: procuser.rmdir %s", eospath)
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rmdir&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
+	e.Log(2, "EOScmd: procuser.rm %s", eospath)
+	//_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rmdir&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.rmdir %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.rm %s : %s", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1519,7 +1520,7 @@ func (e *eosObjects) EOSrm(p string) error {
 	}
 
 	e.Log(2, "EOScmd: procuser.rm %s", eospath)
-	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
+	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
 		return err
@@ -1662,6 +1663,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 	if err != nil {
 		return err
 	}
+	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 	e.Log(3, "%s", eosurl)
 
@@ -1671,6 +1673,32 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 	retry := 0
 	for retry < maxRetry {
 		retry = retry + 1
+
+		if strings.IndexByte(p, '%') >= 0 {
+			slot := e.webdavJobs.waitForSlot()
+
+			e.Log(2, "EOScmd: webdav.PUT : SPECIAL CASE using curl: %s", eosurl)
+			cmd := exec.Command("curl", "-L", "-X", "PUT", "--data-binary", "@-", "-H", "Remote-User: minio", "-sw", "'%{http_code}'", eosurl)
+			cmd.Stdin = bytes.NewReader(data)
+			stdoutStderr, err := cmd.CombinedOutput()
+
+			e.webdavJobs.freeSlot(slot)
+
+			if err != nil {
+				e.Log(1, "ERROR: can not curl %s", eosurl)
+				e.Log(2, "%s", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
+				e.EOSsleep()
+				continue
+			}
+			if strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)) != "'201'" {
+				e.Log(1, "ERROR: wrong response from curl")
+				e.Log(2, "%s", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
+				e.EOSsleep()
+				continue
+			}
+
+			return err
+		}
 
 		slot := e.webdavJobs.waitForSlot()
 		client := &http.Client{
@@ -1690,13 +1718,17 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		e.webdavJobs.freeSlot(slot)
 
 		if err != nil {
-			e.Log(2, "%+v", err)
+			e.Log(2, "http ERROR message: %+v", err)
+			e.Log(2, "http ERROR response: %+v", res)
+
+			//req.URL.RawPath = strings.Replace(req.URL.RawPath[:strings.IndexByte(req.URL.RawPath, '?')], "%", "%25", -1) + "?" + req.URL.RawQuery
+
 			e.EOSsleep()
 			continue
 		}
 		defer res.Body.Close()
 		if res.StatusCode != 201 {
-			e.Log(2, "%+v", res)
+			e.Log(2, "http StatusCode != 201: %+v", res)
 			err = eoserrCantPut
 			e.EOSsleep()
 			continue
@@ -1735,6 +1767,7 @@ func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
 	if err != nil {
 		return err
 	}
+	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", e.url, eospath, e.uid, e.gid, size))
 	if err != nil {
 		e.Log(1, "ERROR: can not url.QueryUnescape()")
@@ -1781,6 +1814,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		}
 		e.xrootdJobs.freeSlot(slot)
 	} else if e.readmethod == "xrdcp" {
+		eospath = strings.Replace(eospath, "%", "%25", -1)
 		eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s", e.url, eospath, e.uid, e.gid))
 		if err != nil {
 			e.Log(1, "ERROR: can not url.QueryUnescape()")
@@ -1813,6 +1847,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 	} else { //webdav
 		//curl -L -X GET -H 'Remote-User: minio' -H 'Range: bytes=5-7' http://eos:8000/eos-path-to-file
 
+		eospath = strings.Replace(eospath, "%", "%25", -1)
 		eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 		//e.Log(3,"%s", eosurl)
 		//e.Log(3,"Range: bytes=%d-%d", offset, offset+length-1)
