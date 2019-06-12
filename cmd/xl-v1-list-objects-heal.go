@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,11 @@ import "context"
 // This is not implemented/needed anymore, look for xl-sets.ListBucketHeal()
 func (xl xlObjects) ListBucketsHeal(ctx context.Context) ([]BucketInfo, error) {
 	return nil, nil
+}
+
+// This is not implemented, look for xl-sets.ListObjectsHeal()
+func (xl xlObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi ListObjectsInfo, err error) {
+	return ListObjectsInfo{}, nil
 }
 
 // This is not implemented/needed anymore, look for xl-sets.HealObjects()

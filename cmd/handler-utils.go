@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import (
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/handlers"
-	httptracer "github.com/minio/minio/pkg/handlers"
 )
 
 // Parses location constraint from the incoming reader.
@@ -53,7 +52,7 @@ func parseLocationConstraint(r *http.Request) (location string, s3Error APIError
 }
 
 // Validates input location is same as configured region
-// of Minio server.
+// of MinIO server.
 func isValidLocation(location string) bool {
 	return globalServerConfig.GetRegion() == "" || globalServerConfig.GetRegion() == location
 }
@@ -326,18 +325,26 @@ func extractPostPolicyFormValues(ctx context.Context, form *multipart.Form) (fil
 
 // Log headers and body.
 func httpTraceAll(f http.HandlerFunc) http.HandlerFunc {
-	if globalHTTPTraceFile == nil {
-		return f
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !globalTrace.HasTraceListeners() {
+			f.ServeHTTP(w, r)
+			return
+		}
+		trace := Trace(f, true, w, r)
+		globalTrace.Publish(trace)
 	}
-	return httptracer.TraceReqHandlerFunc(f, globalHTTPTraceFile, true)
 }
 
 // Log only the headers.
 func httpTraceHdrs(f http.HandlerFunc) http.HandlerFunc {
-	if globalHTTPTraceFile == nil {
-		return f
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !globalTrace.HasTraceListeners() {
+			f.ServeHTTP(w, r)
+			return
+		}
+		trace := Trace(f, false, w, r)
+		globalTrace.Publish(trace)
 	}
-	return httptracer.TraceReqHandlerFunc(f, globalHTTPTraceFile, false)
 }
 
 // Returns "/bucketName/objectName" for path-style or virtual-host-style requests.

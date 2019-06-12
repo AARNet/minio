@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,11 +38,12 @@ func registerDistXLRouters(router *mux.Router, endpoints EndpointList) {
 	// Register storage rpc router only if its a distributed setup.
 	registerStorageRESTHandlers(router, endpoints)
 
-	// Register distributed namespace lock.
-	registerDistNSLockRouter(router)
+	// Register peer REST router only if its a distributed setup.
+	registerPeerRESTHandlers(router)
 
-	// Register peer communication router.
-	registerPeerRPCRouter(router)
+	// Register distributed namespace lock.
+	registerLockRESTHandlers(router)
+
 }
 
 // List of some generic handlers which are applied for all incoming requests.
@@ -53,8 +54,6 @@ var globalHandlers = []HandlerFunc{
 	addSecurityHeaders,
 	// Forward path style requests to actual host in a bucket federated setup.
 	setBucketForwardingHandler,
-	// Ratelimit the incoming requests using a token bucket algorithm
-	setRateLimitHandler,
 	// Validate all the incoming requests.
 	setRequestValidityHandler,
 	// Network statistics

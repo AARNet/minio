@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/minio/minio/pkg/madmin"
 )
 
 // Tests for if parent directory is object
@@ -228,8 +230,8 @@ func TestFSPutObject(t *testing.T) {
 	if err == nil {
 		t.Fatal("Unexpected should fail here, backend corruption occurred")
 	}
-	if nerr, ok := err.(PrefixAccessDenied); !ok {
-		t.Fatalf("Expected PrefixAccessDenied, got %#v", err)
+	if nerr, ok := err.(ParentIsObject); !ok {
+		t.Fatalf("Expected ParentIsObject, got %#v", err)
 	} else {
 		if nerr.Bucket != "bucket" {
 			t.Fatalf("Expected 'bucket', got %s", nerr.Bucket)
@@ -243,8 +245,8 @@ func TestFSPutObject(t *testing.T) {
 	if err == nil {
 		t.Fatal("Unexpected should fail here, backned corruption occurred")
 	}
-	if nerr, ok := err.(PrefixAccessDenied); !ok {
-		t.Fatalf("Expected PrefixAccessDenied, got %#v", err)
+	if nerr, ok := err.(ParentIsObject); !ok {
+		t.Fatalf("Expected ParentIsObject, got %#v", err)
 	} else {
 		if nerr.Bucket != "bucket" {
 			t.Fatalf("Expected 'bucket', got %s", nerr.Bucket)
@@ -390,7 +392,7 @@ func TestFSHealObject(t *testing.T) {
 	defer os.RemoveAll(disk)
 
 	obj := initFSObjects(disk, t)
-	_, err := obj.HealObject(context.Background(), "bucket", "object", false, false)
+	_, err := obj.HealObject(context.Background(), "bucket", "object", false, false, madmin.HealDeepScan)
 	if err == nil || !isSameType(err, NotImplemented{}) {
 		t.Fatalf("Heal Object should return NotImplemented error ")
 	}

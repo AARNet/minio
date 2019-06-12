@@ -1,5 +1,7 @@
+// +build ignore
+
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,8 +21,8 @@ package main
 import (
 	"bufio"
 	"crypto/tls"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -36,7 +38,7 @@ const (
 	initGraceTime = 300
 	healthPath    = "/minio/health/live"
 	timeout       = time.Duration(30 * time.Second)
-	minioProcess  = "minio"
+	tcp           = "tcp"
 )
 
 // returns container boot time by finding
@@ -45,30 +47,37 @@ func getStartTime() time.Time {
 	di, err := os.Stat("/proc/1")
 	if err != nil {
 		// Cant stat proc dir successfully, exit with error
-		log.Fatal(err.Error())
+		log.Fatalln(err)
 	}
 	return di.ModTime()
 }
 
-// Returns the ip:port of the Minio process
+// Returns the ip:port of the MinIO process
 // running in the container
-func findEndpoint() string {
+func findEndpoint() (string, error) {
 	cmd := exec.Command("netstat", "-ntlp")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		// error getting stdout pipe
-		log.Fatal(err.Error())
+		return "", err
 	}
 	if err = cmd.Start(); err != nil {
-		// error starting the command
-		log.Fatal(err.Error())
+		// error executing the command.
+		return "", err
 	}
 	// split netstat output in rows
 	scanner := bufio.NewScanner(stdout)
 	scanner.Split(bufio.ScanLines)
-	// loop over the rows to find Minio process
+	// MinIO works on TCP and it is supposed to be
+	// the only process listening on a port inside
+	// container. So we take the first row of netstat
+	// output (that has tcp) and assume that is the
+	// MinIO server port.
+	// Since MinIO is running as non-root user, we can
+	// no longer depend on the PID/Program name column
+	// of netstat output
 	for scanner.Scan() {
-		if strings.Contains(scanner.Text(), minioProcess) {
+		if strings.Contains(scanner.Text(), tcp) {
 			line := scanner.Text()
 			newLine := strings.Replace(line, ":::", "127.0.0.1:", 1)
 			fields := strings.Fields(newLine)
@@ -85,20 +94,21 @@ func findEndpoint() string {
 			}
 			// wait for cmd to complete before return
 			if err = cmd.Wait(); err != nil {
-				// command failed to run
-				log.Fatal(err.Error())
+				return "", err
 			}
 			// return joint address and port
-			return strings.Join([]string{addr, port}, ":")
+			return strings.Join([]string{addr, port}, ":"), nil
 		}
+	}
+	if err = scanner.Err(); err != nil {
+		return "", err
 	}
 	if err = cmd.Wait(); err != nil {
 		// command failed to run
-		log.Fatal(err.Error())
+		return "", err
 	}
 	// minio process not found, exit with error
-	os.Exit(1)
-	return ""
+	return "", errors.New("no minio process found")
 }
 
 func main() {
@@ -106,24 +116,24 @@ func main() {
 
 	//  In distributed environment like Swarm, traffic is routed
 	//  to a container only when it reports a `healthy` status. So, we exit
-	//  with 0 to ensure healthy status till distributed Minio starts (120s).
+	//  with 0 to ensure healthy status till distributed MinIO starts (120s).
 
 	//  Refer: https://github.com/moby/moby/pull/28938#issuecomment-301753272
 
-	if (time.Now().Sub(startTime) / time.Second) < initGraceTime {
-		os.Exit(0)
-	} else {
-		endPoint := findEndpoint()
+	if (time.Now().Sub(startTime) / time.Second) > initGraceTime {
+		endPoint, err := findEndpoint()
+		if err != nil {
+			log.Fatalln(err)
+		}
 		u, err := url.Parse(fmt.Sprintf("http://%s%s", endPoint, healthPath))
 		if err != nil {
 			// Could not parse URL successfully
-			log.Fatal(err.Error())
+			log.Fatalln(err)
 		}
-
-		// Minio server may be using self-signed or CA certificates. To avoid
+		// MinIO server may be using self-signed or CA certificates. To avoid
 		// making Docker setup complicated, we skip verifying certificates here.
 		// This is because, following request tests for health status within
-		// containerized environment, i.e. requests are always made to the Minio
+		// containerized environment, i.e. requests are always made to the MinIO
 		// server running on the same host.
 		tr := &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
@@ -132,7 +142,7 @@ func main() {
 		resp, err := client.Get(u.String())
 		if err != nil {
 			// GET failed exit
-			log.Fatal(err.Error())
+			log.Fatalln(err)
 		}
 		if resp.StatusCode == http.StatusOK {
 			// Drain any response.
@@ -140,24 +150,16 @@ func main() {
 			// exit with success
 			os.Exit(0)
 		}
-		bodyBytes, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			// Drain any response.
-			xhttp.DrainBody(resp.Body)
-			// GET failed exit
-			log.Fatal(err.Error())
-		}
-		bodyString := string(bodyBytes)
 		// Drain any response.
 		xhttp.DrainBody(resp.Body)
-		// This means sever is configured with https
-		if resp.StatusCode == http.StatusForbidden && bodyString == "SSL required" {
+		// 400 response may mean sever is configured with https
+		if resp.StatusCode == http.StatusBadRequest {
 			// Try with https
 			u.Scheme = "https"
 			resp, err = client.Get(u.String())
 			if err != nil {
 				// GET failed exit
-				log.Fatal(err.Error())
+				log.Fatalln(err)
 			}
 			if resp.StatusCode == http.StatusOK {
 				// Drain any response.
@@ -168,8 +170,9 @@ func main() {
 			// Drain any response.
 			xhttp.DrainBody(resp.Body)
 		}
+		// Execution reaching here means none of
+		// the success cases were satisfied
+		os.Exit(1)
 	}
-	// Execution reaching here means none of
-	// the success cases were satisfied
-	os.Exit(1)
+	os.Exit(0)
 }

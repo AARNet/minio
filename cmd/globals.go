@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import (
 	"time"
 
 	isatty "github.com/mattn/go-isatty"
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 
 	etcd "github.com/coreos/etcd/clientv3"
 	humanize "github.com/dustin/go-humanize"
@@ -57,7 +57,6 @@ const (
 	globalMinioDefaultStorageClass = "STANDARD"
 	globalWindowsOSName            = "windows"
 	globalNetBSDOSName             = "netbsd"
-	globalSolarisOSName            = "solaris"
 	globalMinioModeFS              = "mode-server-fs"
 	globalMinioModeXL              = "mode-server-xl"
 	globalMinioModeDistXL          = "mode-server-distributed-xl"
@@ -79,12 +78,10 @@ const (
 	globalMaxSkewTime = 15 * time.Minute // 15 minutes skew allowed.
 
 	// GlobalMultipartExpiry - Expiry duration after which the multipart uploads are deemed stale.
-	GlobalMultipartExpiry = time.Hour * 24 * 14 // 2 weeks.
+	GlobalMultipartExpiry = time.Hour * 24 * 3 // 3 days.
 	// GlobalMultipartCleanupInterval - Cleanup interval when the stale multipart cleanup is initiated.
 	GlobalMultipartCleanupInterval = time.Hour * 24 // 24 hrs.
 
-	// Refresh interval to update in-memory bucket policy cache.
-	globalRefreshBucketPolicyInterval = 5 * time.Minute
 	// Refresh interval to update in-memory iam config cache.
 	globalRefreshIAMInterval = 5 * time.Minute
 
@@ -93,9 +90,10 @@ const (
 )
 
 var globalCLIContext = struct {
-	JSON, Quiet bool
-	Anonymous   bool
-	Addr        string
+	JSON, Quiet    bool
+	Anonymous      bool
+	Addr           string
+	StrictS3Compat bool
 }{}
 
 var (
@@ -110,6 +108,9 @@ var (
 
 	// Indicates if the running minio server is an erasure-code backend.
 	globalIsXL = false
+
+	// Indicates if the running minio is in gateway mode.
+	globalIsGateway = false
 
 	// This flag is set to 'true' by default
 	globalIsBrowserEnabled = true
@@ -132,9 +133,9 @@ var (
 	// Maximum size of internal objects parts
 	globalPutPartSize = int64(64 * 1024 * 1024)
 
-	// Minio local server address (in `host:port` format)
+	// MinIO local server address (in `host:port` format)
 	globalMinioAddr = ""
-	// Minio default port, can be changed through command line.
+	// MinIO default port, can be changed through command line.
 	globalMinioPort = globalMinioDefaultPort
 	// Holds the host that was passed using --address
 	globalMinioHost = ""
@@ -158,8 +159,9 @@ var (
 	globalHTTPServerErrorCh = make(chan error)
 	globalOSSignalCh        = make(chan os.Signal, 1)
 
-	// File to log HTTP request/response headers and body.
-	globalHTTPTraceFile *os.File
+	// global Trace system to send HTTP request/response logs to
+	// registered listeners
+	globalTrace *HTTPTraceSys
 
 	globalEndpoints EndpointList
 
@@ -176,7 +178,7 @@ var (
 	globalPublicCerts []*x509.Certificate
 
 	globalDomainNames []string      // Root domains for virtual host style requests
-	globalDomainIPs   set.StringSet // Root domain IP address(s) for a distributed Minio deployment
+	globalDomainIPs   set.StringSet // Root domain IP address(s) for a distributed MinIO deployment
 
 	globalListingTimeout   = newDynamicTimeout( /*30*/ 600*time.Second /*5*/, 600*time.Second) // timeout for listing related ops
 	globalObjectTimeout    = newDynamicTimeout( /*1*/ 10*time.Minute /*10*/, 600*time.Second)  // timeout for Object API related ops
@@ -208,13 +210,6 @@ var (
 	globalCacheExpiry = 90
 	// Max allowed disk cache percentage
 	globalCacheMaxUse = 80
-
-	// RPC V1 - Initial version
-	// RPC V2 - format.json XL version changed to 2
-	// RPC V3 - format.json XL version changed to 3
-	// RPC V4 - ReadFile() arguments signature changed
-	// Current RPC version
-	globalRPCAPIVersion = RPCVersion{4, 0, 0}
 
 	// Allocated etcd endpoint for config and bucket DNS.
 	globalEtcdClient *etcd.Client
@@ -265,6 +260,11 @@ var (
 
 	// GlobalGatewaySSE sse options
 	GlobalGatewaySSE gatewaySSE
+
+	// The always present healing routine ready to heal objects
+	globalBackgroundHealing *healRoutine
+	globalAllHealState      *allHealState
+	globalSweepHealState    *allHealState
 
 	// Add new variable global values here.
 )

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -50,19 +50,6 @@ func TestCloneHeader(t *testing.T) {
 		clonedHeader := cloneHeader(header)
 		if !reflect.DeepEqual(header, clonedHeader) {
 			t.Errorf("Test %d failed", i+1)
-		}
-	}
-}
-
-// Tests closing http tracing file.
-func TestStopHTTPTrace(t *testing.T) {
-	var err error
-	globalHTTPTraceFile, err = ioutil.TempFile("", "")
-	if err != nil {
-		defer os.Remove(globalHTTPTraceFile.Name())
-		stopHTTPTrace()
-		if globalHTTPTraceFile != nil {
-			t.Errorf("globalHTTPTraceFile is not nil, it is expected to be nil")
 		}
 	}
 }

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -210,6 +210,25 @@ func TestParseCredentialHeader(t *testing.T) {
 			expectedCredentials: generateCredentials(
 				t,
 				"LOCALKEY/DEV/1",
+				sampleTimeStr,
+				"us-west-1",
+				"s3",
+				"aws4_request"),
+			expectedErrCode: ErrNone,
+		},
+		// Test Case - 11.
+		// Test case with right inputs -> AccessKey contains `=`. See minio/#7376
+		// "aws4_request" is the valid request version.
+		{
+			inputCredentialStr: generateCredentialStr(
+				"LOCALKEY/DEV/1=",
+				sampleTimeStr,
+				"us-west-1",
+				"s3",
+				"aws4_request"),
+			expectedCredentials: generateCredentials(
+				t,
+				"LOCALKEY/DEV/1=",
 				sampleTimeStr,
 				"us-west-1",
 				"s3",

@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"github.com/minio/highwayhash"
-	"github.com/minio/minio-go/pkg/set"
+	"github.com/minio/minio-go/v6/pkg/set"
 	"github.com/minio/minio/cmd/logger/message/log"
 )
 
@@ -343,7 +343,7 @@ func logIf(ctx context.Context, err error) {
 		entry.API.Args.Bucket = hashString(entry.API.Args.Bucket)
 		entry.API.Args.Object = hashString(entry.API.Args.Object)
 		entry.RemoteHost = hashString(entry.RemoteHost)
-		entry.Message = reflect.TypeOf(err).String()
+		entry.Trace.Message = reflect.TypeOf(err).String()
 		entry.Trace.Variables = make(map[string]string)
 	}
 

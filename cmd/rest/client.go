@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,11 +28,21 @@ import (
 	"time"
 
 	xhttp "github.com/minio/minio/cmd/http"
-	"golang.org/x/net/http2"
 )
 
 // DefaultRESTTimeout - default RPC timeout is one minute.
 const DefaultRESTTimeout = 1 * time.Minute
+
+// NetworkError - error type in case of errors related to http/transport
+// for ex. connection refused, connection reset, dns resolution failure etc.
+// All errors returned by storage-rest-server (ex errFileNotFound, errDiskNotFound) are not considered to be network errors.
+type NetworkError struct {
+	Err error
+}
+
+func (n *NetworkError) Error() string {
+	return n.Err.Error()
+}
 
 // Client - http based RPC client.
 type Client struct {
@@ -42,13 +52,13 @@ type Client struct {
 	newAuthToken        func() string
 }
 
-// Call - make a REST call.
-func (c *Client) Call(method string, values url.Values, body io.Reader, length int64) (reply io.ReadCloser, err error) {
+// CallWithContext - make a REST call with context.
+func (c *Client) CallWithContext(ctx context.Context, method string, values url.Values, body io.Reader, length int64) (reply io.ReadCloser, err error) {
 	req, err := http.NewRequest(http.MethodPost, c.url.String()+"/"+method+"?"+values.Encode(), body)
 	if err != nil {
-		return nil, err
+		return nil, &NetworkError{err}
 	}
-
+	req = req.WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer "+c.newAuthToken())
 	req.Header.Set("X-Minio-Time", time.Now().UTC().Format(time.RFC3339))
 	if length > 0 {
@@ -56,7 +66,7 @@ func (c *Client) Call(method string, values url.Values, body io.Reader, length i
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &NetworkError{err}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -66,9 +76,18 @@ func (c *Client) Call(method string, values url.Values, body io.Reader, length i
 		if err != nil {
 			return nil, err
 		}
-		return nil, errors.New(string(b))
+		if len(b) > 0 {
+			return nil, errors.New(string(b))
+		}
+		return nil, errors.New(resp.Status)
 	}
 	return resp.Body, nil
+}
+
+// Call - make a REST call.
+func (c *Client) Call(method string, values url.Values, body io.Reader, length int64) (reply io.ReadCloser, err error) {
+	ctx := context.Background()
+	return c.CallWithContext(ctx, method, values, body, length)
 }
 
 // Close closes all idle connections of the underlying http client
@@ -86,12 +105,7 @@ func newCustomDialContext(timeout time.Duration) func(ctx context.Context, netwo
 			DualStack: true,
 		}
 
-		conn, err := dialer.DialContext(ctx, network, addr)
-		if err != nil {
-			return nil, err
-		}
-
-		return xhttp.NewTimeoutConn(conn, timeout, timeout), nil
+		return dialer.DialContext(ctx, network, addr)
 	}
 }
 
@@ -102,19 +116,12 @@ func NewClient(url *url.URL, tlsConfig *tls.Config, timeout time.Duration, newAu
 	tr := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           newCustomDialContext(timeout),
-		MaxIdleConnsPerHost:   4096,
-		MaxIdleConns:          4096,
-		IdleConnTimeout:       120 * time.Second,
+		MaxIdleConnsPerHost:   256,
+		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   30 * time.Second,
 		ExpectContinueTimeout: 10 * time.Second,
 		TLSClientConfig:       tlsConfig,
 		DisableCompression:    true,
-	}
-	if tlsConfig != nil {
-		// If TLS is enabled configure http2
-		if err := http2.ConfigureTransport(tr); err != nil {
-			return nil, err
-		}
 	}
 	return &Client{
 		httpClient:          &http.Client{Transport: tr},

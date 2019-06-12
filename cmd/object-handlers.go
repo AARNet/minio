@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015-2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015-2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@ import (
 	"encoding/xml"
 	"io"
 	goioutil "io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -34,8 +33,8 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	miniogo "github.com/minio/minio-go"
-	"github.com/minio/minio-go/pkg/encrypt"
+	miniogo "github.com/minio/minio-go/v6"
+	"github.com/minio/minio-go/v6/pkg/encrypt"
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/dns"
@@ -221,12 +220,6 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 	s3Select.Evaluate(w)
 	s3Select.Close()
 
-	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
-
 	// Notify object accessed via a GET request.
 	sendEvent(eventArgs{
 		EventName:    event.ObjectAccessedGet,
@@ -235,8 +228,7 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 }
 
@@ -402,12 +394,6 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
-	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
-
 	// Notify object accessed via a GET request.
 	sendEvent(eventArgs{
 		EventName:    event.ObjectAccessedGet,
@@ -416,8 +402,7 @@ func (api objectAPIHandlers) GetObjectHandler(w http.ResponseWriter, r *http.Req
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 }
 
@@ -562,11 +547,6 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 		w.WriteHeader(http.StatusOK)
 	}
 
-	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
 	// Notify object accessed via a HEAD request.
 	sendEvent(eventArgs{
 		EventName:    event.ObjectAccessedHead,
@@ -575,8 +555,7 @@ func (api objectAPIHandlers) HeadObjectHandler(w http.ResponseWriter, r *http.Re
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 }
 
@@ -741,15 +720,16 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Deny if WORM is enabled
-	if globalWORMEnabled {
+	cpSrcDstSame := isStringEqual(pathJoin(srcBucket, srcObject), pathJoin(dstBucket, dstObject))
+
+	// Deny if WORM is enabled. If operation is key rotation of SSE-S3 encrypted object
+	// allow the operation
+	if globalWORMEnabled && !(cpSrcDstSame && crypto.S3.IsRequested(r.Header)) {
 		if _, err = objectAPI.GetObjectInfo(ctx, dstBucket, dstObject, dstOpts); err == nil {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	}
-
-	cpSrcDstSame := isStringEqual(pathJoin(srcBucket, srcObject), pathJoin(dstBucket, dstObject))
 
 	getObjectNInfo := objectAPI.GetObjectNInfo
 	if api.CacheAPI() != nil {
@@ -783,6 +763,11 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Deny if WORM is enabled, and it is not a SSE-S3 -> SSE-S3 key rotation or if metadata replacement is requested.
+	if globalWORMEnabled && cpSrcDstSame && (!crypto.S3.IsEncrypted(srcInfo.UserDefined) || isMetadataReplace(r.Header)) {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
+		return
+	}
 	// We have to copy metadata only if source and destination are same.
 	// this changes for encryption which can be observed below.
 	if cpSrcDstSame {
@@ -842,7 +827,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		reader = gr
 	}
 
-	srcInfo.Reader, err = hash.NewReader(reader, length, "", "", actualSize)
+	srcInfo.Reader, err = hash.NewReader(reader, length, "", "", actualSize, globalCLIContext.StrictS3Compat)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -949,7 +934,8 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 				crypto.RemoveInternalEntries(srcInfo.UserDefined)
 			}
 
-			srcInfo.Reader, err = hash.NewReader(reader, targetSize, "", "", targetSize) // do not try to verify encrypted content
+			// do not try to verify encrypted content
+			srcInfo.Reader, err = hash.NewReader(reader, targetSize, "", "", targetSize, globalCLIContext.StrictS3Compat)
 			if err != nil {
 				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 				return
@@ -1032,12 +1018,6 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	// Write success response.
 	writeSuccessResponseXML(w, encodedSuccessResponse)
 
-	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
-
 	if objInfo.IsCompressed() {
 		objInfo.Size = actualSize
 	}
@@ -1050,8 +1030,7 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 }
 
@@ -1198,6 +1177,11 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// This request header needs to be set prior to setting ObjectOptions
+	if globalAutoEncryption && !crypto.SSEC.IsRequested(r.Header) {
+		r.Header.Add(crypto.SSEHeader, crypto.SSEAlgorithmAES256)
+	}
+
 	actualSize := size
 
 	if objectAPI.IsCompressionSupported() && isCompressible(r.Header, object) && size > 0 {
@@ -1205,7 +1189,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		metadata[ReservedMetadataPrefix+"compression"] = compressionAlgorithmV1
 		metadata[ReservedMetadataPrefix+"actual-size"] = strconv.FormatInt(size, 10)
 
-		actualReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
+		actualReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize, globalCLIContext.StrictS3Compat)
 		if err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 			return
@@ -1218,7 +1202,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		sha256hex = ""
 	}
 
-	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
+	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize, globalCLIContext.StrictS3Compat)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -1227,10 +1211,6 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	rawReader := hashReader
 	pReader := NewPutObjReader(rawReader, nil, nil)
 
-	// This request header needs to be set prior to setting ObjectOptions
-	if globalAutoEncryption && !crypto.SSEC.IsRequested(r.Header) {
-		r.Header.Add(crypto.SSEHeader, crypto.SSEAlgorithmAES256)
-	}
 	// get gateway encryption options
 	var opts ObjectOptions
 	opts, err = putOpts(ctx, r, bucket, object, metadata)
@@ -1256,7 +1236,8 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 				return
 			}
 			info := ObjectInfo{Size: size}
-			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", size) // do not try to verify encrypted content
+			// do not try to verify encrypted content
+			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", size, globalCLIContext.StrictS3Compat)
 			if err != nil {
 				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 				return
@@ -1281,12 +1262,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	etag := objInfo.ETag
 	if objInfo.IsCompressed() {
-		// Ignore compressed ETag.
-		etag = objInfo.ETag + "-1"
+		if !strings.HasSuffix(objInfo.ETag, "-1") {
+			etag = objInfo.ETag + "-1"
+		}
 	} else if hasServerSideEncryptionHeader(r.Header) {
 		etag = getDecryptedETag(r.Header, objInfo, false)
 	}
-	w.Header().Set("ETag", "\""+etag+"\"")
+	w.Header()["ETag"] = []string{"\"" + etag + "\""}
 
 	if objectAPI.IsEncryptionSupported() {
 		if crypto.IsEncrypted(objInfo.UserDefined) {
@@ -1303,12 +1285,6 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	writeSuccessResponseHeadersOnly(w)
 
-	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
-
 	// Notify object created event.
 	sendEvent(eventArgs{
 		EventName:    event.ObjectCreatedPut,
@@ -1317,8 +1293,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 }
 
@@ -1641,7 +1616,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 		reader = gr
 	}
 
-	srcInfo.Reader, err = hash.NewReader(reader, length, "", "", actualPartSize)
+	srcInfo.Reader, err = hash.NewReader(reader, length, "", "", actualPartSize, globalCLIContext.StrictS3Compat)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -1701,7 +1676,7 @@ func (api objectAPIHandlers) CopyObjectPartHandler(w http.ResponseWriter, r *htt
 			}
 
 			info := ObjectInfo{Size: length}
-			srcInfo.Reader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", length)
+			srcInfo.Reader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", length, globalCLIContext.StrictS3Compat)
 			if err != nil {
 				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 				return
@@ -1868,7 +1843,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	isCompressed := false
 	if objectAPI.IsCompressionSupported() && compressPart {
-		actualReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
+		actualReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize, globalCLIContext.StrictS3Compat)
 		if err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 			return
@@ -1882,7 +1857,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		isCompressed = true
 	}
 
-	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize)
+	hashReader, err := hash.NewReader(reader, size, md5hex, sha256hex, actualSize, globalCLIContext.StrictS3Compat)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -1949,7 +1924,8 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 				return
 			}
 			info := ObjectInfo{Size: size}
-			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", size) // do not try to verify encrypted content
+			// do not try to verify encrypted content
+			hashReader, err = hash.NewReader(reader, info.EncryptedSize(), "", "", size, globalCLIContext.StrictS3Compat)
 			if err != nil {
 				writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 				return
@@ -1970,13 +1946,10 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	}
 
 	etag := partInfo.ETag
-	if isCompressed {
-		// Suppress compressed ETag.
-		etag = partInfo.ETag + "-1"
-	} else if isEncrypted {
+	if isEncrypted {
 		etag = tryDecryptETag(objectEncryptionKey, partInfo.ETag, crypto.SSEC.IsRequested(r.Header))
 	}
-	w.Header().Set("ETag", "\""+etag+"\"")
+	w.Header()["ETag"] = []string{"\"" + etag + "\""}
 
 	writeSuccessResponseHeadersOnly(w)
 }
@@ -2263,11 +2236,6 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	// Complete parts.
 	var completeParts []CompletePart
 	for _, part := range complMultipartUpload.Parts {
-		// Avoiding for gateway parts.
-		// `strings.TrimPrefix` does not work here as intended. So `Replace` is used instead.
-		if objectAPI.IsCompressionSupported() {
-			part.ETag = strings.Replace(part.ETag, "-1", "", -1) // For compressed multiparts, We append '-1' for part.ETag.
-		}
 		part.ETag = canonicalizeETag(part.ETag)
 		if isEncrypted {
 			// ETag is stored in the backend in encrypted form. Validate client sent ETag with
@@ -2339,22 +2307,18 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 	}
 
 	// Set etag.
-	w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
+	w.Header()["ETag"] = []string{"\"" + objInfo.ETag + "\""}
 
 	// Write success response.
 	writeSuccessResponseXML(w, encodedSuccessResponse)
 
 	// Get host and port from Request.RemoteAddr.
-	host, port, err := net.SplitHostPort(handlers.GetSourceIP(r))
-	if err != nil {
-		host, port = "", ""
-	}
-
 	if objectAPI.IsEncryptionSupported() {
 		if crypto.IsEncrypted(objInfo.UserDefined) {
 			objInfo.Size, _ = objInfo.DecryptedSize()
 		}
 	}
+
 	// Notify object created event.
 	sendEvent(eventArgs{
 		EventName:    event.ObjectCreatedCompleteMultipartUpload,
@@ -2363,8 +2327,7 @@ func (api objectAPIHandlers) CompleteMultipartUploadHandler(w http.ResponseWrite
 		ReqParams:    extractReqParams(r),
 		RespElements: extractRespElements(w),
 		UserAgent:    r.UserAgent(),
-		Host:         host,
-		Port:         port,
+		Host:         handlers.GetSourceIP(r),
 	})
 }
 

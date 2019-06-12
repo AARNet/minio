@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -120,7 +120,7 @@ func newBitrotWriter(disk StorageAPI, volume, filePath string, length int64, alg
 	if algo == HighwayHash256S {
 		return newStreamingBitrotWriter(disk, volume, filePath, length, algo, shardSize)
 	}
-	return newWholeBitrotWriter(disk, volume, filePath, length, algo, shardSize)
+	return newWholeBitrotWriter(disk, volume, filePath, algo, shardSize)
 }
 
 func newBitrotReader(disk StorageAPI, bucket string, filePath string, tillOffset int64, algo BitrotAlgorithm, sum []byte, shardSize int64) io.ReaderAt {
@@ -133,7 +133,7 @@ func newBitrotReader(disk StorageAPI, bucket string, filePath string, tillOffset
 // Close all the readers.
 func closeBitrotReaders(rs []io.ReaderAt) {
 	for _, r := range rs {
-		if br, ok := r.(*streamingBitrotReader); ok {
+		if br, ok := r.(io.Closer); ok {
 			br.Close()
 		}
 	}
@@ -142,7 +142,7 @@ func closeBitrotReaders(rs []io.ReaderAt) {
 // Close all the writers.
 func closeBitrotWriters(ws []io.Writer) {
 	for _, w := range ws {
-		if bw, ok := w.(*streamingBitrotWriter); ok {
+		if bw, ok := w.(io.Closer); ok {
 			bw.Close()
 		}
 	}

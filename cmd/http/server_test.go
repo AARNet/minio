@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -75,10 +75,6 @@ func TestNewServer(t *testing.T) {
 
 		if server.TCPKeepAliveTimeout != DefaultTCPKeepAliveTimeout {
 			t.Fatalf("Case %v: server.TCPKeepAliveTimeout: expected: %v, got: %v", (i + 1), DefaultTCPKeepAliveTimeout, server.TCPKeepAliveTimeout)
-		}
-
-		if server.listenerMutex == nil {
-			t.Fatalf("Case %v: server.listenerMutex: expected: <non-nil>, got: <nil>", (i + 1))
 		}
 
 		if server.ReadTimeout != DefaultReadTimeout {

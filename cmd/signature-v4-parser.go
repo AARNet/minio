@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -66,7 +66,7 @@ func getReqAccessKeyV4(r *http.Request, region string, stype serviceType) (auth.
 
 // parse credentialHeader string into its structured form.
 func parseCredentialHeader(credElement string, region string, stype serviceType) (ch credentialHeader, aec APIErrorCode) {
-	creds := strings.Split(strings.TrimSpace(credElement), "=")
+	creds := strings.SplitN(strings.TrimSpace(credElement), "=", 2)
 	if len(creds) != 2 {
 		return ch, ErrMissingFields
 	}

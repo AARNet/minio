@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,11 +26,22 @@ import (
 	"time"
 )
 
+// HealScanMode represents the type of healing scan
+type HealScanMode int
+
+const (
+	// HealNormalScan checks if parts are present and not outdated
+	HealNormalScan HealScanMode = iota
+	// HealDeepScan checks for parts bitrot checksums
+	HealDeepScan
+)
+
 // HealOpts - collection of options for a heal sequence
 type HealOpts struct {
-	Recursive bool `json:"recursive"`
-	DryRun    bool `json:"dryRun"`
-	Remove    bool `json:"remove"`
+	Recursive bool         `json:"recursive"`
+	DryRun    bool         `json:"dryRun"`
+	Remove    bool         `json:"remove"`
+	ScanMode  HealScanMode `json:"scanMode"`
 }
 
 // HealStartSuccess - holds information about a successfully started

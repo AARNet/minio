@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage (C) 2016, 2018 Minio, Inc.
+ * MinIO Cloud Storage (C) 2016, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ export const SideBar = ({ sidebarOpen, clickOutside }) => {
       >
         <div className="fes-header clearfix hidden-sm hidden-xs">
           <img src={logo} alt="" />
-          <h2>Minio Browser</h2>
+          <h2>MinIO Browser</h2>
         </div>
         <div className="fes-list">
           {web.LoggedIn() && <BucketSearch />}

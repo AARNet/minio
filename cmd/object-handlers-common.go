@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,14 +18,17 @@ package cmd
 
 import (
 	"context"
-	"net"
 	"net/http"
-	"strings"
+	"regexp"
 	"time"
 
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/handlers"
+)
+
+var (
+	etagRegex = regexp.MustCompile("\"*?([^\"]*?)\"*?$")
 )
 
 // Validates the preconditions for CopyObjectPart, returns true if CopyObjectPart
@@ -68,7 +71,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 		w.Header().Set("Last-Modified", objInfo.ModTime.UTC().Format(http.TimeFormat))
 
 		if objInfo.ETag != "" {
-			w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
+			w.Header()["ETag"] = []string{"\"" + objInfo.ETag + "\""}
 		}
 	}
 	// x-amz-copy-source-if-modified-since: Return the object only if it has been modified
@@ -99,13 +102,14 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 		}
 	}
 
-	ssec := crypto.SSECopy.IsRequested(r.Header)
+	shouldDecryptEtag := crypto.SSECopy.IsRequested(r.Header) && !crypto.IsMultiPart(objInfo.UserDefined)
+
 	// x-amz-copy-source-if-match : Return the object only if its entity tag (ETag) is the
 	// same as the one specified; otherwise return a 412 (precondition failed).
 	ifMatchETagHeader := r.Header.Get("x-amz-copy-source-if-match")
 	if ifMatchETagHeader != "" {
 		etag := objInfo.ETag
-		if ssec {
+		if shouldDecryptEtag {
 			etag = encETag[len(encETag)-32:]
 		}
 		if objInfo.ETag != "" && !isETagEqual(etag, ifMatchETagHeader) {
@@ -121,7 +125,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 	ifNoneMatchETagHeader := r.Header.Get("x-amz-copy-source-if-none-match")
 	if ifNoneMatchETagHeader != "" {
 		etag := objInfo.ETag
-		if ssec {
+		if shouldDecryptEtag {
 			etag = encETag[len(encETag)-32:]
 		}
 		if objInfo.ETag != "" && isETagEqual(etag, ifNoneMatchETagHeader) {
@@ -162,7 +166,7 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Last-Modified", objInfo.ModTime.UTC().Format(http.TimeFormat))
 
 		if objInfo.ETag != "" {
-			w.Header().Set("ETag", "\""+objInfo.ETag+"\"")
+			w.Header()["ETag"] = []string{"\"" + objInfo.ETag + "\""}
 		}
 	}
 	// If-Modified-Since : Return the object only if it has been modified since the specified time,
@@ -230,8 +234,7 @@ func ifModifiedSince(objTime time.Time, givenTime time.Time) bool {
 // canonicalizeETag returns ETag with leading and trailing double-quotes removed,
 // if any present
 func canonicalizeETag(etag string) string {
-	canonicalETag := strings.TrimPrefix(etag, "\"")
-	return strings.TrimSuffix(canonicalETag, "\"")
+	return etagRegex.ReplaceAllString(etag, "$1")
 }
 
 // isETagEqual return true if the canonical representations of two ETag strings
@@ -253,9 +256,6 @@ func deleteObject(ctx context.Context, obj ObjectLayer, cache CacheObjectLayer, 
 		return err
 	}
 
-	// Get host and port from Request.RemoteAddr.
-	host, port, _ := net.SplitHostPort(handlers.GetSourceIP(r))
-
 	// Notify object deleted event.
 	sendEvent(eventArgs{
 		EventName:  event.ObjectRemovedDelete,
@@ -265,8 +265,7 @@ func deleteObject(ctx context.Context, obj ObjectLayer, cache CacheObjectLayer, 
 		},
 		ReqParams: extractReqParams(r),
 		UserAgent: r.UserAgent(),
-		Host:      host,
-		Port:      port,
+		Host:      handlers.GetSourceIP(r),
 	})
 
 	return nil

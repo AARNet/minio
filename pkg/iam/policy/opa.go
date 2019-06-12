@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 
@@ -121,16 +122,36 @@ func (o *Opa) IsAllowed(args Args) bool {
 	}
 	defer o.args.CloseRespFn(resp.Body)
 
-	// Handle OPA response
-	type opaResponse struct {
+	// Read the body to be saved later.
+	opaRespBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return false
+	}
+
+	// Handle large OPA responses when OPA URL is of
+	// form http://localhost:8181/v1/data/httpapi/authz
+	type opaResultAllow struct {
 		Result struct {
 			Allow bool `json:"allow"`
 		} `json:"result"`
 	}
-	var result opaResponse
-	if err = json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false
+
+	// Handle simpler OPA responses when OPA URL is of
+	// form http://localhost:8181/v1/data/httpapi/authz/allow
+	type opaResult struct {
+		Result bool `json:"result"`
 	}
 
-	return result.Result.Allow
+	respBody := bytes.NewReader(opaRespBytes)
+
+	var result opaResult
+	if err = json.NewDecoder(respBody).Decode(&result); err != nil {
+		respBody.Seek(0, 0)
+		var resultAllow opaResultAllow
+		if err = json.NewDecoder(respBody).Decode(&resultAllow); err != nil {
+			return false
+		}
+		return resultAllow.Result.Allow
+	}
+	return result.Result
 }

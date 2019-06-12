@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2019 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -549,11 +549,12 @@ func timestampCast(v *Value) (t time.Time, _ error) {
 
 func boolCast(v *Value) (b bool, _ error) {
 	sToB := func(s string) (bool, error) {
-		if s == "true" {
+		switch s {
+		case "true":
 			return true, nil
-		} else if s == "false" {
+		case "false":
 			return false, nil
-		} else {
+		default:
 			return false, errCastFailure("cannot cast to Bool")
 		}
 	}

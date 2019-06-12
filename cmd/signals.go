@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2015, 2016, 2017, 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2015, 2016, 2017, 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -74,7 +74,6 @@ func handleSignals() {
 
 			exit(err == nil && oerr == nil)
 		case osSignal := <-globalOSSignalCh:
-			stopHTTPTrace()
 			logger.Info("Exiting on signal: %s", strings.ToUpper(osSignal.String()))
 			exit(stopProcess())
 		case signal := <-globalServiceSignalCh:
@@ -83,14 +82,12 @@ func handleSignals() {
 				// Ignore this at the moment.
 			case serviceRestart:
 				logger.Info("Restarting on service signal")
-				stopHTTPTrace()
 				stop := stopProcess()
 				rerr := restartProcess()
 				logger.LogIf(context.Background(), rerr)
 				exit(stop && rerr == nil)
 			case serviceStop:
 				logger.Info("Stopping on service signal")
-				stopHTTPTrace()
 				exit(stopProcess())
 			}
 		}

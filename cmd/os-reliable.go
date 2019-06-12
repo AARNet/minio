@@ -1,5 +1,5 @@
 /*
- * Minio Cloud Storage, (C) 2018 Minio, Inc.
+ * MinIO Cloud Storage, (C) 2018 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -142,6 +142,10 @@ func renameAll(srcFilePath, dstFilePath string) (err error) {
 			return fmt.Errorf("%s (%s)->(%s)", errCrossDeviceLink, srcFilePath, dstFilePath)
 		case os.IsNotExist(err):
 			return errFileNotFound
+		case os.IsExist(err):
+			// This is returned only when destination is a directory and we
+			// are attempting a rename from file to directory.
+			return errIsNotRegular
 		default:
 			return err
 		}
