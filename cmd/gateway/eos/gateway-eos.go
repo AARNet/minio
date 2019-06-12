@@ -613,6 +613,16 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 	return nil
 }
 
+func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error) {
+	e.Log(2, "S3cmd: DeleteObjects: %s", bucket)
+
+	errs := make([]error, len(objects))
+	for idx, object := range objects {
+		errs[idx] = e.DeleteObject(ctx, bucket, object)
+	}
+	return errs, nil
+}
+
 // GetObject - reads an object from EOS
 func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string, opts minio.ObjectOptions) error {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
@@ -1087,7 +1097,7 @@ func (e *eosObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker
 }
 
 // HealObject - no-op for fs.
-func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool, remove bool) (results madmin.HealResultItem, err error) {
+func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool, remove bool, scanMode madmin.HealScanMode) (results madmin.HealResultItem, err error) {
 	e.Log(2, "S3cmd: HealObject:")
 	return results, minio.NotImplemented{}
 }
