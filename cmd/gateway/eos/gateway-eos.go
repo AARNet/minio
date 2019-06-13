@@ -996,10 +996,10 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	}
 
 	path := strings.TrimSuffix(bucket+"/"+prefix, "/")
+
 	if prefix != "" {
 		prefix = strings.TrimSuffix(prefix, "/") + "/"
 	}
-
 	//if eosDirCache.path != path || len(eosDirCache.objects) == 0 {
 	e.Log(3, "NEW CACHE for %s", path)
 	eosDirCache.path = path
@@ -1009,40 +1009,64 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	}
 	//}
 
-	for _, obj := range eosDirCache.objects {
+	// No objects, in the given path - let's treat it like an object if it doesn't end in a delimiter
+	if len(eosDirCache.objects) == 0 {
+		e.Log(3, "No objects found for path %s, treating as an object", path)
 		var stat *eosFileStat
-		stat, err = e.EOSfsStat(path + "/" + obj)
+		prefix = strings.TrimSuffix(prefix, "/")
+		stat, err = e.EOSfsStat(path)
 
-		if stat != nil && !strings.HasSuffix(obj, ".minio.sys") {
-			e.Log(3, "%s, %s, %s = %s", bucket, prefix, obj, bucket+"/"+prefix+obj)
-			e.Log(3, "%s <=> %s etag:%s content-type:%s", path+"/"+obj, prefix+obj, stat.ETag(), stat.ContentType())
+                if stat != nil && !strings.HasSuffix(path, ".minio.sys") {
 			o := minio.ObjectInfo{
 				Bucket:      bucket,
-				Name:        prefix + obj,
+				Name:        prefix,
 				ModTime:     stat.ModTime(),
 				Size:        stat.Size(),
 				IsDir:       stat.IsDir(),
 				ETag:        stat.ETag(),
 				ContentType: stat.ContentType(),
 			}
-
 			result.Objects = append(result.Objects, o)
+		}
+		// reset cache
+		eosDirCache.objects = nil
+		eosDirCache.objects = []string{}
+	} else {
+		for _, obj := range eosDirCache.objects {
+			var stat *eosFileStat
+			objpath := path + "/" + obj
+			stat, err = e.EOSfsStat(objpath)
 
-			if delimiter == "" { //recursive
-				if stat.IsDir() {
-					e.Log(3, "ASKING FOR -r on : %s", prefix+obj)
+			if stat != nil && !strings.HasSuffix(obj, ".minio.sys") {
+				e.Log(3, "%s, %s, %s = %s", bucket, prefix, obj, bucket+"/"+prefix+obj)
+				e.Log(3, "%s <=> %s etag:%s content-type:%s", objpath, prefix+obj, stat.ETag(), stat.ContentType())
+				o := minio.ObjectInfo{
+					Bucket:      bucket,
+					Name:        prefix + obj,
+					ModTime:     stat.ModTime(),
+					Size:        stat.Size(),
+					IsDir:       stat.IsDir(),
+					ETag:        stat.ETag(),
+					ContentType: stat.ContentType(),
+				}
 
-					subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
-					if err != nil {
-						return result, err
-					}
-					for _, subobj := range subdir.Objects {
-						result.Objects = append(result.Objects, subobj)
+				result.Objects = append(result.Objects, o)
+
+				if delimiter == "" { //recursive
+					if stat.IsDir() {
+						e.Log(3, "ASKING FOR -r on : %s", prefix+obj)
+						subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
+						if err != nil {
+							return result, err
+						}
+						for _, subobj := range subdir.Objects {
+							result.Objects = append(result.Objects, subobj)
+						}
 					}
 				}
+			} else {
+				e.Log(1, "ERROR: ListObjects - can not stat %s", objpath)
 			}
-		} else {
-			e.Log(1, "ERROR: ListObjects - can not stat %s", path+"/"+obj)
 		}
 	}
 
