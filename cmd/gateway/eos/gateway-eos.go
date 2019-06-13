@@ -71,7 +71,7 @@ ENVIRONMENT VARIABLES:
      MINIO_DOMAIN: To enable virtual-host-style requests, set this value to Minio host domain name.
 
   EOS:
-     EOSLOGLEVEL: 0..n 0=off 100000000000000000000000=lots of logs
+     EOSLOGLEVEL: 0..n 0=off, 1=errors only, 2=errors/info, 3+ = "debug"
      EOS: url to eos
      EOSUSER: eos username
      EOSUID: eos user uid
@@ -367,10 +367,10 @@ func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio
 	e.Log(2, "S3cmd: GetBucketInfo %s", bucket)
 
 	if bi, ok := eosBucketCache[bucket]; ok {
-		e.Log(4, "bucket cache hit: %s", bucket)
+		e.Log(3, "bucket cache hit: %s", bucket)
 		return bi, nil
 	}
-	e.Log(4, "bucket cache miss: %s", bucket)
+	e.Log(3, "bucket cache miss: %s", bucket)
 	stat, err := e.EOSfsStat(bucket)
 
 	if err == nil {
@@ -421,7 +421,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 
 	eosDirCache.path = ""
 
-	e.Log(4, "BucketCache: %+v", eosBucketCache)
+	e.Log(3, "BucketCache: %+v", eosBucketCache)
 
 	return buckets, err
 }
@@ -653,7 +653,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	stat, err := e.EOSfsStat(path)
 
 	if err != nil {
-		e.Log(4, "%+v", err)
+		e.Log(3, "%+v", err)
 		err = minio.ObjectNotFound{
 			Bucket: bucket,
 			Object: object}
@@ -1001,7 +1001,7 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	}
 
 	//if eosDirCache.path != path || len(eosDirCache.objects) == 0 {
-	e.Log(2, "NEW CACHE for %s", path)
+	e.Log(3, "NEW CACHE for %s", path)
 	eosDirCache.path = path
 	eosDirCache.objects, err = e.EOSreadDir(path, true)
 	if err != nil {
@@ -1014,7 +1014,7 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 		stat, err = e.EOSfsStat(path + "/" + obj)
 
 		if stat != nil && !strings.HasSuffix(obj, ".minio.sys") {
-			e.Log(4, "%s, %s, %s = %s", bucket, prefix, obj, bucket+"/"+prefix+obj)
+			e.Log(3, "%s, %s, %s = %s", bucket, prefix, obj, bucket+"/"+prefix+obj)
 			e.Log(3, "%s <=> %s etag:%s content-type:%s", path+"/"+obj, prefix+obj, stat.ETag(), stat.ContentType())
 			o := minio.ObjectInfo{
 				Bucket:      bucket,
@@ -1320,10 +1320,10 @@ func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface
 	slot := e.procuserJobs.waitForSlot()
 
 	eosurl := fmt.Sprintf("http://%s:8000/proc/user/?%s", e.url, cmd)
-	e.Log(4, "curl '%s'", eosurl)
+	e.Log(3, "curl '%s'", eosurl)
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			e.Log(4, "http client wants to redirect")
+			e.Log(3, "http client wants to redirect")
 			return nil
 		},
 		Timeout: 0,
@@ -1354,29 +1354,26 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 	e.Log(2, "EOScmd: procuser.fileinfo %s", eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: EOSreadDir 1 can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSreadDir can not json.Unmarshal() MGM response")
 		return nil, err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.fileinfo %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR: EOS procuser.fileinfo %s : %s", eospath, e.interfaceToString(m["errormsg"]))
 		return nil, eoserrFileNotFound
 	}
 
 	if c, ok := m["children"]; ok {
 		err = json.Unmarshal([]byte(body), &c)
 		if err != nil {
-			e.Log(1, "ERROR: EOSreadDir 2 can not json.Unmarshal()")
+			e.Log(1, "ERROR: EOSreadDir can not json.Unmarshal() children")
 			return nil, err
 		}
 
-		//e.Log(4,"%+v", c)
 		eospath = strings.TrimSuffix(eospath, "/") + "/"
 		children := m["children"].([]interface{})
 		for _, childi := range children {
-			//e.Log(4,"object: %+v", childi)
 			child, _ := childi.(map[string]interface{})
-			//e.Log(4,"name: %s   %d", e.interfaceToString(child["name"]), e.interfaceToint64(child["mode"]))
 
 			obj := e.interfaceToString(child["name"])
 			if !strings.HasPrefix(obj, ".sys.v#.") {
@@ -1393,7 +1390,6 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 				meta["etag"] = "00000000000000000000000000000000"
 				if _, ok := child["xattr"]; ok {
 					xattr, _ := child["xattr"].(map[string]interface{})
-					//e.Log(4, "xattr: %+v", xattr)
 					if contenttype, ok := xattr["minio_contenttype"]; ok {
 						meta["contenttype"] = e.interfaceToString(contenttype)
 					}
@@ -1416,7 +1412,7 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 		}
 	}
 
-	//e.Log(5,"cache: %+v", eosFileStatCache)
+	//e.Log(3,"cache: %+v", eosFileStatCache)
 	return entries, err
 }
 
@@ -1426,10 +1422,10 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 		return nil, err
 	}
 	if fi, ok := e.EOScacheRead(eospath); ok {
-		e.Log(4, "cache hit: %s", eospath)
+		e.Log(3, "cache hit: %s", eospath)
 		return fi, nil
 	}
-	e.Log(4, "cache miss: %s", eospath)
+	e.Log(3, "cache miss: %s", eospath)
 
 	e.Log(2, "EOScmd: procuser.fileinfo %s", eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
@@ -1443,7 +1439,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	}
 
 	e.Log(3, "EOS STAT name:%s mtime:%d mode:%d size:%d", e.interfaceToString(m["name"]), e.interfaceToInt64(m["mtime"]), e.interfaceToInt64(m["mode"]), e.interfaceToInt64(m["size"]))
-	e.Log(4, "EOSfsStat return body : %s", strings.Replace(string(body), "\n", " ", -1))
+	e.Log(3, "EOSfsStat return body : %s", strings.Replace(string(body), "\n", " ", -1))
 
 	//some defaults
 	meta := make(map[string]string)
@@ -1451,7 +1447,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	meta["etag"] = "00000000000000000000000000000000"
 	if _, ok := m["xattr"]; ok {
 		xattr, _ := m["xattr"].(map[string]interface{})
-		//e.Log(4, "xattr: %+v", xattr)
+		//e.Log(3, "xattr: %+v", xattr)
 		if contenttype, ok := xattr["minio_contenttype"]; ok {
 			ct := e.interfaceToString(contenttype)
 			if ct != "" {
@@ -1512,7 +1508,6 @@ func (e *eosObjects) EOSrmdir(p string) error {
 	}
 
 	e.Log(2, "EOScmd: procuser.rm %s", eospath)
-	//_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rmdir&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
 		e.Log(1, "ERROR: can not json.Unmarshal()")
@@ -1720,7 +1715,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				e.Log(2, "http client wants to redirect")
-				e.Log(5, "%+v", req)
+				e.Log(3, "%+v", req)
 				return nil
 			},
 			Timeout: 0,
@@ -2003,7 +1998,7 @@ func (j *eosJobs) getFreeSlot() int {
 	for i := 0; i < j.max; i++ {
 		job, ok := j.jobs[i]
 		if ok {
-			j.Log(4, "%s slot %d job: %+v", j.kind, i, job)
+			j.Log(3, "%s slot %d job: %+v", j.kind, i, job)
 			if !job.busy && now-job.lastrun >= 1 {
 				slot = i
 				j.waiting--
@@ -2012,7 +2007,7 @@ func (j *eosJobs) getFreeSlot() int {
 				break
 			}
 		} else {
-			j.Log(4, "%s slot %d does not exist, creating", j.kind, i)
+			j.Log(3, "%s slot %d does not exist, creating", j.kind, i)
 			slot = i
 			j.waiting--
 			newJob := eosJob{
@@ -2038,7 +2033,7 @@ func (j *eosJobs) waitForSlot() int {
 
 	//wait for task to be not busy
 	for amountRunning >= j.max {
-		j.Log(4, "%s AmountRunning >= Max (%d>=%d), AmountWaiting: %d, sleeping %dms", j.kind, amountRunning, j.max, amountWaiting, j.sleep)
+		j.Log(3, "%s AmountRunning >= Max (%d>=%d), AmountWaiting: %d, sleeping %dms", j.kind, amountRunning, j.max, amountWaiting, j.sleep)
 		time.Sleep(time.Duration(j.sleep) * time.Millisecond)
 		amountWaiting, amountRunning = j.amountRead()
 	}
@@ -2047,7 +2042,7 @@ func (j *eosJobs) waitForSlot() int {
 	for slot == -1 {
 		slot = j.getFreeSlot()
 		if slot == -1 {
-			j.Log(4, "%s slots are maxed out this second, sleeping %dms", j.kind, j.sleep)
+			j.Log(3, "%s slots are maxed out this second, sleeping %dms", j.kind, j.sleep)
 			time.Sleep(time.Duration(j.sleep) * time.Millisecond)
 		}
 	}
@@ -2058,15 +2053,15 @@ func (j *eosJobs) freeSlot(slot int) {
 	if j.max == 0 || slot == -1 {
 		return
 	}
-	j.Log(5, "%s slot %d try to free", j.kind, slot)
+	j.Log(3, "%s slot %d try to free", j.kind, slot)
 
 	j.mutex.Lock()
 	job, ok := j.jobs[slot]
 	if ok {
-		j.Log(4, "%s slot %d set to free SUCCESS", j.kind, slot)
+		j.Log(3, "%s slot %d set to free SUCCESS", j.kind, slot)
 		job.busy = false
 	} else {
-		j.Log(4, "%s slot %d set to free FAILED", j.kind, slot)
+		j.Log(3, "%s slot %d set to free FAILED", j.kind, slot)
 	}
 	defer j.mutex.Unlock()
 }
