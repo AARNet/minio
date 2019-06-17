@@ -250,7 +250,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	logger.Info("EOS SLEEP: %d", waitSleep)
 
 	logger.Info("EOS LOG LEVEL: %d", loglevel)
-
+/*
 	procuserJobs := eosJobs{
 		kind:     "procuser",
 		jobs:     make(map[int]*eosJob),
@@ -286,7 +286,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		sleep:    waitSleep,
 		loglevel: loglevel,
 	}
-
+*/
 	return &eosObjects{
 		loglevel:     loglevel,
 		url:          os.Getenv("EOS"),
@@ -300,10 +300,10 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readonly:     readonly,
 		readmethod:   readmethod,
 		waitSleep:    waitSleep,
-		procuserJobs: procuserJobs,
+/*		procuserJobs: procuserJobs,
 		webdavJobs:   webdavJobs,
 		xrdcpJobs:    xrdcpJobs,
-		xrootdJobs:   xrootdJobs,
+		xrootdJobs:   xrootdJobs, */
 		validbuckets: validbuckets,
 	}, nil
 }
@@ -327,10 +327,10 @@ type eosObjects struct {
 	readonly     bool
 	readmethod   string
 	waitSleep    int
-	procuserJobs eosJobs
+/*	procuserJobs eosJobs
 	webdavJobs   eosJobs
 	xrdcpJobs    eosJobs
-	xrootdJobs   eosJobs
+	xrootdJobs   eosJobs */
 	validbuckets bool
 }
 
@@ -1197,8 +1197,6 @@ var eoserrDiskAccessDenied = errors.New("EOS: disk access denied")
 var eoserrCantPut = errors.New("EOS: can't put")
 var eoserrFilePathBad = errors.New("EOS: bad file path")
 
-//var eoserrSetMeta = errors.New("EOS: can't set metadata")
-
 var eosfsStatMutex = sync.RWMutex{}
 
 type eosMultiPartsType struct {
@@ -1341,7 +1339,7 @@ func (e *eosObjects) EOScacheDeleteObject(bucket, object string) {
 }
 
 func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface{}, err error) {
-	slot := e.procuserJobs.waitForSlot()
+//	slot := e.procuserJobs.waitForSlot()
 
 	eosurl := fmt.Sprintf("http://%s:8000/proc/user/?%s", e.url, cmd)
 	e.Log(3, "curl '%s'", eosurl)
@@ -1361,7 +1359,7 @@ func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface
 	m = make(map[string]interface{})
 	err = json.Unmarshal([]byte(body), &m)
 
-	e.procuserJobs.freeSlot(slot)
+//	e.procuserJobs.freeSlot(slot)
 	return body, m, err
 }
 
@@ -1710,14 +1708,14 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		retry = retry + 1
 
 		if strings.IndexByte(p, '%') >= 0 {
-			slot := e.webdavJobs.waitForSlot()
+//			slot := e.webdavJobs.waitForSlot()
 
 			e.Log(2, "EOScmd: webdav.PUT : SPECIAL CASE using curl: %s", eosurl)
 			cmd := exec.Command("curl", "-L", "-X", "PUT", "--data-binary", "@-", "-H", "Remote-User: minio", "-sw", "'%{http_code}'", eosurl)
 			cmd.Stdin = bytes.NewReader(data)
 			stdoutStderr, err := cmd.CombinedOutput()
 
-			e.webdavJobs.freeSlot(slot)
+//			e.webdavJobs.freeSlot(slot)
 
 			if err != nil {
 				e.Log(1, "ERROR: can not curl %s", eosurl)
@@ -1735,7 +1733,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 			return err
 		}
 
-		slot := e.webdavJobs.waitForSlot()
+//		slot := e.webdavJobs.waitForSlot()
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				e.Log(2, "http client wants to redirect")
@@ -1750,7 +1748,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		req.ContentLength = int64(len(data))
 		req.Close = true
 		res, err := client.Do(req)
-		e.webdavJobs.freeSlot(slot)
+//		e.webdavJobs.freeSlot(slot)
 
 		if err != nil {
 			e.Log(2, "http ERROR message: %+v", err)
@@ -1783,7 +1781,7 @@ func (e *eosObjects) EOSxrootdWriteChunk(p string, offset, size int64, checksum 
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
 	e.Log(2, "EOScmd: xrootd.PUT : %s %s %d %d %s %d %d", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
-	slot := e.xrootdJobs.waitForSlot()
+//	slot := e.xrootdJobs.waitForSlot()
 
 	cmd := exec.Command(e.scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.uid, e.gid)
 	cmd.Stdin = bytes.NewReader(data)
@@ -1792,7 +1790,7 @@ func (e *eosObjects) EOSxrootdWriteChunk(p string, offset, size int64, checksum 
 		e.Log(1, "ERROR: can not %s %s %d %d %s %s %s", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
 		e.Log(2, "%s", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
 	}
-	e.xrootdJobs.freeSlot(slot)
+//	e.xrootdJobs.freeSlot(slot)
 
 	return err
 }
@@ -1810,7 +1808,7 @@ func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
 	}
 
 	e.Log(2, "EOScmd: xrdcp.PUT : %s", eosurl)
-	slot := e.xrdcpJobs.waitForSlot()
+//	slot := e.xrdcpJobs.waitForSlot()
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
@@ -1821,7 +1819,7 @@ func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
 	if output != "" {
 		e.Log(2, "%s", output)
 	}
-	e.xrdcpJobs.freeSlot(slot)
+//	e.xrdcpJobs.freeSlot(slot)
 
 	return err
 }
@@ -1835,7 +1833,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 	if e.readmethod == "xrootd" {
 		eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
 		e.Log(2, "EOScmd: xrootd.GET : %s", eosurl)
-		slot := e.xrootdJobs.waitForSlot()
+//		slot := e.xrootdJobs.waitForSlot()
 
 		cmd := exec.Command(e.scripts+"/readChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(length, 10), e.uid, e.gid)
 		var stderr bytes.Buffer
@@ -1847,7 +1845,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		if errStr != "" {
 			e.Log(2, "%s", errStr)
 		}
-		e.xrootdJobs.freeSlot(slot)
+//		e.xrootdJobs.freeSlot(slot)
 	} else if e.readmethod == "xrdcp" {
 		eospath = strings.Replace(eospath, "%", "%25", -1)
 		eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s", e.url, eospath, e.uid, e.gid))
@@ -1857,7 +1855,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		}
 
 		e.Log(2, "EOScmd: xrdcp.GET : %s", eosurl)
-		slot := e.xrdcpJobs.waitForSlot()
+//		slot := e.xrdcpJobs.waitForSlot()
 
 		cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
 		var stdout bytes.Buffer
@@ -1878,7 +1876,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		stdout.Truncate(int(length))
 		stdout.WriteTo(data)
 
-		e.xrdcpJobs.freeSlot(slot)
+//		e.xrdcpJobs.freeSlot(slot)
 	} else { //webdav
 		//curl -L -X GET -H 'Remote-User: minio' -H 'Range: bytes=5-7' http://eos:8000/eos-path-to-file
 
@@ -1888,7 +1886,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		//e.Log(3,"Range: bytes=%d-%d", offset, offset+length-1)
 		e.Log(2, "EOScmd: webdav.GET : %s", eosurl)
 
-		slot := e.webdavJobs.waitForSlot()
+//		slot := e.webdavJobs.waitForSlot()
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				e.Log(2, "http client wants to redirect")
@@ -1901,7 +1899,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
 		req.Close = true
 		res, err := client.Do(req)
-		e.webdavJobs.freeSlot(slot)
+//		e.webdavJobs.freeSlot(slot)
 
 		if err != nil {
 			e.Log(2, "%+v", err)
@@ -1922,7 +1920,7 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
 	e.Log(2, "EOScmd: webdav.GET : %s", eosurl)
 
-	slot := e.webdavJobs.waitForSlot()
+//	slot := e.webdavJobs.waitForSlot()
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			e.Log(2, "http client wants to redirect")
@@ -1934,7 +1932,7 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 	req.Header.Set("Remote-User", "minio")
 	req.Close = true
 	res, err := client.Do(req)
-	e.webdavJobs.freeSlot(slot)
+//	e.webdavJobs.freeSlot(slot)
 
 	if err != nil {
 		e.Log(2, "%+v", err)
@@ -1959,7 +1957,7 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 /////////////////////////////////////////////////////////////////////////////////////////////
 //  Rate Limit
 
-type eosJob struct {
+/*type eosJob struct {
 	busy    bool
 	lastrun int64
 }
@@ -2089,3 +2087,4 @@ func (j *eosJobs) freeSlot(slot int) {
 	}
 	defer j.mutex.Unlock()
 }
+*/
