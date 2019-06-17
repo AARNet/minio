@@ -22,16 +22,16 @@ func (g *EOS) Name() string {
 
 // NewGatewayLayer returns eos gatewaylayer.
 func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
-	loglevel, ok := strconv.Atoi(os.Getenv("EOSLOGLEVEL"))
-	if ok != nil {
-		loglevel = 0
-	}
-
 	const CLR_W = "\x1b[37;1m"
 	const CLR_B = "\x1b[34;1m"
 	const CLR_Y = "\x1b[33;1m"
 	const CLR_G = "\x1b[32;1m"
 	const CLR_N = "\x1b[0m"
+
+	loglevel, ok := strconv.Atoi(os.Getenv("EOSLOGLEVEL"))
+	if ok != nil {
+		loglevel = 0
+	}
 
 	stage := os.Getenv("EOSSTAGE")
 	if stage != "" {
@@ -50,32 +50,8 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readmethod = "xrdcp"
 	}
 
-	procuserMax := 12
-	ret, err := strconv.Atoi(os.Getenv("EOSMAXPROCUSER"))
-	if err == nil {
-		procuserMax = ret
-	}
-
-	webdavMax := 0
-	ret, err = strconv.Atoi(os.Getenv("EOSMAXWEBDAV"))
-	if err == nil {
-		webdavMax = ret
-	}
-
-	xrdcpMax := 0
-	ret, err = strconv.Atoi(os.Getenv("EOSMAXXRDCP"))
-	if err == nil {
-		xrdcpMax = ret
-	}
-
-	xrootdMax := 0
-	ret, err = strconv.Atoi(os.Getenv("EOSMAXXROOTD"))
-	if err == nil {
-		xrootdMax = ret
-	}
-
 	waitSleep := 100
-	ret, err = strconv.Atoi(os.Getenv("EOSSLEEP"))
+	ret, err := strconv.Atoi(os.Getenv("EOSSLEEP"))
 	if err == nil {
 		waitSleep = ret
 	}
@@ -84,12 +60,6 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	if os.Getenv("EOSVALIDBUCKETS") == "false" {
 		validbuckets = false
 	}
-
-	logger.Info("EOS URL: %s", os.Getenv("EOS"))
-	logger.Info("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
-	logger.Info("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
-	logger.Info("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
-	logger.Info("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
 
 	if stage != "" {
 		logger.Info("EOS staging: %s", stage)
@@ -105,14 +75,15 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		logger.Info("EOS allowing invalid bucket names (RISK)")
 	}
 
+	logger.Info("EOS URL: %s", os.Getenv("EOS"))
+	logger.Info("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
+	logger.Info("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
+	logger.Info("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
+	logger.Info("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
 	logger.Info("EOS READ METHOD: %s", readmethod)
-	logger.Info("EOS /proc/user MAX: %d", procuserMax)
-	logger.Info("EOS WebDav MAX: %d", webdavMax)
-	logger.Info("EOS xrdcp MAX: %d", xrdcpMax)
-	logger.Info("EOS xrootd MAX: %d", xrootdMax)
 	logger.Info("EOS SLEEP: %d", waitSleep)
-
 	logger.Info("EOS LOG LEVEL: %d", loglevel)
+
 	return &eosObjects{
 		loglevel:     loglevel,
 		url:          os.Getenv("EOS"),
@@ -132,5 +103,5 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 // Production - eos gateway is production ready.
 func (g *EOS) Production() bool {
-	return false //hahahahaha
+	return false
 }
