@@ -117,6 +117,7 @@ func eosGatewayMain(ctx *cli.Context) {
 	minio.StartGateway(ctx, &EOS{ctx.Args().First()})
 }
 
+// TODO: Move the FileStatCache from here to it's own struct, move the methods for it in eosobjects to that struct.
 var eosFileStatCache = make(map[string]eosFileStat)
 var eosDirCache = eosDirCacheType{}
 var eosBucketCache = make(map[string]minio.BucketInfo)
