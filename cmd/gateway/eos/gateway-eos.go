@@ -126,5 +126,6 @@ var eoserrDiskAccessDenied = errors.New("EOS: disk access denied")
 var eoserrCantPut = errors.New("EOS: can't put")
 var eoserrFilePathBad = errors.New("EOS: bad file path")
 var eosfsStatMutex = sync.RWMutex{}
-var eosMultiParts = make(map[string]*eosMultiPartsType)
+var transferList = TransferList{transfer: make(map[string]*Transfer)}
+//var eosMultiParts = make(map[string]*eosMultiPartsType)
 
