@@ -751,9 +751,7 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	transferList.RLockTransfer(uploadID)
 	size := transferList.transfer[uploadID].partsCount
 	parts := transferList.transfer[uploadID].parts
-	transferList.RUnlockTransfer(uploadID)
 	result.Parts = make([]minio.PartInfo, size)
-
 	i := 0
 	for _, part := range parts {
 		if i < size {
@@ -761,6 +759,7 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 			i++
 		}
 	}
+	transferList.RUnlockTransfer(uploadID)
 
 	return result, nil
 }
