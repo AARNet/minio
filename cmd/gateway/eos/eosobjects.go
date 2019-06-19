@@ -319,7 +319,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	return e.GetObjectInfo(ctx, bucket, object, opts)
 }
 
-// DeleteObject - Deletes a blob on azure container
+// DeleteObject - Deletes a blob on EOS
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
 	e.Log(2, "S3cmd: DeleteObject: %s/%s", bucket, object)
 
@@ -331,6 +331,7 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 	return nil
 }
 
+// DeleteObjects - Deletes multiple blobs on EOS
 func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error) {
 	e.Log(2, "S3cmd: DeleteObjects: %s", bucket)
 
@@ -476,7 +477,9 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		mp.stagepath = stagepath
 	}
 
+	transferList.Lock()
 	transferList.transfer[uploadID] = &mp
+	transferList.Unlock()
 
 	e.Log(2, "NewMultipartUpload: [uploadID: %s]", uploadID)
 	return uploadID, nil
@@ -490,10 +493,11 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		return info, minio.NotImplemented{}
 	}
 
+	transfer := transferList.GetTransfer(uploadID)
 	for {
-		transferList.RLockTransfer(uploadID)
-		parts := transferList.transfer[uploadID].parts
-		transferList.RUnlockTransfer(uploadID)
+		transfer.RLock()
+		parts := transfer.parts
+		transfer.RUnlock()
 
 		if parts != nil {
 			break
@@ -513,20 +517,20 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		Size:         size,
 	}
 
-	transferList.LockTransfer(uploadID)
-	transferList.transfer[uploadID].parts[partID] = newPart
-	transferList.UnlockTransfer(uploadID)
+	transfer.Lock()
+	transfer.parts[partID] = newPart
+	transfer.Unlock()
 
 	if partID == 1 {
-		transferList.LockTransfer(uploadID)
-		transferList.transfer[uploadID].firstByte = buf[0]
-		transferList.transfer[uploadID].chunkSize = size
-		transferList.UnlockTransfer(uploadID)
+		transfer.Lock()
+		transfer.firstByte = buf[0]
+		transfer.chunkSize = size
+		transfer.Unlock()
 	} else {
 		for {
-			transferList.RLockTransfer(uploadID)
-			chunksize := transferList.transfer[uploadID].chunkSize
-			transferList.RUnlockTransfer(uploadID)
+			transfer.RLock()
+			chunksize := transfer.chunkSize
+			transfer.RUnlock()
 
 			if chunksize != 0 {
 				break
@@ -536,11 +540,11 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 	}
 
-	transferList.LockTransfer(uploadID)
-	transferList.transfer[uploadID].partsCount++
-	transferList.transfer[uploadID].AddToSize(size)
-	chunksize := transferList.transfer[uploadID].chunkSize
-	transferList.UnlockTransfer(uploadID)
+	transfer.Lock()
+	transfer.partsCount++
+	transfer.AddToSize(size)
+	chunksize := transfer.chunkSize
+	transfer.Unlock()
 
 	offset := chunksize * int64(partID-1)
 	e.Log(3, "PutObjectPart offset [partID: %d, offset: %d]", (partID - 1), offset)
@@ -548,9 +552,9 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	if e.stage != "" { //staging
 		e.Log(3, "PutObjectPart Staging")
 
-		transferList.LockTransfer(uploadID)
-		stagepath := transferList.transfer[uploadID].stagepath
-		transferList.UnlockTransfer(uploadID)
+		transfer.RLock()
+		stagepath := transfer.stagepath
+		transfer.RUnlock()
 
 		f, err := os.OpenFile(e.stage+"/"+stagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
@@ -570,21 +574,23 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	}
 
 	go func() {
+		transfer := transferList.GetTransfer(uploadID)
 		for {
-			transferList.RLockTransfer(uploadID)
-			md5PartID := transferList.transfer[uploadID].md5PartID
-			transferList.RUnlockTransfer(uploadID)
-
-			if md5PartID == partID {
-				break
+			if transfer != nil {
+				transfer.RLock()
+				md5PartID := transfer.md5PartID
+				transfer.RUnlock()
+				if md5PartID == partID {
+					break
+				}
+				e.Log(3, "PutObjectPart waiting for md5PartID = %d, currently = %d", md5PartID, partID)
 			}
-			e.Log(3, "PutObjectPart waiting for md5PartID = %d, currently = %d", md5PartID, partID)
 			e.EOSsleep()
 		}
-		transferList.LockTransfer(uploadID)
-		transferList.transfer[uploadID].md5.Write(buf)
-		transferList.transfer[uploadID].md5PartID++
-		transferList.UnlockTransfer(uploadID)
+		transfer.Lock()
+		transfer.md5.Write(buf)
+		transfer.md5PartID++
+		transfer.Unlock()
 	}()
 
 	return newPart, nil
@@ -592,10 +598,11 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 
 // CompleteMultipartUpload
 func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	transferList.RLockTransfer(uploadID)
-	size := transferList.transfer[uploadID].size
-	firstByte := transferList.transfer[uploadID].firstByte
-	transferList.RUnlockTransfer(uploadID)
+	transfer := transferList.GetTransfer(uploadID)
+	transfer.RLock()
+	size := transfer.size
+	firstByte := transfer.firstByte
+	transfer.RUnlock()
 	e.Log(2, "S3cmd: CompleteMultipartUpload: %s size : %d firstByte : %d", uploadID, size, firstByte)
 
 	if e.readonly {
@@ -603,22 +610,20 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 	}
 
 	for {
-		transferList.RLockTransfer(uploadID)
-		md5PartID := transferList.transfer[uploadID].md5PartID
-		partsCount := transferList.transfer[uploadID].partsCount+1
-		transferList.RUnlockTransfer(uploadID)
-		if md5PartID == partsCount {
+		transfer.RLock()
+		if transfer.md5PartID == transfer.partsCount+1 {
 			break
 		}
-		e.Log(3, "CompleteMultipartUpload waiting for all md5Parts, %d remaining", partsCount-md5PartID)
+		e.Log(3, "CompleteMultipartUpload waiting for all md5Parts, %d remaining", transfer.partsCount+1-transfer.md5PartID)
+		transfer.RUnlock()
 		e.EOSsleep()
 	}
 
-	transferList.RLockTransfer(uploadID)
-	etag := hex.EncodeToString(transferList.transfer[uploadID].md5.Sum(nil))
-	contenttype := transferList.transfer[uploadID].contenttype
-	stagepath := transferList.transfer[uploadID].stagepath
-	transferList.RUnlockTransfer(uploadID)
+	transfer.RLock()
+	etag := hex.EncodeToString(transfer.md5.Sum(nil))
+	contenttype := transfer.contenttype
+	stagepath := transfer.stagepath
+	transfer.RUnlock()
 
 	e.Log(3, "CompleteMultipartUpload: [etag: %s]", etag)
 
@@ -676,9 +681,10 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 			e.messagebusAddPutJob(uploadID)
 		}()
 	} else { //use xrootd
-		transferList.RLockTransfer(uploadID)
-		firstbyte := []byte{transferList.transfer[uploadID].firstByte}
-		transferList.RUnlockTransfer(uploadID)
+		transfer.RLock()
+		firstbyte := []byte{transfer.firstByte}
+		transfer.RUnlock()
+
 		err = e.EOSxrootdWriteChunk(uploadID, 0, size, "1", firstbyte)
 		if err != nil {
 			e.Log(1, "ERROR: CompleteMultipartUpload: EOSwriteChunk: %+v", err)
@@ -726,9 +732,11 @@ func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, u
 	}
 
 	if e.stage != "" && transferList.TransferExists(uploadID) {
-		transferList.RLockTransfer(uploadID)
-		stagepath := transferList.transfer[uploadID].stagepath
-		transferList.RUnlockTransfer(uploadID)
+		transfer := transferList.GetTransfer(uploadID)
+		transfer.RLock()
+		stagepath := transfer.stagepath
+		transfer.RUnlock()
+
 		os.RemoveAll(e.stage + "/" + stagepath)
 	}
 
@@ -748,9 +756,10 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.MaxParts = maxParts
 	result.PartNumberMarker = partNumberMarker
 
-	transferList.RLockTransfer(uploadID)
-	size := transferList.transfer[uploadID].partsCount
-	parts := transferList.transfer[uploadID].parts
+	transfer := transferList.GetTransfer(uploadID)
+	transfer.RLock()
+	size := transfer.partsCount
+	parts := transfer.parts
 	result.Parts = make([]minio.PartInfo, size)
 	i := 0
 	for _, part := range parts {
@@ -759,7 +768,7 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 			i++
 		}
 	}
-	transferList.RUnlockTransfer(uploadID)
+	transfer.RUnlock()
 
 	return result, nil
 }
@@ -871,8 +880,9 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 	return result, nil
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////
-//  Don't think we need this...
+/* 
+ *  Methods that are not implemented
+ */
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
@@ -915,6 +925,10 @@ func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool,
 	e.Log(2, "S3cmd: HealBucket:")
 	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
+
+/*
+ * Helpers
+ */
 
 func (e *eosObjects) interfaceToInt64(in interface{}) int64 {
 	if in == nil {
