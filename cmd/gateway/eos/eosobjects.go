@@ -1439,7 +1439,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				e.Log(2, "http client wants to redirect")
+				e.Log(3, "http client wants to redirect")
 				e.Log(3, "%+v", req)
 				return nil
 			},
@@ -1453,8 +1453,10 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		res, err := client.Do(req)
 
 		if err != nil {
-			e.Log(2, "http ERROR message: %+v", err)
-			e.Log(2, "http ERROR response: %+v", res)
+			e.Log(3, "http ERROR message: %+v", err)
+			if res != nil {
+				e.Log(3, "http ERROR response: %+v", res)
+			}
 
 			//req.URL.RawPath = strings.Replace(req.URL.RawPath[:strings.IndexByte(req.URL.RawPath, '?')], "%", "%25", -1) + "?" + req.URL.RawQuery
 
@@ -1463,7 +1465,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		}
 		defer res.Body.Close()
 		if res.StatusCode != 201 {
-			e.Log(2, "http StatusCode != 201: %+v", res)
+			e.Log(3, "http StatusCode != 201: %+v", res)
 			err = eoserrCantPut
 			e.EOSsleep()
 			continue
@@ -1472,7 +1474,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		e.messagebusAddPutJob(p)
 		return err
 	}
-	e.Log(1, "ERROR: EOSput failed %d times", maxRetry)
+	e.Log(1, "ERROR: EOSput failed %d times. Last error: %+v", maxRetry, err)
 	return err
 }
 
