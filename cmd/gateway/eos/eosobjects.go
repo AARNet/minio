@@ -291,7 +291,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	}
 
 	buf, _ := ioutil.ReadAll(data)
-	etag := hex.EncodeToString(data.MD5Current())
+	etag := data.MD5CurrentHexString()
 	dir := bucket + "/" + filepath.Dir(object)
 	objectpath := bucket+"/"+object
 
@@ -509,7 +509,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 
 	size := data.Size()
 	buf, _ := ioutil.ReadAll(data)
-	etag := hex.EncodeToString(data.MD5Current())
+	etag := data.MD5CurrentHexString()
 
 	newPart := minio.PartInfo{
 		PartNumber:   partID,
@@ -1374,6 +1374,7 @@ func (e *eosObjects) EOSrename(from, to string) error {
 
 func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	if key == "" || value == "" {
+		e.Log(3, "procuser.attr.set key or value is empty. [key: %s, value: %s]", key, value)
 		//dont bother setting if we don't get what we need
 		return nil
 	}
