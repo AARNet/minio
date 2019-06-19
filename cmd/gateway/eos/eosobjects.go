@@ -468,11 +468,12 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		stagepath := hex.EncodeToString(hasher.Sum(nil))
 
 		//make sure it is clear of older junk
-		os.RemoveAll(e.stage + "/" + stagepath)
+		absstagepath := e.stage + "/" + stagepath
+		os.RemoveAll(absstagepath)
 
-		err = os.MkdirAll(e.stage+"/"+stagepath, 0700)
+		err = os.MkdirAll(absstagepath, 0700)
 		if err != nil {
-			e.Log(2, "MKDIR %s FAILED %+v", e.stage+"/"+stagepath, err)
+			e.Log(2, "MKDIR %s FAILED %+v", absstagepath, err)
 		}
 		mp.stagepath = stagepath
 	}
@@ -555,8 +556,12 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		transfer.RLock()
 		stagepath := transfer.stagepath
 		transfer.RUnlock()
+		absstagepath := e.stage+"/"+stagepath
 
-		f, err := os.OpenFile(e.stage+"/"+stagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if _, err := os.Stat(absstagepath); os.IsNotExist(err) {
+			err = os.MkdirAll(absstagepath, 0700)
+		}
+		f, err := os.OpenFile(absstagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			e.Log(1, "ERROR: Write ContentType: %+v", err)
 			return newPart, err
