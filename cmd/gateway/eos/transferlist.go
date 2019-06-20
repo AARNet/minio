@@ -7,6 +7,10 @@ type TransferList struct {
 	transfer map[string]*Transfer
 }
 
+func (p TransferList) AddTransfer(id string, t *Transfer) {
+	p.transfer[id] = t
+}
+
 func (p TransferList) GetTransfer(id string) *Transfer {
 	p.RLock()
 	defer p.RUnlock()
