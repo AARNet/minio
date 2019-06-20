@@ -480,10 +480,9 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		mp.stagepath = stagepath
 	}
 
-//	transferList.Lock()
-//	transferList.transfer[uploadID] = &mp
-	transferList.AddTransfer(uploadID, &mp)
-//	transferList.Unlock()
+	transferList.Lock()
+	transferList.transfer[uploadID] = &mp
+	transferList.Unlock()
 
 	e.Log(2, "NewMultipartUpload: [uploadID: %s]", uploadID)
 	return uploadID, nil
