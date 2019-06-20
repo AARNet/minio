@@ -291,7 +291,9 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	}
 
 	buf, _ := ioutil.ReadAll(data)
-	etag := data.MD5CurrentHexString()
+	hasher := md5.New()
+	hasher.Write([]byte(buf))
+	etag := hex.EncodeToString(hasher.Sum(nil))
 	dir := bucket + "/" + filepath.Dir(object)
 	objectpath := bucket+"/"+object
 
@@ -478,9 +480,10 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		mp.stagepath = stagepath
 	}
 
-	transferList.Lock()
-	transferList.transfer[uploadID] = &mp
-	transferList.Unlock()
+//	transferList.Lock()
+//	transferList.transfer[uploadID] = &mp
+	transferList.AddTransfer(uploadID, &mp)
+//	transferList.Unlock()
 
 	e.Log(2, "NewMultipartUpload: [uploadID: %s]", uploadID)
 	return uploadID, nil
