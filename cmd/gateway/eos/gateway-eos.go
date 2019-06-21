@@ -118,6 +118,7 @@ func eosGatewayMain(ctx *cli.Context) {
 }
 
 // TODO: Move the FileStatCache from here to it's own struct, move the methods for it in eosobjects to that struct.
+// TODO: Move the EOS filesystem interactions to it's own struct
 var eosFileStatCache = make(map[string]eosFileStat)
 var eosDirCache = eosDirCacheType{}
 var eosBucketCache = make(map[string]minio.BucketInfo)

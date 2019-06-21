@@ -575,13 +575,14 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 		f.Close()
 	} else { // use xrootd
-		go func() {
+//		go func() {
 			err = e.EOSxrootdWriteChunk(uploadID, offset, offset+size, "0", buf)
-		}()
+//		}()
 	}
 
-	go func() {
-		transfer := transferList.GetTransfer(uploadID)
+//	go func() {
+//		transfer := transferList.GetTransfer(uploadID)
+		transfer = transferList.GetTransfer(uploadID)
 		for {
 			if transfer != nil {
 				transfer.RLock()
@@ -598,7 +599,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		transfer.md5.Write(buf)
 		transfer.md5PartID++
 		transfer.Unlock()
-	}()
+//	}()
 
 	return newPart, nil
 }
@@ -1472,6 +1473,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 			continue
 		}
 		defer res.Body.Close()
+
 		if res.StatusCode != 201 {
 			e.Log(3, "http StatusCode != 201: %+v", res)
 			err = eoserrCantPut
