@@ -8,7 +8,9 @@ type TransferList struct {
 }
 
 func (p TransferList) AddTransfer(id string, t *Transfer) {
+	p.Lock()
 	p.transfer[id] = t
+	p.Unlock()
 }
 
 func (p TransferList) GetTransfer(id string) *Transfer {
