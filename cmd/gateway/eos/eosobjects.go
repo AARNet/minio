@@ -480,10 +480,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		mp.stagepath = stagepath
 	}
 
-	transferList.Lock()
-	transferList.transfer[uploadID] = &mp
-	transferList.Unlock()
-
+	transferList.AddTransfer(uploadID, &mp)
 	e.Log(2, "NewMultipartUpload: [uploadID: %s]", uploadID)
 	return uploadID, nil
 }
@@ -498,10 +495,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 
 	transfer := transferList.GetTransfer(uploadID)
 	for {
-		transfer.RLock()
-		parts := transfer.parts
-		transfer.RUnlock()
-
+		parts := transfer.GetParts()
 		if parts != nil {
 			break
 		}
@@ -520,9 +514,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		Size:         size,
 	}
 
-	transfer.Lock()
-	transfer.parts[partID] = newPart
-	transfer.Unlock()
+	transfer.AddPart(partID, newPart)
 
 	if partID == 1 {
 		transfer.Lock()
@@ -543,11 +535,9 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 	}
 
-	transfer.Lock()
-	transfer.partsCount++
+	transfer.IncreasePartsCount()
 	transfer.AddToSize(size)
-	chunksize := transfer.chunkSize
-	transfer.Unlock()
+	chunksize := transfer.GetChunkSize()
 
 	offset := chunksize * int64(partID-1)
 	e.Log(3, "PutObjectPart offset [partID: %d, offset: %d]", (partID - 1), offset)
@@ -555,9 +545,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	if e.stage != "" { //staging
 		e.Log(3, "PutObjectPart Staging")
 
-		transfer.RLock()
-		stagepath := transfer.stagepath
-		transfer.RUnlock()
+		stagepath := transfer.GetStagePath()
 		absstagepath := e.stage+"/"+stagepath
 
 		if _, err := os.Stat(absstagepath); os.IsNotExist(err) {
@@ -575,9 +563,9 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 		f.Close()
 	} else { // use xrootd
-//		go func() {
+		go func() {
 			err = e.EOSxrootdWriteChunk(uploadID, offset, offset+size, "0", buf)
-//		}()
+		}()
 	}
 
 //	go func() {
@@ -585,9 +573,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		transfer = transferList.GetTransfer(uploadID)
 		for {
 			if transfer != nil {
-				transfer.RLock()
-				md5PartID := transfer.md5PartID
-				transfer.RUnlock()
+				md5PartID := transfer.GetMD5PartID()
 				if md5PartID == partID {
 					break
 				}
@@ -607,10 +593,8 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 // CompleteMultipartUpload
 func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	transfer := transferList.GetTransfer(uploadID)
-	transfer.RLock()
-	size := transfer.size
-	firstByte := transfer.firstByte
-	transfer.RUnlock()
+	size := transfer.GetSize()
+	firstByte := transfer.GetFirstByte()
 	e.Log(2, "S3cmd: CompleteMultipartUpload: %s size : %d firstByte : %d", uploadID, size, firstByte)
 
 	if e.readonly {
@@ -627,11 +611,10 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		e.EOSsleep()
 	}
 
-	transfer.RLock()
-	etag := hex.EncodeToString(transfer.md5.Sum(nil))
-	contenttype := transfer.contenttype
-	stagepath := transfer.stagepath
-	transfer.RUnlock()
+	transfermd5 := transfer.GetMD5()
+	contenttype := transfer.GetContentType()
+	stagepath := transfer.GetStagePath()
+	etag := hex.EncodeToString(transfermd5.Sum(nil))
 
 	e.Log(3, "CompleteMultipartUpload: [etag: %s]", etag)
 
@@ -652,46 +635,49 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 			return objInfo, err
 		}
 
-		//upload in background
-		go func() {
+		// Push the upload to EOS into the background
+		//go func() {
 			fullstagepath := e.stage+"/"+stagepath+"/file"
 			e.Log(3, "CompleteMultipartUpload: xrdcp: %s => %s size: %d", fullstagepath, uploadID+".minio.sys", size)
 			err := e.EOSxrdcp(fullstagepath, uploadID+".minio.sys", size)
 			if err != nil {
 				e.Log(1, "ERROR: CompleteMultipartUpload: xrdcp: %+v", err)
-				return
+				return objInfo, err
+				//return
 			}
 
 			err = e.EOSrename(uploadID+".minio.sys", uploadID)
 			if err != nil {
 				e.Log(1, "ERROR: CompleteMultipartUpload: EOSrename: %+v", err)
-				return
+				return objInfo, err
+				//return
 			}
 
 			err = e.EOSsetETag(uploadID, etag)
 			if err != nil {
 				e.Log(1, "ERROR: CompleteMultipartUpload: EOSsetETag: %+v", err)
-				return
+				return objInfo, err
+				//return
 			}
 
 			err = e.EOSsetContentType(uploadID, contenttype)
 			if err != nil {
 				e.Log(1, "ERROR: CompleteMultipartUpload: EOSsetContentType: %+v", err)
-				return
+				return objInfo, err
+				//return
 			}
 
 			err = os.RemoveAll(e.stage + "/" + stagepath)
 			if err != nil {
-				return
+				return objInfo, err
+				//return
 			}
 
 			transferList.DeleteTransfer(uploadID)
 			e.messagebusAddPutJob(uploadID)
-		}()
+	//	}()
 	} else { //use xrootd
-		transfer.RLock()
-		firstbyte := []byte{transfer.firstByte}
-		transfer.RUnlock()
+		firstbyte := []byte{transfer.GetFirstByte()}
 
 		err = e.EOSxrootdWriteChunk(uploadID, 0, size, "1", firstbyte)
 		if err != nil {
@@ -741,10 +727,7 @@ func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, u
 
 	if e.stage != "" && transferList.TransferExists(uploadID) {
 		transfer := transferList.GetTransfer(uploadID)
-		transfer.RLock()
-		stagepath := transfer.stagepath
-		transfer.RUnlock()
-
+		stagepath := transfer.GetStagePath()
 		os.RemoveAll(e.stage + "/" + stagepath)
 	}
 
@@ -765,18 +748,23 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.PartNumberMarker = partNumberMarker
 
 	transfer := transferList.GetTransfer(uploadID)
-	transfer.RLock()
-	size := transfer.partsCount
-	parts := transfer.parts
-	result.Parts = make([]minio.PartInfo, size)
-	i := 0
-	for _, part := range parts {
-		if i < size {
-			result.Parts[i] = part
-			i++
+	if transfer != nil {
+		size := transfer.GetPartsCount()
+		//parts := transfer.GetParts()
+		result.Parts = make([]minio.PartInfo, size)
+		i := 0
+		for _, part := range transfer.GetParts() {
+		//transfer.RLock()
+		//for _, part := range parts {
+			if i < size {
+				result.Parts[i] = part
+				i++
+			}
 		}
+		//transfer.RUnlock()
+	} else {
+		result.Parts = make([]minio.PartInfo, 0)
 	}
-	transfer.RUnlock()
 
 	return result, nil
 }
@@ -888,9 +876,9 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 	return result, nil
 }
 
-/* 
- *  Methods that are not implemented
- */
+/************************************** 
+ *  Methods that are not implemented  *
+ *************************************/
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
@@ -1484,7 +1472,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		e.messagebusAddPutJob(p)
 		return err
 	}
-	e.Log(1, "ERROR: EOSput failed %d times. Last error: %+v", maxRetry, err)
+	e.Log(1, "ERROR: EOSput failed %d times. [eospath: %s]", maxRetry, eospath)
 	return err
 }
 
