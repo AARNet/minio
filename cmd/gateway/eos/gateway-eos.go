@@ -1,9 +1,10 @@
 /*
- * AARNet 2018
+ * 2019 AARNet Pty Ltd
  *
+ * Michael Usher <michael.usher@aarnet.edu.au>
  * Michael D'Silva
  *
- * This is a gateway for AARNet's CERN's EOS storage backend (v4.2.29)
+ * Gateway for the EOS storage backend  
  *
  */
 
