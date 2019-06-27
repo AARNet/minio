@@ -1,9 +1,19 @@
+/*
+ * 2019 AARNet Pty Ltd
+ *
+ * Michael Usher <michael.usher@aarnet.edu.au>
+ * Michael D'Silva
+ *
+ */
+
 package eos
 
 import (
 	"os"
 	"strconv"
 	"strings"
+	"fmt"
+	"context"
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
@@ -15,6 +25,15 @@ type EOS struct {
 	path string
 }
 
+const (
+	readMethodWebdav string = "webdav"
+	readMethodXrootd string = "xrootd"
+	readMethodXrdcp string = "xrdcp"
+)
+
+// Define the log level globally because.. quick fix?
+var MaxLogLevel int;
+
 // Name implements Gateway interface.
 func (g *EOS) Name() string {
 	return eosBackend
@@ -22,15 +41,12 @@ func (g *EOS) Name() string {
 
 // NewGatewayLayer returns eos gatewaylayer.
 func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
-	const CLR_W = "\x1b[37;1m"
-	const CLR_B = "\x1b[34;1m"
-	const CLR_Y = "\x1b[33;1m"
-	const CLR_G = "\x1b[32;1m"
-	const CLR_N = "\x1b[0m"
-
+	// TODO: Move loglevel to something other than eosObjects
 	loglevel, ok := strconv.Atoi(os.Getenv("EOSLOGLEVEL"))
 	if ok != nil {
-		loglevel = 0
+		MaxLogLevel = LogLevelOff
+	} else {
+		MaxLogLevel = loglevel
 	}
 
 	stage := os.Getenv("EOSSTAGE")
@@ -43,11 +59,11 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readonly = true
 	}
 
-	readmethod := "webdav"
-	if strings.ToLower(os.Getenv("EOSREADMETHOD")) == "xrootd" {
-		readmethod = "xrootd"
-	} else if strings.ToLower(os.Getenv("EOSREADMETHOD")) == "xrdcp" {
-		readmethod = "xrdcp"
+	readmethod := readMethodWebdav
+	if strings.ToLower(os.Getenv("EOSREADMETHOD")) == readMethodXrootd {
+		readmethod = readMethodXrootd
+	} else if strings.ToLower(os.Getenv("EOSREADMETHOD")) == readMethodXrdcp {
+		readmethod = readMethodXrdcp
 	}
 
 	waitSleep := 100
@@ -84,8 +100,24 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	logger.Info("EOS SLEEP: %d", waitSleep)
 	logger.Info("EOS LOG LEVEL: %d", loglevel)
 
+	// Init the stat cache used by eosObjects and eosFS
+	statCache := NewStatCache(os.Getenv("VOLUME_PATH"))
+
+	// Init filesystem
+	filesystem := &eosFS{
+		MGMHost: os.Getenv("EOS"),
+		Path: os.Getenv("VOLUME_PATH"),
+		User: os.Getenv("EOSUSER"),
+		UID: os.Getenv("EOSUID"),
+		GID: os.Getenv("EOSGID"),
+		ReadMethod: readmethod,
+		Scripts: os.Getenv("SCRIPTS"),
+		StatCache: statCache,
+	}
+
+	// and go
 	return &eosObjects{
-		loglevel:     loglevel,
+		loglevel:     MaxLogLevel,
 		url:          os.Getenv("EOS"),
 		path:         os.Getenv("VOLUME_PATH"),
 		hookurl:      os.Getenv("HOOKSURL"),
@@ -98,10 +130,11 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readmethod:   readmethod,
 		waitSleep:    waitSleep,
 		validbuckets: validbuckets,
-		StatCache:    NewStatCache(os.Getenv("VOLUME_PATH")),
+		StatCache:    statCache,
 		TransferList: NewTransferList(),
 		DirCache:     NewDirCache(),
 		BucketCache:  make(map[string]minio.BucketInfo),
+		FileSystem:   filesystem,
 	}, nil
 }
 
@@ -109,3 +142,52 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 func (g *EOS) Production() bool {
 	return false
 }
+
+// Logging method
+const (
+	LogLevelOff int = 0
+	LogLevelError int = 1
+	LogLevelInfo int = 2
+	LogLevelDebug int = 3
+)
+
+func Log(level int, format string, a ...interface{}) {
+	if level <= MaxLogLevel {
+	        switch level {
+	        case LogLevelError:
+	                err := fmt.Errorf(format, a...)
+	                logger.LogIf(context.Background(), err)
+	        case LogLevelDebug:
+			logger.Info("DEBUG: "+format, a...)
+	        default:
+	                logger.Info(format, a...)
+	        }
+	}
+}
+
+// Interface conversion
+
+func interfaceToInt64(in interface{}) int64 {
+        if in == nil {
+                return 0
+        }
+        f, _ := in.(float64)
+        return int64(f)
+}
+
+func interfaceToUint32(in interface{}) uint32 {
+        if in == nil {
+                return 0
+        }
+        f, _ := in.(float64)
+        return uint32(f)
+}
+
+func interfaceToString(in interface{}) string {
+        if in == nil {
+                return ""
+        }
+        s, _ := in.(string)
+        return strings.TrimSpace(s)
+}
+

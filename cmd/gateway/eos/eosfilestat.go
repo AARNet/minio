@@ -1,9 +1,8 @@
 /*
- * AARNet 2018
+ * 2019 AARNet Pty Ltd
  *
+ * Michael Usher <michael.usher@aarnet.edu.au>
  * Michael D'Silva
- *
- * This is a gateway for AARNet's CERN's EOS storage backend (v4.2.29)
  *
  */
 
@@ -25,16 +24,37 @@ type eosFileStat struct {
 	contenttype string
 }
 
-func (fs *eosFileStat) Id() int64          { return fs.id }
-func (fs *eosFileStat) Name() string       { return fs.name }
-func (fs *eosFileStat) Size() int64        { return fs.size }
-func (fs *eosFileStat) ModTime() time.Time { return fs.modTime }
-func (fs *eosFileStat) Sys() interface{}   { return &fs.sys }
-func (fs *eosFileStat) IsDir() bool        { return !fs.file }
+const (
+	defaultETag string = "00000000000000000000000000000000"
+)
+
+func (fs *eosFileStat) Id() int64 {
+	return fs.id
+}
+
+func (fs *eosFileStat) Name() string {
+	return fs.name
+}
+
+func (fs *eosFileStat) Size() int64 {
+	return fs.size
+}
+
+func (fs *eosFileStat) ModTime() time.Time {
+	return fs.modTime
+}
+
+func (fs *eosFileStat) Sys() interface{} {
+	return &fs.sys
+}
+
+func (fs *eosFileStat) IsDir() bool {
+	return !fs.file
+}
 
 func (fs *eosFileStat) ETag() string {
 	if fs.IsDir() || fs.etag == "" {
-		return "00000000000000000000000000000000"
+		return defaultETag
 	}
 	return fs.etag
 }

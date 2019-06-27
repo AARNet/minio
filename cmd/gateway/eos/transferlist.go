@@ -1,3 +1,10 @@
+/*
+ * 2019 AARNet Pty Ltd
+ *
+ * Michael Usher <michael.usher@aarnet.edu.au>
+ *
+ */
+
 package eos
 
 import "sync"
