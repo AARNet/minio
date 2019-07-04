@@ -12,8 +12,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"fmt"
-	"context"
 	"time"
 
 	minio "github.com/minio/minio/cmd"
@@ -29,11 +27,11 @@ type EOS struct {
 const (
 	readMethodWebdav string = "webdav"
 	readMethodXrootd string = "xrootd"
-	readMethodXrdcp string = "xrdcp"
+	readMethodXrdcp  string = "xrdcp"
 )
 
 // Define the log level globally because.. quick fix?
-var MaxLogLevel int;
+var MaxLogLevel int
 
 // Name implements Gateway interface.
 func (g *EOS) Name() string {
@@ -67,12 +65,6 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		readmethod = readMethodXrdcp
 	}
 
-	waitSleep := 100
-	ret, err := strconv.Atoi(os.Getenv("EOSSLEEP"))
-	if err == nil {
-		waitSleep = ret
-	}
-
 	validbuckets := true
 	if os.Getenv("EOSVALIDBUCKETS") == "false" {
 		validbuckets = false
@@ -92,13 +84,19 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		logger.Info("EOS allowing invalid bucket names (RISK)")
 	}
 
+	httphost := os.Getenv("EOSHTTPHOST")
+	if httphost == "" {
+		httphost = os.Getenv("EOS") + ":8000"
+	}
+
 	logger.Info("EOS URL: %s", os.Getenv("EOS"))
+	logger.Info("EOS HTTP URL: %s", httphost)
+	logger.Info("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
 	logger.Info("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
 	logger.Info("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
 	logger.Info("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
 	logger.Info("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
 	logger.Info("EOS READ METHOD: %s", readmethod)
-	logger.Info("EOS SLEEP: %d", waitSleep)
 	logger.Info("EOS LOG LEVEL: %d", loglevel)
 
 	// Init the stat cache used by eosObjects and eosFS
@@ -106,30 +104,23 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	// Init filesystem
 	filesystem := &eosFS{
-		MGMHost: os.Getenv("EOS"),
-		Path: os.Getenv("VOLUME_PATH"),
-		User: os.Getenv("EOSUSER"),
-		UID: os.Getenv("EOSUID"),
-		GID: os.Getenv("EOSGID"),
+		MGMHost:    os.Getenv("EOS"),
+		HTTPHost:   httphost,
+		Proxy:      os.Getenv("EOS_HTTP_PROXY"),
+		Path:       os.Getenv("VOLUME_PATH"),
+		User:       os.Getenv("EOSUSER"),
+		UID:        os.Getenv("EOSUID"),
+		GID:        os.Getenv("EOSGID"),
 		ReadMethod: readmethod,
-		Scripts: os.Getenv("SCRIPTS"),
-		StatCache: statCache,
+		Scripts:    os.Getenv("SCRIPTS"),
+		StatCache:  NewRequestStatCache(os.Getenv("VOLUME_PATH")),
 	}
 
 	// and go
 	return &eosObjects{
-		loglevel:     MaxLogLevel,
-		url:          os.Getenv("EOS"),
 		path:         os.Getenv("VOLUME_PATH"),
 		hookurl:      os.Getenv("HOOKSURL"),
-		scripts:      os.Getenv("SCRIPTS"),
-		user:         os.Getenv("EOSUSER"),
-		uid:          os.Getenv("EOSUID"),
-		gid:          os.Getenv("EOSGID"),
 		stage:        stage,
-		readonly:     readonly,
-		readmethod:   readmethod,
-		waitSleep:    waitSleep,
 		validbuckets: validbuckets,
 		StatCache:    statCache,
 		TransferList: NewTransferList(),
@@ -144,73 +135,44 @@ func (g *EOS) Production() bool {
 	return false
 }
 
-// Logging method
-const (
-	LogLevelStat int = 99
-	LogLevelOff int = 0
-	LogLevelError int = 1
-	LogLevelInfo int = 2
-	LogLevelDebug int = 3
-)
-
-func Log(level int, ctx context.Context, format string, a ...interface{}) {
-	if ctx == nil {
-		ctx = context.TODO()
-	}
-	// Always log the stat level commands
-	if level <= MaxLogLevel || level == LogLevelStat {
-	        switch level {
-	        case LogLevelError:
-	                err := fmt.Errorf(format, a...)
-	                logger.LogIf(ctx, err)
-	        case LogLevelDebug:
-			logger.Info("DEBUG: "+format, a...)
-	        default:
-	                logger.Info(format, a...)
-	        }
-	}
-}
-
 // Interface conversion
 
 func interfaceToInt64(in interface{}) int64 {
-        if in == nil {
-                return 0
-        }
-        f, _ := in.(float64)
-        return int64(f)
+	if in == nil {
+		return 0
+	}
+	f, _ := in.(float64)
+	return int64(f)
 }
 
 func interfaceToUint32(in interface{}) uint32 {
-        if in == nil {
-                return 0
-        }
-        f, _ := in.(float64)
-        return uint32(f)
+	if in == nil {
+		return 0
+	}
+	f, _ := in.(float64)
+	return uint32(f)
 }
 
 func interfaceToString(in interface{}) string {
-        if in == nil {
-                return ""
-        }
-        s, _ := in.(string)
-        return strings.TrimSpace(s)
+	if in == nil {
+		return ""
+	}
+	s, _ := in.(string)
+	return strings.TrimSpace(s)
 }
 
 const (
-        SleepDefault int = 100
-        SleepShort int = 10
-        SleepLong int = 1000
+	SleepDefault int = 100
+	SleepShort   int = 10
+	SleepLong    int = 1000
 )
 
 // Sleep for t milliseconds
 func SleepMs(t int) {
-        time.Sleep(time.Duration(t) * time.Millisecond)
+	time.Sleep(time.Duration(t) * time.Millisecond)
 }
 
 // Default sleep function
 func Sleep() {
-        SleepMs(SleepDefault)
+	SleepMs(SleepDefault)
 }
-
-
