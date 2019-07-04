@@ -14,6 +14,7 @@ import (
 	"strings"
 	"fmt"
 	"context"
+	"time"
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
@@ -145,18 +146,23 @@ func (g *EOS) Production() bool {
 
 // Logging method
 const (
+	LogLevelStat int = 99
 	LogLevelOff int = 0
 	LogLevelError int = 1
 	LogLevelInfo int = 2
 	LogLevelDebug int = 3
 )
 
-func Log(level int, format string, a ...interface{}) {
-	if level <= MaxLogLevel {
+func Log(level int, ctx context.Context, format string, a ...interface{}) {
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	// Always log the stat level commands
+	if level <= MaxLogLevel || level == LogLevelStat {
 	        switch level {
 	        case LogLevelError:
 	                err := fmt.Errorf(format, a...)
-	                logger.LogIf(context.Background(), err)
+	                logger.LogIf(ctx, err)
 	        case LogLevelDebug:
 			logger.Info("DEBUG: "+format, a...)
 	        default:
@@ -190,4 +196,21 @@ func interfaceToString(in interface{}) string {
         s, _ := in.(string)
         return strings.TrimSpace(s)
 }
+
+const (
+        SleepDefault int = 100
+        SleepShort int = 10
+        SleepLong int = 1000
+)
+
+// Sleep for t milliseconds
+func SleepMs(t int) {
+        time.Sleep(time.Duration(t) * time.Millisecond)
+}
+
+// Default sleep function
+func Sleep() {
+        SleepMs(SleepDefault)
+}
+
 

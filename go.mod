@@ -35,6 +35,8 @@ require (
 	github.com/gorilla/mux v1.7.0
 	github.com/gorilla/rpc v1.2.0+incompatible
 	github.com/grpc-ecosystem/grpc-gateway v1.9.0 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.1
+	github.com/hashicorp/go-retryablehttp v0.5.3
 	github.com/hashicorp/go-rootcerts v1.0.1 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.2 // indirect
 	github.com/hashicorp/golang-lru v0.5.1 // indirect
