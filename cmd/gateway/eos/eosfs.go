@@ -9,6 +9,7 @@
 package eos
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -87,7 +88,6 @@ func (e *eosFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	if strings.Contains(path, "..") {
 		return "", eoserrFilePathBad
 	}
-
 	path = strings.ReplaceAll(path, "//", "/")
 	eosPath = strings.TrimSuffix(e.Path+"/"+path, ".")
 	eosPath = filepath.Clean(eosPath)
@@ -135,7 +135,7 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	return body, m, err
 }
 
-func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
+func (e *eosFS) BuildCacheXrdcp(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	if cacheReset {
 		reqStatCache.Reset()
@@ -146,97 +146,172 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, err
 	}
 
-	eosLogger.Log(ctx, LogLevelStat, "BuildCache", fmt.Sprintf("EOScmd: procuser.fileinfo [eospath: %s]", eospath), nil)
-	body, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.UrlExtras()))
-	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "BuildCache", fmt.Sprintf("ERROR: EOSreadDir curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
-		return nil, err
-	}
+	eosLogger.Log(ctx, LogLevelStat, "BuildCacheXrdcp", fmt.Sprintf("EOScmd: procuser.find [eospath: %s]", eospath), nil)
 
-	if interfaceToString(m["errormsg"]) != "" {
-		if strings.HasPrefix(interfaceToString(m["errormsg"]), "error: cannot stat") {
-			eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("ERROR: EOS procuser.fileinfo [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), nil)
-		} else {
-			eosLogger.Log(ctx, LogLevelError, "BuildCache", fmt.Sprintf("ERROR: EOS procuser.fileinfo [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), nil)
-		}
+	objects, err := e.xrdcpFind(ctx, eospath)
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelError, "BuildCacheXrdcp", fmt.Sprintf("ERROR: Unable to read directory [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, eoserrFileNotFound
 	}
 
-	if c, ok := m["children"]; ok {
-		err = json.Unmarshal([]byte(body), &c)
-		if err != nil {
-			eosLogger.Log(ctx, LogLevelError, "BuildCache", fmt.Sprintf("ERROR: EOSreadDir can not json.Unmarshal() children [eospath: %s]", eospath), err)
-			return nil, err
-		}
+	if len(objects) > 0 {
+		for _, object := range objects {
+			var fi eosFileStat
+			cacheKey := strings.TrimSuffix(object["file"], "/")
+			if !strings.HasPrefix(object["file"], ".sys.v#.") {
+				fi = e.CreateStatEntry(object)
+				reqStatCache.Write(cacheKey, fi)
+			}
 
-		eospath = strings.TrimSuffix(eospath, "/") + "/"
-		children := m["children"].([]interface{})
-		for _, childi := range children {
-			child, _ := childi.(map[string]interface{})
-
-			obj := interfaceToString(child["name"])
-			if !strings.HasPrefix(obj, ".sys.v#.") {
-				isFile := true
-				// If the file doesn't have an fxid, it's a directory
-				if _, ok := child["fxid"]; !ok {
-					obj += "/"
-					isFile = false
-				}
-				entries = append(entries, obj)
-
-				//some defaults
-				meta := make(map[string]string)
-				meta["contenttype"] = "application/octet-stream"
-				meta["etag"] = defaultETag
-				if _, ok := child["xattr"]; ok {
-					xattr, _ := child["xattr"].(map[string]interface{})
-					if contenttype, ok := xattr["minio_contenttype"]; ok {
-						meta["contenttype"] = interfaceToString(contenttype)
-					}
-					if etag, ok := xattr["minio_etag"]; ok {
-						meta["etag"] = interfaceToString(etag)
-					}
-				}
-
-				reqStatCache.Write(eospath+obj, eosFileStat{
-					id:          interfaceToInt64(child["id"]),
-					name:        interfaceToString(child["name"]),
-					size:        interfaceToInt64(child["size"]) + interfaceToInt64(child["treesize"]),
-					file:        isFile,
-					modTime:     time.Unix(interfaceToInt64(child["mtime"]), 0),
-					etag:        meta["etag"],
-					contenttype: meta["contenttype"],
-				})
+			// If we find an entry matching the eospath and it's a file, return it.
+			if object["is_file"] == "false" && object["file"] == strings.TrimSuffix(eospath, "/")+"/" {
+				continue
+			}
+			if object["is_file"] == "true" && object["file"] == strings.TrimSuffix(eospath, "/") {
+				eosLogger.Log(ctx, LogLevelDebug, "BuildCacheXrdcp", fmt.Sprintf("Object matches requested path, returning it [object: %s, path: %s]", object["file"], eospath), err)
+				return []string{fi.name}, nil
+			} else {
+				entries = append(entries, fi.name)
 			}
 		}
-		// In case it isn't a directory we're trying to read and is a single file
-	} else if _, ok := m["fxid"]; ok {
-		eospath = strings.TrimSuffix(eospath, "/") + "/"
-		meta := make(map[string]string)
-		meta["contenttype"] = "application/octet-stream"
-		meta["etag"] = defaultETag
-		obj := interfaceToString(m["name"])
-		entries = append(entries, obj)
-		if _, ok := m["xattr"]; ok {
-			xattr, _ := m["xattr"].(map[string]interface{})
-			if contenttype, ok := xattr["minio_contenttype"]; ok {
-				meta["contenttype"] = interfaceToString(contenttype)
-			}
-			if etag, ok := xattr["minio_etag"]; ok {
-				meta["etag"] = interfaceToString(etag)
-			}
-		}
-		reqStatCache.Write(eospath+obj, eosFileStat{
-			id:          interfaceToInt64(m["id"]),
-			name:        interfaceToString(m["name"]),
-			size:        interfaceToInt64(m["size"]) + interfaceToInt64(m["treesize"]),
-			file:        true,
-			modTime:     time.Unix(interfaceToInt64(m["mtime"]), 0),
-			etag:        meta["etag"],
-			contenttype: meta["contenttype"],
-		})
 	}
+	eosLogger.Log(ctx, LogLevelDebug, "BuildCacheXrdcp", fmt.Sprintf("Cache Entries: %+v", entries, err), err)
+	eosLogger.Log(ctx, LogLevelDebug, "BuildCacheXrdcp", fmt.Sprintf("Cache: %+v", reqStatCache.cache, err), err)
 	return entries, err
+}
+
+func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string, error) {
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=%s", e.MGMHost, path))
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
+		return nil, err
+	}
+	eosLogger.Log(ctx, LogLevelStat, "xrdcpFind", fmt.Sprintf("EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl), nil)
+
+	cmd := exec.Command("/usr/bin/xrdcp", rooturl, "-")
+	pipe, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
+		return nil, err
+	}
+
+	parsedobjects := make([]map[string]string, 0)
+	var object string
+	reader := bufio.NewReader(pipe)
+	for err == nil {
+		object, err = reader.ReadString('\n')
+		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFind", fmt.Sprintf("Object: %s", object), err)
+		// First result is prefixed with &mgm.proc.stdout=, so strip it
+		if strings.Index(object, "&mgm.proc.stdout=") == 0 {
+			object = object[len("&mgm.proc.stdout="):len(object)]
+		}
+
+		// Once you get &mgm.proc.stderr=, you have hit the end
+		if strings.Index(object, "&mgm.proc.stderr=") == 0 {
+			errormsg := strings.TrimSpace(object[len("&mgm.proc.stderr="):len(object)])
+			if errormsg != "" && errormsg != "&mgm.proc.retc=0" {
+				return nil, errors.New(errormsg)
+			}
+			break
+		}
+
+		parsed := e.xrdcpFindParseResult(object)
+		if parsed != nil {
+			parsedobjects = append(parsedobjects, parsed)
+		}
+	}
+	return parsedobjects, nil
+}
+
+// Parses the xrdcp formatted result into a named array
+func (e *eosFS) xrdcpFindParseResult(object string) map[string]string {
+	object = strings.TrimSpace(object)
+	if object == "" {
+		return nil
+	}
+
+	// First pair should be keylength.file, which contains the filename length
+	// so split the string on space once to get that value
+	split := strings.SplitN(object, " ", 2)
+	if len(split) < 2 {
+		return nil
+	}
+	_, keytmp := SplitKeyValuePair(split[0])
+	keylength, err := strconv.Atoi(keytmp)
+	if err != nil {
+		fmt.Println(err) // Log with warning here
+		return nil
+	}
+	keylength = keylength + 5 // add 5 to it to include the "file=" prefix
+
+	// Check the second part of the split string starts with file=
+	if split[1][0:5] != "file=" {
+		return nil
+	}
+
+	// Get the filename using the filename length
+	// to avoid splitting on spaces in the filename
+	filename := split[1][5:keylength]
+
+	// Remove the filename from the object
+	object = split[1][keylength:len(split[1])]
+
+	// Get the rest of the key value pairs
+	m := make(map[string]string)
+	m["file"] = filename
+	kvpairs := strings.Split(object, " ")
+	for idx, pair := range kvpairs {
+		key, value := SplitKeyValuePair(pair)
+		if key != "" {
+			// If its an xattr, get the value from the next pair
+			if key == "xattrn" {
+				key = value
+				_, value = SplitKeyValuePair(kvpairs[(idx + 1)])
+			}
+			// This is handled when xattrn is found, so skip it
+			if key == "xattrv" || key == "" {
+				continue
+			}
+			m[key] = value
+		}
+	}
+	m["is_file"] = "true"
+	// Let's just look for all the attributes that lead
+	// to it being a directory.
+	if _, ok := m["container"]; ok {
+		m["is_file"] = "false"
+	} else if _, ok := m["treesize"]; ok {
+		m["is_file"] = "false"
+	} else if _, ok := m["files"]; ok {
+		m["is_file"] = "false"
+	}
+	return m
+}
+
+func (e *eosFS) CreateStatEntry(object map[string]string) eosFileStat {
+	// Defaults
+	attrEtag := defaultETag
+	attrContentType := "application/octet-stream"
+
+	// Set from object if they exist
+	if _, ok := object["minio_etag"]; ok {
+		attrEtag = object["minio_etag"]
+	}
+	if _, ok := object["minio_contenttype"]; ok {
+		attrContentType = object["minio_contenttype"]
+	}
+	name := strings.TrimSuffix(filepath.Base(object["file"]), "/")
+	var mtime int64 = int64(StringToFloat(object["mtime"]))
+	return eosFileStat{
+		id:          StringToInt(object["id"]),
+		name:        name,
+		size:        StringToInt(object["size"]),
+		file:        StringToBool(object["is_file"]),
+		modTime:     time.Unix(mtime, 0),
+		etag:        attrEtag,
+		contenttype: attrContentType,
+	}
+
 }
 
 func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
@@ -245,66 +320,30 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	if fi, ok := reqStatCache.Read(eospath); ok {
-		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache hit: [eospath: %s]", eospath), nil)
+		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache hit: [p: %s, eospath: %s]", p, eospath), nil)
 		return fi, nil
 	}
+	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache miss: [p: %s, eospath: %s]", p, eospath), nil)
 
-	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache miss: [eospath: %s]", eospath), nil)
-	eosLogger.Log(ctx, LogLevelStat, "Stat", fmt.Sprintf("EOScmd: procuser.fileinfo [eospath: %s]", eospath), nil)
-
-	// Sometimes too many stats at once causes no response, so we want to back off if it fails.
-	var (
-		body []byte
-		m    map[string]interface{}
-	)
-
-	body, m, err = e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.UrlExtras()))
+	eosLogger.Log(ctx, LogLevelStat, "Stat", fmt.Sprintf("EOScmd: procuser.find [eospath: %s]", p), nil)
+	objects, err := e.xrdcpFind(ctx, eospath)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Stat", fmt.Sprintf("ERROR: EOSfsStat curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
-		return nil, err
-	}
-	if body == nil {
-		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("ERROR: EOSfsStat curl to MGM failed [eospath: %s, error: response body is nil]", eospath), nil)
-		return nil, eoserrResponseIsNil
-	}
-	if interfaceToString(m["errormsg"]) != "" {
-		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOS procuser.fileinfo [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), nil)
+		eosLogger.Log(ctx, LogLevelError, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, eoserrFileNotFound
 	}
 
-	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: stat result [eospath: %s, name: %s, mtime: %d, mode:%d, size: %d]", eospath, interfaceToString(m["name"]), interfaceToInt64(m["mtime"]), interfaceToInt64(m["mode"]), interfaceToInt64(m["size"])), nil)
-
-	//some defaults
-	meta := make(map[string]string)
-	meta["contenttype"] = "application/octet-stream"
-	meta["etag"] = defaultETag
-	if _, ok := m["xattr"]; ok {
-		xattr, _ := m["xattr"].(map[string]interface{})
-		if contenttype, ok := xattr["minio_contenttype"]; ok {
-			ct := interfaceToString(contenttype)
-			if ct != "" {
-				meta["contenttype"] = ct
-			}
-		}
-		if etag, ok := xattr["minio_etag"]; ok {
-			et := interfaceToString(etag)
-			if et != "" {
-				meta["etag"] = et
-			}
-		}
+	// Grab the first entry
+	var object map[string]string
+	if len(objects) > 0 {
+		object = objects[0]
+	} else {
+		return nil, eoserrFileNotFound
 	}
 
-	fi := eosFileStat{
-		id:          interfaceToInt64(m["id"]),
-		name:        interfaceToString(m["name"]),
-		size:        interfaceToInt64(m["size"]) + interfaceToInt64(m["treesize"]),
-		file:        interfaceToUint32(m["mode"]) != 0,
-		modTime:     time.Unix(interfaceToInt64(m["mtime"]), 0),
-		etag:        meta["etag"],
-		contenttype: meta["contenttype"],
-	}
-
+	// Create stat entry, cache it, return it.
+	fi := e.CreateStatEntry(object)
 	reqStatCache.Write(eospath, fi)
 
 	return &fi, nil
