@@ -161,6 +161,33 @@ func interfaceToString(in interface{}) string {
 	return strings.TrimSpace(s)
 }
 
+func StringToInt(str string) int64 {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return 0
+	}
+	i, _ := strconv.ParseInt(str, 10, 64)
+	return i
+}
+
+func StringToFloat(str string) float64 {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return 0
+	}
+	i, _ := strconv.ParseFloat(str, 64)
+	return i
+}
+
+func StringToBool(str string) bool {
+	str = strings.TrimSpace(str)
+	if str == "" {
+		return false
+	}
+	b, _ := strconv.ParseBool(str)
+	return b
+}
+
 const (
 	SleepDefault int = 100
 	SleepShort   int = 10
@@ -175,4 +202,13 @@ func SleepMs(t int) {
 // Default sleep function
 func Sleep() {
 	SleepMs(SleepDefault)
+}
+
+// Split a key=value format string into 2 strings (key, value)
+func SplitKeyValuePair(pair string) (string, string) {
+	tmp := strings.Split(pair, "=")
+	if len(tmp) > 1 {
+		return tmp[0], tmp[1]
+	}
+	return "", ""
 }
