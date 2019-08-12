@@ -101,7 +101,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 
 	e.BucketCache = make(map[string]minio.BucketInfo)
 
-	dirs, err := e.FileSystem.BuildCache(ctx, "", false)
+	dirs, err := e.FileSystem.BuildCacheXrdcp(ctx, "", false)
 	if err != nil {
 		return buckets, err
 	}
@@ -823,7 +823,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	}
 
 	// Populate the directory cache
-	e.DirCache.objects, err = e.FileSystem.BuildCache(ctx, path, true)
+	e.DirCache.objects, err = e.FileSystem.BuildCacheXrdcp(ctx, path, true)
 	if err != nil {
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 	}
@@ -832,16 +832,28 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		if !strings.HasSuffix(obj, ".minio.sys") {
 			var stat *eosFileStat
 			objpath := strings.TrimSuffix(path, "/") + "/" + obj
+			objprefix := prefix
+			if len(e.DirCache.objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
+				// Jump back one directory to fix the prefixes
+				// for individual files
+				objpath = filepath.Dir(strings.TrimSuffix(path, "/")) + "/" + obj
+				objprefix = filepath.Dir(prefix) + "/"
+			}
+			objname := objprefix + obj
 			objpath = filepath.Clean(objpath)
 			stat, err = e.FileSystem.Stat(ctx, objpath)
 
 			if stat != nil {
-				eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Stat: %s <=> %s [etag: %s, content-type: %s]", objpath, prefix+obj, stat.ETag(), stat.ContentType()), nil)
-				o := e.NewObjectInfo(bucket, prefix+obj, stat)
+				o := e.NewObjectInfo(bucket, objname, stat)
+				eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Object: %+v", o), nil)
+
 				// Directories get added to prefixes, files to objects.
 				if stat.IsDir() {
 					result.Prefixes = append(result.Prefixes, o.Name)
 				} else {
+					if len(e.DirCache.objects) == 1 {
+						result.Prefixes = append(result.Prefixes, filepath.Dir(o.Name)+"/")
+					}
 					result.Objects = append(result.Objects, o)
 				}
 				if delimiter == "" && stat.IsDir() {
