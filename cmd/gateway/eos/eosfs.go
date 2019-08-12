@@ -146,11 +146,9 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, err
 	}
 
-	eosLogger.Log(ctx, LogLevelStat, "BuildCacheXrdcp", fmt.Sprintf("EOScmd: procuser.find [eospath: %s]", eospath), nil)
-
 	objects, err := e.xrdcpFind(ctx, eospath)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "BuildCacheXrdcp", fmt.Sprintf("ERROR: Unable to read directory [eospath: %s, error: %+v]", eospath, err), err)
+		eosLogger.Log(ctx, LogLevelError, "BuildCache", fmt.Sprintf("ERROR: Unable to read directory [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, eoserrFileNotFound
 	}
 
@@ -168,15 +166,15 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 				continue
 			}
 			if object["is_file"] == "true" && object["file"] == strings.TrimSuffix(eospath, "/") {
-				eosLogger.Log(ctx, LogLevelDebug, "BuildCacheXrdcp", fmt.Sprintf("Object matches requested path, returning it [object: %s, path: %s]", object["file"], eospath), err)
+				eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Object matches requested path, returning it [object: %s, path: %s]", object["file"], eospath), err)
 				return []string{fi.name}, nil
 			} else {
 				entries = append(entries, fi.name)
 			}
 		}
 	}
-	eosLogger.Log(ctx, LogLevelDebug, "BuildCacheXrdcp", fmt.Sprintf("Cache Entries: %+v", entries, err), err)
-	eosLogger.Log(ctx, LogLevelDebug, "BuildCacheXrdcp", fmt.Sprintf("Cache: %+v", reqStatCache.cache, err), err)
+	eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Result Entries: %+v", entries, err), err)
+	eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Request Stat Cache: %+v", reqStatCache.cache, err), err)
 	return entries, err
 }
 
@@ -215,7 +213,7 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 			break
 		}
 
-		parsed := e.xrdcpFindParseResult(object)
+		parsed := e.xrdcpFindParseResult(ctx, object)
 		if parsed != nil {
 			parsedobjects = append(parsedobjects, parsed)
 		}
@@ -224,7 +222,7 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 }
 
 // Parses the xrdcp formatted result into a named array
-func (e *eosFS) xrdcpFindParseResult(object string) map[string]string {
+func (e *eosFS) xrdcpFindParseResult(ctx context.Context, object string) map[string]string {
 	object = strings.TrimSpace(object)
 	if object == "" {
 		return nil
@@ -252,6 +250,16 @@ func (e *eosFS) xrdcpFindParseResult(object string) map[string]string {
 	// Get the filename using the filename length
 	// to avoid splitting on spaces in the filename
 	filename := split[1][5:keylength]
+
+	if len(split[1]) < 6 {
+		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("Object not long enough [object: %s]", object), nil)
+		return nil
+	}
+
+	if len(split[1]) < keylength {
+		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("keylength.file longer than object [object: %s]", object), nil)
+		return nil
+	}
 
 	// Remove the filename from the object
 	object = split[1][keylength:len(split[1])]
@@ -327,7 +335,6 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
 	}
 	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache miss: [p: %s, eospath: %s]", p, eospath), nil)
 
-	eosLogger.Log(ctx, LogLevelStat, "Stat", fmt.Sprintf("EOScmd: procuser.find [eospath: %s]", p), nil)
 	objects, err := e.xrdcpFind(ctx, eospath)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
