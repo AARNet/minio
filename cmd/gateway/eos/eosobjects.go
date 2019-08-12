@@ -101,7 +101,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 
 	e.BucketCache = make(map[string]minio.BucketInfo)
 
-	dirs, err := e.FileSystem.BuildCacheXrdcp(ctx, "", false)
+	dirs, err := e.FileSystem.BuildCache(ctx, "", false)
 	if err != nil {
 		return buckets, err
 	}
@@ -823,7 +823,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	}
 
 	// Populate the directory cache
-	e.DirCache.objects, err = e.FileSystem.BuildCacheXrdcp(ctx, path, true)
+	e.DirCache.objects, err = e.FileSystem.BuildCache(ctx, path, true)
 	if err != nil {
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 	}
