@@ -135,7 +135,7 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	return body, m, err
 }
 
-func (e *eosFS) BuildCacheXrdcp(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
+func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	if cacheReset {
 		reqStatCache.Reset()
