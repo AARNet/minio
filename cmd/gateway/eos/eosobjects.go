@@ -803,6 +803,14 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	// Sort the results to make them an easier list to read for most clients
 	sort.SliceStable(result.Objects, func(i, j int) bool { return result.Objects[i].Name < result.Objects[j].Name })
 	sort.SliceStable(result.Prefixes, func(i, j int) bool { return result.Prefixes[i] < result.Prefixes[j] })
+	for idx, item := range result.Prefixes {
+		// Remove the current directory from the prefixes
+		if item == "./" {
+			result.Prefixes = append(result.Prefixes[:idx], result.Prefixes[idx+1:]...)
+			break
+		}
+	}
+	eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Result: %+v", result), nil)
 
 	return result, err
 }
