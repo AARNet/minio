@@ -526,7 +526,12 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 
 	if partID == 1 {
 		transfer.Lock()
-		transfer.firstByte = buf[0]
+		if len(buf) < 1 {
+			eosLogger.Log(ctx, LogLevelError, "PutObjectPart", fmt.Sprintf("PutObjectPart received 0 bytes in the buffer. [object: %s/%s, uploadID: %d]", bucket, object, partID), err)
+			transfer.firstByte = 0
+		} else {
+			transfer.firstByte = buf[0]
+		}
 		transfer.chunkSize = size
 		transfer.Unlock()
 	} else {
@@ -661,7 +666,6 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		transfer.RLock()
 		firstbyte := []byte{transfer.firstByte}
 		transfer.RUnlock()
-
 		err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, 0, size, "1", firstbyte)
 		if err != nil {
 			eosLogger.Log(ctx, LogLevelError, "CompleteMultipartUpload", fmt.Sprintf("ERROR: CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s, error: %+v]", uploadID, err), err)
