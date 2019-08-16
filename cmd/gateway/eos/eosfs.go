@@ -186,12 +186,14 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 	}
 	eosLogger.Log(ctx, LogLevelStat, "xrdcpFind", fmt.Sprintf("EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl), nil)
 
-	cmd := exec.Command("/usr/bin/xrdcp", rooturl, "-")
+	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
+
 	if err := cmd.Start(); err != nil {
 		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
 		return nil, err
 	}
+	defer cmd.Wait()
 
 	parsedobjects := make([]map[string]string, 0)
 	var object string
@@ -218,6 +220,12 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 			parsedobjects = append(parsedobjects, parsed)
 		}
 	}
+
+	// Make sure we close the pipe so the subprocess doesn't keep running
+	if closePipeErr := pipe.Close(); closePipeErr != nil && err == nil {
+		err = closePipeErr
+	}
+
 	return parsedobjects, nil
 }
 
