@@ -147,11 +147,9 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, locatio
 		return minio.BucketNameInvalid{Bucket: bucket}
 	}
 
-	if _, err := e.FileSystem.Stat(ctx, bucket); err != nil {
+	exists, _ := e.FileSystem.FileExists(ctx, bucket)
+	if !exists {
 		_ = e.FileSystem.mkdirWithOption(ctx, bucket, "")
-		//	if err != nil {
-		//		return minio.BucketNotFound{Bucket: bucket}
-		//	}
 	} else {
 		return minio.BucketExists{Bucket: bucket}
 	}
@@ -240,7 +238,7 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 	}
 
 	dir := destBucket + "/" + filepath.Dir(destObject)
-	if _, err := e.FileSystem.Stat(ctx, dir); err != nil {
+	if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
 
@@ -296,7 +294,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	dir := bucket + "/" + filepath.Dir(object)
 	objectpath := bucket + "/" + object
 
-	if _, err := e.FileSystem.Stat(ctx, dir); err != nil {
+	if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
 
@@ -453,7 +451,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 	}
 
 	dir := bucket + "/" + filepath.Dir(object)
-	if _, err := e.FileSystem.Stat(ctx, dir); err != nil {
+	if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
 		eosLogger.Log(ctx, LogLevelInfo, "NewMultipartUpload", fmt.Sprintf("NewMultipartUpload: mkdir: [dir: %s]", dir), nil)
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
