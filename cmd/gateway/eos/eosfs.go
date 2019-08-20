@@ -148,7 +148,9 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 
 	objects, err := e.xrdcpFind(ctx, eospath)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "BuildCache", fmt.Sprintf("ERROR: Unable to read directory [eospath: %s, error: %+v]", eospath, err), err)
+		// Debug level since it happens quite often
+		// when a file that doesn't exist is checked for
+		eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("ERROR: Unable to read directory [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, eoserrFileNotFound
 	}
 
@@ -178,6 +180,34 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 	return entries, err
 }
 
+// Check if a file or directory exists (returns true on error or file existence, otherwise false)
+func (e *eosFS) xrdcpFileExists(ctx context.Context, path string) (bool, error) {
+
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=ls&mgm.option=sdF&mgm.path=%s", e.MGMHost, path))
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFileExists", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
+		return true, err
+	}
+	eosLogger.Log(ctx, LogLevelStat, "xrdcpFileExists", fmt.Sprintf("EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl), nil)
+
+	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFileExists", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
+		return true, err
+	}
+
+	outputStr := string(output)
+	outputStr = strings.TrimSpace(outputStr)
+
+	if strings.HasSuffix(outputStr, "&mgm.proc.retc=0") {
+		return true, nil
+	}
+
+	return false, nil
+}
+
 func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string, error) {
 	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=%s", e.MGMHost, path))
 	if err != nil {
@@ -186,7 +216,7 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 	}
 	eosLogger.Log(ctx, LogLevelStat, "xrdcpFind", fmt.Sprintf("EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl), nil)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", rooturl, "-")
+	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
 
 	if err := cmd.Start(); err != nil {
@@ -255,19 +285,21 @@ func (e *eosFS) xrdcpFindParseResult(ctx context.Context, object string) map[str
 		return nil
 	}
 
-	// Get the filename using the filename length
-	// to avoid splitting on spaces in the filename
-	filename := split[1][5:keylength]
-
+	// Check that there'd be a character after file=
 	if len(split[1]) < 6 {
 		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("Object not long enough [object: %s]", object), nil)
 		return nil
 	}
 
+	// Check to make sure we hav enough characters to get the filename
 	if len(split[1]) < keylength {
 		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("keylength.file longer than object [object: %s]", object), nil)
 		return nil
 	}
+
+	// Get the filename using the filename length
+	// to avoid splitting on spaces in the filename
+	filename := split[1][5:keylength]
 
 	// Remove the filename from the object
 	object = split[1][keylength:len(split[1])]
@@ -328,6 +360,14 @@ func (e *eosFS) CreateStatEntry(object map[string]string) eosFileStat {
 		contenttype: attrContentType,
 	}
 
+}
+
+func (e *eosFS) FileExists(ctx context.Context, p string) (bool, error) {
+	eospath, err := e.AbsoluteEOSPath(p)
+	if err != nil {
+		return true, err
+	}
+	return e.xrdcpFileExists(ctx, eospath)
 }
 
 func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
