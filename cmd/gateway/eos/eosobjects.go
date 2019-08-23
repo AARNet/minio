@@ -849,11 +849,16 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 				objpath = filepath.Dir(strings.TrimSuffix(path, "/")) + "/" + obj
 				objprefix = filepath.Dir(prefix) + "/"
 			}
-			objname := objprefix + obj
+
 			objpath = filepath.Clean(objpath)
 			stat, err = e.FileSystem.Stat(ctx, objpath)
+			eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Stat: %+v", stat), nil)
 
 			if stat != nil {
+				objname := objprefix + obj
+				if len(e.DirCache.objects) == 1 && filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
+					objname = obj
+				}
 				o := e.NewObjectInfo(bucket, objname, stat)
 				eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Object: %+v", o), nil)
 
@@ -862,6 +867,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					result.Prefixes = append(result.Prefixes, o.Name)
 				} else {
 					if len(e.DirCache.objects) == 1 {
+						eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Only one object, adding '%s' to prefixes", filepath.Dir(o.Name)), nil)
 						result.Prefixes = append(result.Prefixes, filepath.Dir(o.Name)+"/")
 					}
 					result.Objects = append(result.Objects, o)
@@ -877,6 +883,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 						result.Objects = append(result.Objects, subobj)
 					}
 					for _, subprefix := range subdir.Prefixes {
+						eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Adding %s to prefixes", filepath.Dir(o.Name)), nil)
 						result.Prefixes = append(result.Prefixes, subprefix)
 					}
 				}
