@@ -29,6 +29,7 @@ func NewStatCache(path string) *StatCache {
 
 func (c *StatCache) Reset() {
 	c.Lock()
+	c.cache = nil
 	c.cache = make(map[string]eosFileStat)
 	c.Unlock()
 }

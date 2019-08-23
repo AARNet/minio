@@ -38,3 +38,33 @@ func (c *RequestStatCache) Get(ctx context.Context) *StatCache {
 	c.Unlock()
 	return c.cache[reqId]
 }
+
+func (c *RequestStatCache) Reset(ctx context.Context) *StatCache {
+	c.Lock()
+	c.init()
+	reqInfo := logger.GetReqInfo(ctx)
+	reqId := "none"
+	if reqInfo.RequestID != "" {
+		reqId = reqInfo.RequestID
+	}
+	if _, ok := c.cache[reqId]; !ok {
+		c.cache[reqId] = nil
+		c.cache[reqId] = NewStatCache(c.path)
+	}
+	c.Unlock()
+	return c.cache[reqId]
+}
+
+func (c *RequestStatCache) Delete(ctx context.Context) {
+	c.Lock()
+	c.init()
+	reqInfo := logger.GetReqInfo(ctx)
+	reqId := "none"
+	if reqInfo.RequestID != "" {
+		reqId = reqInfo.RequestID
+	}
+	if _, ok := c.cache[reqId]; !ok {
+		c.cache[reqId] = nil
+	}
+	c.Unlock()
+}
