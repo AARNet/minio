@@ -180,6 +180,10 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 	return entries, err
 }
 
+func (e *eosFS) DeleteCache(ctx context.Context) {
+	e.StatCache.Delete(ctx)
+}
+
 // Check if a file or directory exists (returns true on error or file existence, otherwise false)
 func (e *eosFS) xrdcpFileExists(ctx context.Context, path string) (bool, error) {
 
