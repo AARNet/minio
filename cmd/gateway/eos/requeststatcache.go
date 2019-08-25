@@ -3,6 +3,7 @@ package eos
 import (
 	"context"
 	"github.com/minio/minio/cmd/logger"
+	"runtime/debug"
 	"sync"
 )
 
@@ -67,4 +68,5 @@ func (c *RequestStatCache) Delete(ctx context.Context) {
 		c.cache[reqId] = nil
 	}
 	c.Unlock()
+	debug.FreeOSMemory()
 }
