@@ -156,7 +156,7 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 
 	if len(objects) > 0 {
 		for _, object := range objects {
-			var fi eosFileStat
+			var fi *eosFileStat
 			cacheKey := strings.TrimSuffix(object["file"], "/")
 			if !strings.HasPrefix(object["file"], ".sys.v#.") {
 				fi = e.CreateStatEntry(object)
@@ -340,7 +340,7 @@ func (e *eosFS) xrdcpFindParseResult(ctx context.Context, object string) map[str
 	return m
 }
 
-func (e *eosFS) CreateStatEntry(object map[string]string) eosFileStat {
+func (e *eosFS) CreateStatEntry(object map[string]string) *eosFileStat {
 	// Defaults
 	attrEtag := defaultETag
 	attrContentType := "application/octet-stream"
@@ -354,7 +354,7 @@ func (e *eosFS) CreateStatEntry(object map[string]string) eosFileStat {
 	}
 	name := strings.TrimSuffix(filepath.Base(object["file"]), "/")
 	var mtime int64 = int64(StringToFloat(object["mtime"]))
-	return eosFileStat{
+	return &eosFileStat{
 		id:          StringToInt(object["id"]),
 		name:        name,
 		size:        StringToInt(object["size"]),
@@ -405,7 +405,7 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
 	fi := e.CreateStatEntry(object)
 	reqStatCache.Write(eospath, fi)
 
-	return &fi, nil
+	return fi, nil
 }
 
 func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {

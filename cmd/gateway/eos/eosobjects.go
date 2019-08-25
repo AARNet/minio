@@ -37,9 +37,6 @@ type eosObjects struct {
 	stage        string
 	readonly     bool
 	validbuckets bool
-	StatCache    *StatCache
-	DirCache     eosDirCacheType
-	BucketCache  map[string]minio.BucketInfo
 	TransferList *TransferList
 	FileSystem   *eosFS
 }
@@ -76,19 +73,12 @@ func (e *eosObjects) StorageInfo(ctx context.Context) (storageInfo minio.Storage
 func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio.BucketInfo, err error) {
 	eosLogger.Log(ctx, LogLevelStat, "GetBucketInfo", fmt.Sprintf("S3cmd: GetBucketInfo [bucket: %s]", bucket), nil)
 
-	if bi, ok := e.BucketCache[bucket]; ok {
-		eosLogger.Log(ctx, LogLevelDebug, "GetBucketInfo", fmt.Sprintf("Cache hit [bucket: %s]", bucket), nil)
-		return bi, nil
-	}
-	eosLogger.Log(ctx, LogLevelDebug, "GetBucketInfo", fmt.Sprintf("Cache miss [bucket: %s]", bucket), nil)
-
 	stat, err := e.FileSystem.Stat(ctx, bucket)
 	if err == nil {
 		bi = minio.BucketInfo{
 			Name:    bucket,
-			Created: stat.ModTime()}
-
-		e.BucketCache[bucket] = bi
+			Created: stat.ModTime(),
+		}
 	} else {
 		err = minio.BucketNotFound{Bucket: bucket}
 	}
@@ -98,8 +88,6 @@ func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio
 // ListBuckets - Lists all root folders
 func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInfo, err error) {
 	eosLogger.Log(ctx, LogLevelStat, "ListBuckets", "S3cmd: ListBuckets", nil)
-
-	e.BucketCache = make(map[string]minio.BucketInfo)
 
 	dirs, err := e.FileSystem.BuildCache(ctx, "", false)
 	defer e.FileSystem.DeleteCache(ctx)
@@ -118,7 +106,6 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 					Created: stat.ModTime(),
 				}
 				buckets = append(buckets, b)
-				e.BucketCache[strings.TrimSuffix(dir, "/")] = b
 			} else {
 				if !stat.IsDir() {
 					eosLogger.Log(ctx, LogLevelDebug, "ListBuckets", fmt.Sprintf("Bucket: %s not a directory", dir), nil)
@@ -132,7 +119,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		}
 	}
 
-	eosLogger.Log(ctx, LogLevelDebug, "ListBuckets", fmt.Sprintf("BucketCache: %+v", e.BucketCache), nil)
+	eosLogger.Log(ctx, LogLevelDebug, "ListBuckets", fmt.Sprintf("Buckets found: %+v", buckets), nil)
 	return buckets, err
 }
 
@@ -262,7 +249,6 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 		return objInfo, err
 	}
 
-	e.StatCache.DeleteObject(destBucket, destObject)
 	return e.GetObjectInfo(ctx, destBucket, destObject, dstOpts)
 }
 
@@ -316,7 +302,6 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		return objInfo, err
 	}
 
-	e.StatCache.DeleteObject(bucket, object)
 	return e.GetObjectInfo(ctx, bucket, object, opts)
 }
 
@@ -503,7 +488,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		transfer.RLock()
 		parts := transfer.parts
 		transfer.RUnlock()
-		//parts := transfer.GetParts()
+
 		if parts != nil {
 			break
 		}
@@ -687,20 +672,7 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		return objInfo, err
 	}
 
-	//populate cache
-	e.StatCache.DeletePath(uploadID)
-	stat, err := e.FileSystem.Stat(ctx, uploadID)
-	e.StatCache.DeletePath(uploadID) // not sure why this is here twice..
-	stat.size = objInfo.Size
-	stat.file = true
-	stat.etag = objInfo.ETag
-	stat.contenttype = objInfo.ContentType
-	stat.modTime = objInfo.ModTime
-	eospath, err := e.FileSystem.AbsoluteEOSPath(uploadID)
-	if stat != nil {
-		e.StatCache.Write(eospath, *stat)
-	}
-
+	e.TransferList.DeleteTransfer(uploadID)
 	return objInfo, nil
 }
 
@@ -834,20 +806,21 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		prefix = strings.TrimSuffix(prefix, "/") + "/"
 	}
 
-	// Populate the directory cache
-	e.DirCache.objects, err = e.FileSystem.BuildCache(ctx, path, true)
+	// Get a list of objects in the directory
+	// or the single object if it's not a directory
+	objects, err := e.FileSystem.BuildCache(ctx, path, true)
 	defer e.FileSystem.DeleteCache(ctx)
 
 	if err != nil {
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 	}
 
-	for _, obj := range e.DirCache.objects {
+	for _, obj := range objects {
 		if !strings.HasSuffix(obj, ".minio.sys") {
 			var stat *eosFileStat
 			objpath := strings.TrimSuffix(path, "/") + "/" + obj
 			objprefix := prefix
-			if len(e.DirCache.objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
+			if len(objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
 				// Jump back one directory to fix the prefixes
 				// for individual files
 				objpath = filepath.Dir(strings.TrimSuffix(path, "/")) + "/" + obj
@@ -860,7 +833,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 			if stat != nil {
 				objname := objprefix + obj
-				if len(e.DirCache.objects) == 1 && filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
+				if len(objects) == 1 && filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
 					objname = obj
 				}
 				o := e.NewObjectInfo(bucket, objname, stat)
@@ -870,7 +843,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 				if stat.IsDir() {
 					result.Prefixes = append(result.Prefixes, o.Name)
 				} else {
-					if len(e.DirCache.objects) == 1 {
+					if len(objects) == 1 {
 						eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Only one object, adding '%s' to prefixes", filepath.Dir(o.Name)), nil)
 						result.Prefixes = append(result.Prefixes, filepath.Dir(o.Name)+"/")
 					}

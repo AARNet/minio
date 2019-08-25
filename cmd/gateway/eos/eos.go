@@ -99,9 +99,6 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	logger.Info("EOS READ METHOD: %s", readmethod)
 	logger.Info("EOS LOG LEVEL: %d", loglevel)
 
-	// Init the stat cache used by eosObjects and eosFS
-	statCache := NewStatCache(os.Getenv("VOLUME_PATH"))
-
 	// Init filesystem
 	filesystem := &eosFS{
 		MGMHost:    os.Getenv("EOS"),
@@ -122,10 +119,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		hookurl:      os.Getenv("HOOKSURL"),
 		stage:        stage,
 		validbuckets: validbuckets,
-		StatCache:    statCache,
 		TransferList: NewTransferList(),
-		DirCache:     NewDirCache(),
-		BucketCache:  make(map[string]minio.BucketInfo),
 		FileSystem:   filesystem,
 	}, nil
 }

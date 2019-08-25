@@ -17,20 +17,20 @@ import (
 type StatCache struct {
 	sync.RWMutex
 	path  string
-	cache map[string]eosFileStat
+	cache map[string]*eosFileStat
 }
 
 func NewStatCache(path string) *StatCache {
 	c := new(StatCache)
 	c.path = path
-	c.cache = make(map[string]eosFileStat)
+	c.cache = make(map[string]*eosFileStat)
 	return c
 }
 
 func (c *StatCache) Reset() {
 	c.Lock()
 	c.cache = nil
-	c.cache = make(map[string]eosFileStat)
+	c.cache = make(map[string]*eosFileStat)
 	c.Unlock()
 }
 
@@ -39,7 +39,7 @@ func (c *StatCache) Read(path string) (*eosFileStat, bool) {
 	fi, ok := c.cache[path]
 	c.RUnlock()
 	if ok {
-		return &fi, true
+		return fi, true
 	}
 	// Try it as a directory
 	if path[len(path)-1:] != "/" {
@@ -48,7 +48,7 @@ func (c *StatCache) Read(path string) (*eosFileStat, bool) {
 	return nil, false
 }
 
-func (c *StatCache) Write(path string, obj eosFileStat) {
+func (c *StatCache) Write(path string, obj *eosFileStat) {
 	c.Lock()
 	c.cache[path] = obj
 	c.Unlock()
