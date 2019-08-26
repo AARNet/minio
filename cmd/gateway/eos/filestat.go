@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-type eosFileStat struct {
+// FileStat is the stat information for an object
+type FileStat struct {
 	id          int64
 	name        string
 	size        int64
@@ -28,38 +29,46 @@ const (
 	defaultETag string = "00000000000000000000000000000000"
 )
 
-func (fs *eosFileStat) Id() int64 {
+// ID returns the FileStat ID
+func (fs *FileStat) ID() int64 {
 	return fs.id
 }
 
-func (fs *eosFileStat) Name() string {
+// Name returns the file name (no path)
+func (fs *FileStat) Name() string {
 	return fs.name
 }
 
-func (fs *eosFileStat) Size() int64 {
+// Size returns the size of the file
+func (fs *FileStat) Size() int64 {
 	return fs.size
 }
 
-func (fs *eosFileStat) ModTime() time.Time {
+// ModTime returns the file's modified time
+func (fs *FileStat) ModTime() time.Time {
 	return fs.modTime
 }
 
-func (fs *eosFileStat) Sys() interface{} {
+// Sys returns ... TODO: find this out
+func (fs *FileStat) Sys() interface{} {
 	return &fs.sys
 }
 
-func (fs *eosFileStat) IsDir() bool {
+// IsDir returns if the file is a directory
+func (fs *FileStat) IsDir() bool {
 	return !fs.file
 }
 
-func (fs *eosFileStat) ETag() string {
+// ETag returns the file's etag
+func (fs *FileStat) ETag() string {
 	if fs.IsDir() || fs.etag == "" {
 		return defaultETag
 	}
 	return fs.etag
 }
 
-func (fs *eosFileStat) ContentType() string {
+// ContentType returns the files content type
+func (fs *FileStat) ContentType() string {
 	if fs.IsDir() {
 		return "application/x-directory"
 	}

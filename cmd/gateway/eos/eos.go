@@ -30,7 +30,7 @@ const (
 	readMethodXrdcp  string = "xrdcp"
 )
 
-// Define the log level globally because.. quick fix?
+// MaxLogLevel defines the log level globally because.. quick fix?
 var MaxLogLevel int
 
 // Name implements Gateway interface.
@@ -155,6 +155,7 @@ func interfaceToString(in interface{}) string {
 	return strings.TrimSpace(s)
 }
 
+// StringToInt converts a string to an int64
 func StringToInt(str string) int64 {
 	str = strings.TrimSpace(str)
 	if str == "" {
@@ -164,6 +165,7 @@ func StringToInt(str string) int64 {
 	return i
 }
 
+// StringToFloat converts a string to a float
 func StringToFloat(str string) float64 {
 	str = strings.TrimSpace(str)
 	if str == "" {
@@ -173,6 +175,7 @@ func StringToFloat(str string) float64 {
 	return i
 }
 
+// StringToBool converts a string to a bool
 func StringToBool(str string) bool {
 	str = strings.TrimSpace(str)
 	if str == "" {
@@ -183,22 +186,25 @@ func StringToBool(str string) bool {
 }
 
 const (
+	// SleepDefault is the default sleep time in ms
 	SleepDefault int = 100
-	SleepShort   int = 10
-	SleepLong    int = 1000
+	// SleepShort is a short sleep time in ms
+	SleepShort int = 10
+	// SleepLong is a longer sleep time in ms
+	SleepLong int = 1000
 )
 
-// Sleep for t milliseconds
+// SleepMs pauses for t milliseconds
 func SleepMs(t int) {
 	time.Sleep(time.Duration(t) * time.Millisecond)
 }
 
-// Default sleep function
+// Sleep pauses for SleepDefault
 func Sleep() {
 	SleepMs(SleepDefault)
 }
 
-// Split a key=value format string into 2 strings (key, value)
+// SplitKeyValuePair splits a key=value format string into 2 strings (key, value)
 func SplitKeyValuePair(pair string) (string, string) {
 	tmp := strings.Split(pair, "=")
 	if len(tmp) > 1 {

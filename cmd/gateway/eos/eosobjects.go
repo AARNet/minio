@@ -97,7 +97,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 	}
 
 	for _, dir := range dirs {
-		var stat *eosFileStat
+		var stat *FileStat
 		stat, err = e.FileSystem.Stat(ctx, dir)
 		if stat != nil {
 			if stat.IsDir() && e.IsValidBucketName(strings.TrimRight(dir, "/")) {
@@ -611,7 +611,7 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		if transfer.md5PartID == transfer.partsCount+1 {
 			break
 		}
-		eosLogger.Log(ctx, LogLevelDebug, "CompleteMultipartUpload", fmt.Sprintf("CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %s, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID), nil)
+		eosLogger.Log(ctx, LogLevelDebug, "CompleteMultipartUpload", fmt.Sprintf("CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID), nil)
 		transfer.RUnlock()
 		Sleep()
 	}
@@ -712,7 +712,7 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 
 //AbortMultipartUpload
 func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string) (err error) {
-	eosLogger.Log(ctx, LogLevelStat, "AbortMultipartUpload", fmt.Sprintf("S3cmd: AbortMultipartUpload: [object: %s/%s, uploadID: %d]", bucket, object, uploadID), nil)
+	eosLogger.Log(ctx, LogLevelStat, "AbortMultipartUpload", fmt.Sprintf("S3cmd: AbortMultipartUpload: [object: %s/%s, uploadID: %s]", bucket, object, uploadID), nil)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -758,7 +758,7 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 }
 
 // Return an initialised minio.ObjectInfo
-func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *eosFileStat) (obj minio.ObjectInfo) {
+func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) (obj minio.ObjectInfo) {
 	return minio.ObjectInfo{
 		Bucket:      bucket,
 		Name:        name,
@@ -817,7 +817,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 	for _, obj := range objects {
 		if !strings.HasSuffix(obj, ".minio.sys") {
-			var stat *eosFileStat
+			var stat *FileStat
 			objpath := strings.TrimSuffix(path, "/") + "/" + obj
 			objprefix := prefix
 			if len(objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {

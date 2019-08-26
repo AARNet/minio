@@ -24,17 +24,18 @@ const (
 
 type eosLog struct{}
 
+// LogEntry defines the structure of a log entry made by the EOS gateway
 type LogEntry struct {
 	Level      string   `json:"level"`
 	Time       string   `json:"time"`
 	RequestID  string   `json:"request_id,omitempty"`
 	Message    string   `json:"message"`
-	Method     string   `json:"method",omitempty`
-	RemoteHost string   `json:"string,omitempty"`
-	UserAgent  string   `json:"string,omitempty"`
-	Error      string   `json:"string,omitempty"`
-	Source     string   `json:"string,omitempty"`
-	Trace      []string `json:"string,omitempty"`
+	Method     string   `json:"method,omitempty"`
+	RemoteHost string   `json:"remote_host,omitempty"`
+	UserAgent  string   `json:"useragent,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	Source     string   `json:"source,omitempty"`
+	Trace      []string `json:"trace,omitempty"`
 }
 
 var eosLogger eosLog
