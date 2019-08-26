@@ -387,7 +387,7 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 
 	objects, err := e.xrdcpFind(ctx, eospath)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
+		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, errFileNotFound
 	}
 
