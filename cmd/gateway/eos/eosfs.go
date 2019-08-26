@@ -219,7 +219,6 @@ func (e *eosFS) FileExists(ctx context.Context, p string) (bool, error) {
 		return true, err
 	}
 	return e.Xrdcp.FileExists(ctx, eospath)
-	//return e.xrdcpFileExists(ctx, eospath)
 }
 
 func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
