@@ -40,11 +40,11 @@ type eosFS struct {
 }
 
 var (
-	eoserrFileNotFound     = errors.New("EOS: File Not Found")
-	eoserrDiskAccessDenied = errors.New("EOS: Disk Access Denied")
-	eoserrCantPut          = errors.New("EOS: Unable to PUT")
-	eoserrFilePathBad      = errors.New("EOS: Bad File Path")
-	eoserrResponseIsNil    = errors.New("EOS: Response body is nil")
+	errFileNotFound     = errors.New("EOS: File Not Found")
+	errDiskAccessDenied = errors.New("EOS: Disk Access Denied")
+	errCantPut          = errors.New("EOS: Unable to PUT")
+	errFilePathBad      = errors.New("EOS: Bad File Path")
+	errResponseIsNil    = errors.New("EOS: Response body is nil")
 )
 
 // Returns a HTTPClient
@@ -79,14 +79,14 @@ func (e *eosFS) NewRequest(method string, url string, body io.Reader) (*http.Cli
 }
 
 // Returns common parameters for requests to MGM
-func (e *eosFS) UrlExtras() string {
+func (e *eosFS) URLExtras() string {
 	return fmt.Sprintf("&eos.ruid=%s&eos.rgid=%s&mgm.format=json", e.UID, e.GID)
 }
 
 // Normalise an EOS path
 func (e *eosFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	if strings.Contains(path, "..") {
-		return "", eoserrFilePathBad
+		return "", errFilePathBad
 	}
 	path = strings.ReplaceAll(path, "//", "/")
 	eosPath = strings.TrimSuffix(e.Path+"/"+path, ".")
@@ -120,7 +120,7 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 			}
 		}
 		if res == nil && err == nil {
-			err = eoserrResponseIsNil
+			err = errResponseIsNil
 		}
 		Sleep()
 	}
@@ -151,12 +151,12 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		// Debug level since it happens quite often
 		// when a file that doesn't exist is checked for
 		eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("ERROR: Unable to read directory [eospath: %s, error: %+v]", eospath, err), err)
-		return nil, eoserrFileNotFound
+		return nil, errFileNotFound
 	}
 
 	if len(objects) > 0 {
 		for _, object := range objects {
-			var fi *eosFileStat
+			var fi *FileStat
 			cacheKey := strings.TrimSuffix(object["file"], "/")
 			if !strings.HasPrefix(object["file"], ".sys.v#.") {
 				fi = e.CreateStatEntry(object)
@@ -170,13 +170,12 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 			if object["is_file"] == "true" && object["file"] == strings.TrimSuffix(eospath, "/") {
 				eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Object matches requested path, returning it [object: %s, path: %s]", object["file"], eospath), err)
 				return []string{fi.name}, nil
-			} else {
-				entries = append(entries, fi.name)
 			}
+			entries = append(entries, fi.name)
 		}
 	}
-	eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Result Entries: %+v", entries, err), err)
-	eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Request Stat Cache: %+v", reqStatCache.cache, err), err)
+	eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Result Entries: %+v", entries), err)
+	eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Request Stat Cache: %+v", reqStatCache.cache), err)
 	return entries, err
 }
 
@@ -340,7 +339,7 @@ func (e *eosFS) xrdcpFindParseResult(ctx context.Context, object string) map[str
 	return m
 }
 
-func (e *eosFS) CreateStatEntry(object map[string]string) *eosFileStat {
+func (e *eosFS) CreateStatEntry(object map[string]string) *FileStat {
 	// Defaults
 	attrEtag := defaultETag
 	attrContentType := "application/octet-stream"
@@ -353,8 +352,8 @@ func (e *eosFS) CreateStatEntry(object map[string]string) *eosFileStat {
 		attrContentType = object["minio_contenttype"]
 	}
 	name := strings.TrimSuffix(filepath.Base(object["file"]), "/")
-	var mtime int64 = int64(StringToFloat(object["mtime"]))
-	return &eosFileStat{
+	mtime := int64(StringToFloat(object["mtime"]))
+	return &FileStat{
 		id:          StringToInt(object["id"]),
 		name:        name,
 		size:        StringToInt(object["size"]),
@@ -374,7 +373,7 @@ func (e *eosFS) FileExists(ctx context.Context, p string) (bool, error) {
 	return e.xrdcpFileExists(ctx, eospath)
 }
 
-func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
+func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
@@ -390,7 +389,7 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
 	objects, err := e.xrdcpFind(ctx, eospath)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
-		return nil, eoserrFileNotFound
+		return nil, errFileNotFound
 	}
 
 	// Grab the first entry
@@ -398,7 +397,7 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*eosFileStat, error) {
 	if len(objects) > 0 {
 		object = objects[0]
 	} else {
-		return nil, eoserrFileNotFound
+		return nil, errFileNotFound
 	}
 
 	// Create stat entry, cache it, return it.
@@ -415,7 +414,7 @@ func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "mkdirWithOption", fmt.Sprintf("EOScmd: procuser.mkdir [eospath: %s]", eospath), nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.UrlExtras()))
+	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "mkdirWithOption", fmt.Sprintf("ERROR: EOSmkdirWithOption curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
@@ -423,7 +422,7 @@ func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {
 
 	if interfaceToString(m["errormsg"]) != "" {
 		eosLogger.Log(ctx, LogLevelError, "mkdirWithOption", fmt.Sprintf("ERROR: EOS procuser.mkdir [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), err)
-		return eoserrDiskAccessDenied
+		return errDiskAccessDenied
 	}
 
 	//e.messagebusAddPutJob(p)
@@ -438,7 +437,7 @@ func (e *eosFS) rmdir(ctx context.Context, p string) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "rmdir", fmt.Sprintf("EOScmd: procuser.rmdir [eospath: %s]", eospath), nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.UrlExtras()))
+	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "rmdir", fmt.Sprintf("ERROR: EOSrmdir curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
@@ -449,7 +448,7 @@ func (e *eosFS) rmdir(ctx context.Context, p string) error {
 			return nil
 		}
 		eosLogger.Log(ctx, LogLevelError, "rmdir", fmt.Sprintf("ERROR EOS procuser.rm [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), err)
-		return eoserrDiskAccessDenied
+		return errDiskAccessDenied
 	}
 
 	//e.messagebusAddDeleteJob(p)
@@ -464,7 +463,7 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "rm", fmt.Sprintf("EOScmd: procuser.rm [eospath: %s]", eospath), nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.UrlExtras()))
+	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "rm", fmt.Sprintf("ERROR: EOSrm curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
@@ -472,11 +471,10 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 
 	if interfaceToString(m["errormsg"]) != "" {
 		eosLogger.Log(ctx, LogLevelError, "rm", fmt.Sprintf("ERROR EOS procuser.rm [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), nil)
-		return eoserrDiskAccessDenied
+		return errDiskAccessDenied
 	}
 	reqStatCache := e.StatCache.Get(ctx)
 	reqStatCache.DeletePath(p)
-	//e.messagebusAddDeleteJob(p)
 	return nil
 }
 
@@ -493,7 +491,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 	//need to wait for file, it is possible it is uploaded via a background job
 	for {
 		eosLogger.Log(ctx, LogLevelStat, "Copy", fmt.Sprintf("EOScmd: procuser.fileinfo [eospath: %s]", eossrcpath), nil)
-		_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eossrcpath), e.UrlExtras()))
+		_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eossrcpath), e.URLExtras()))
 		if err == nil {
 			if interfaceToInt64(m["size"]) >= size {
 				break
@@ -505,7 +503,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "Copy", fmt.Sprintf("EOScmd: procuser.file.copy [src: %s, dst: %s]", eossrcpath, eosdstpath), nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.UrlExtras()))
+	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Copy", fmt.Sprintf("ERROR: EOScopy curl to MGM failed [src: %s, dst: %s, error: %+v]", eossrcpath, eosdstpath, err), err)
 		return err
@@ -513,7 +511,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 
 	if interfaceToString(m["errormsg"]) != "" {
 		eosLogger.Log(ctx, LogLevelError, "Copy", fmt.Sprintf("ERROR: EOS procuser.file.copy [src: %s, dst: %s, error: %s]", eossrcpath, eosdstpath, interfaceToString(m["errormsg"])), nil)
-		return eoserrDiskAccessDenied
+		return errDiskAccessDenied
 	}
 
 	reqStatCache := e.StatCache.Get(ctx)
@@ -531,7 +529,7 @@ func (e *eosFS) Touch(ctx context.Context, p string, size int64) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "Touch", fmt.Sprintf("EOScmd: procuser.file.touch [eospath: %s]", eospath), nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.UrlExtras(), size))
+	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.URLExtras(), size))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Touch", fmt.Sprintf("ERROR: EOStouch curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
@@ -539,7 +537,7 @@ func (e *eosFS) Touch(ctx context.Context, p string, size int64) error {
 
 	if interfaceToString(m["errormsg"]) != "" {
 		eosLogger.Log(ctx, LogLevelError, "Touch", fmt.Sprintf("ERROR: EOS procuser.file.touch [eospath: %s, error: %s]", eospath, interfaceToString(m["errormsg"])), nil)
-		return eoserrDiskAccessDenied
+		return errDiskAccessDenied
 	}
 
 	return nil
@@ -556,7 +554,7 @@ func (e *eosFS) Rename(ctx context.Context, from, to string) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "Rename", fmt.Sprintf("EOScmd: procuser.file.rename [src: %s, dst: %s]", eosfrompath, eostopath), nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=rename&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eosfrompath), url.QueryEscape(eostopath), e.UrlExtras()))
+	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=rename&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eosfrompath), url.QueryEscape(eostopath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Rename", fmt.Sprintf("ERROR: EOSrename curl to MGM failed [src: %s, dst: %s, error: %+v]", eosfrompath, eostopath, err), err)
 		return err
@@ -564,7 +562,7 @@ func (e *eosFS) Rename(ctx context.Context, from, to string) error {
 
 	if interfaceToString(m["errormsg"]) != "" {
 		eosLogger.Log(ctx, LogLevelError, "Rename", fmt.Sprintf("ERROR: EOS procuser.file.rename [src: %s, dst: %s, error: %s]", eosfrompath, eostopath, interfaceToString(m["errormsg"])), nil)
-		return eoserrDiskAccessDenied
+		return errDiskAccessDenied
 	}
 
 	return nil
@@ -581,7 +579,7 @@ func (e *eosFS) SetMeta(ctx context.Context, p, key, value string) error {
 		return err
 	}
 	eosLogger.Log(ctx, LogLevelStat, "SetMeta", fmt.Sprintf("EOScmd: procuser.attr.set [path: %s, key: %s, value: %s]", eospath, key, value), nil)
-	cmd := fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.UrlExtras())
+	cmd := fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.URLExtras())
 	body, m, err := e.MGMcurl(ctx, cmd)
 	eosLogger.Log(ctx, LogLevelDebug, "SetMeta", fmt.Sprintf("EOSsetMeta: meta tag return body [eospath: %s, body: %s]", eospath, strings.Replace(string(body), "\n", " ", -1)), nil)
 	if err != nil {
@@ -664,13 +662,13 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 		} else {
 			eosLogger.Log(ctx, LogLevelError, "Put", fmt.Sprintf("ERROR: EOSput: response body is nil [eosurl: %s, error: %+v]", eosurl, err), err)
 			if err == nil {
-				err = eoserrResponseIsNil
+				err = errResponseIsNil
 			}
 		}
 
 		if res.StatusCode != 201 {
 			eosLogger.Log(ctx, LogLevelDebug, "Put", fmt.Sprintf("EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res), nil)
-			err = eoserrCantPut
+			err = errCantPut
 			SleepMs(SleepShort)
 			continue
 		}
@@ -688,7 +686,7 @@ func (e *eosFS) xrootdWriteChunk(ctx context.Context, p string, offset, size int
 		return err
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.User, e.MGMHost, eospath)
-	eosLogger.Log(ctx, LogLevelStat, "xrootdWriteChunk", fmt.Sprintf("EOScmd: xrootd.PUT: [script: %s, eosurl: %s, offset: %d, size: %d, checksum: %s, uid: %d, gid: %d]", e.Scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.UID, e.GID), nil)
+	eosLogger.Log(ctx, LogLevelStat, "xrootdWriteChunk", fmt.Sprintf("EOScmd: xrootd.PUT: [script: %s, eosurl: %s, offset: %d, size: %d, checksum: %s, uid: %s, gid: %s]", e.Scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.UID, e.GID), nil)
 
 	cmd := exec.Command(e.Scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.UID, e.GID)
 	cmd.Stdin = bytes.NewReader(data)
@@ -801,7 +799,7 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 			defer res.Body.Close()
 		} else {
 			eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("ERROR: webdav.GET: response body is nil [eosurl: %s, error: %+v]", eosurl, err), nil)
-			err = eoserrResponseIsNil
+			err = errResponseIsNil
 		}
 		_, err = io.CopyN(data, res.Body, length)
 	}

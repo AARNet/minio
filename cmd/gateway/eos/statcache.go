@@ -14,27 +14,31 @@ import (
 	"sync"
 )
 
+// StatCache is a lockable map of FileStat's
 type StatCache struct {
 	sync.RWMutex
 	path  string
-	cache map[string]*eosFileStat
+	cache map[string]*FileStat
 }
 
+// NewStatCache creates a new StatCache and returns it
 func NewStatCache(path string) *StatCache {
 	c := new(StatCache)
 	c.path = path
-	c.cache = make(map[string]*eosFileStat)
+	c.cache = make(map[string]*FileStat)
 	return c
 }
 
+// Reset deletes and recreates the StatCache's cache
 func (c *StatCache) Reset() {
 	c.Lock()
 	c.cache = nil
-	c.cache = make(map[string]*eosFileStat)
+	c.cache = make(map[string]*FileStat)
 	c.Unlock()
 }
 
-func (c *StatCache) Read(path string) (*eosFileStat, bool) {
+// Read tries to read an entry from the StatCache
+func (c *StatCache) Read(path string) (*FileStat, bool) {
 	c.RLock()
 	fi, ok := c.cache[path]
 	c.RUnlock()
@@ -48,12 +52,14 @@ func (c *StatCache) Read(path string) (*eosFileStat, bool) {
 	return nil, false
 }
 
-func (c *StatCache) Write(path string, obj *eosFileStat) {
+// Write creates a new entry in the StatCache
+func (c *StatCache) Write(path string, obj *FileStat) {
 	c.Lock()
 	c.cache[path] = obj
 	c.Unlock()
 }
 
+// DeletePath remove an entry from the StatCache
 func (c *StatCache) DeletePath(path string) {
 	c.Lock()
 	if _, ok := c.cache[path]; ok {
@@ -62,6 +68,7 @@ func (c *StatCache) DeletePath(path string) {
 	c.Unlock()
 }
 
+// DeleteObject deletes an object from the StatCache
 func (c *StatCache) DeleteObject(bucket, object string) {
 	path, err := c.AbsoluteEOSPath(bucket + "/" + object)
 	if err == nil {
@@ -69,10 +76,11 @@ func (c *StatCache) DeleteObject(bucket, object string) {
 	}
 }
 
-// TODO: should be a global helper method, not tied to a type - this is the only reason we have a "path" property on StatCache.
+// AbsoluteEOSPath cleans up and returns a full EOS path
 func (c *StatCache) AbsoluteEOSPath(path string) (eosPath string, err error) {
+	// TODO: should be a global helper method, not tied to a type - this is the only reason we have a "path" property on StatCache.
 	if strings.Contains(path, "..") {
-		return "", eoserrFilePathBad
+		return "", errFilePathBad
 	}
 
 	path = strings.Replace(path, "//", "/", -1)

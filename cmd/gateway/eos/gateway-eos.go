@@ -4,7 +4,7 @@
  * Michael Usher <michael.usher@aarnet.edu.au>
  * Michael D'Silva
  *
- * Gateway for the EOS storage backend  
+ * Gateway for the EOS storage backend
  *
  */
 
