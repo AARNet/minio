@@ -139,14 +139,6 @@ func interfaceToInt64(in interface{}) int64 {
 	return int64(f)
 }
 
-func interfaceToUint32(in interface{}) uint32 {
-	if in == nil {
-		return 0
-	}
-	f, _ := in.(float64)
-	return uint32(f)
-}
-
 func interfaceToString(in interface{}) string {
 	if in == nil {
 		return ""
