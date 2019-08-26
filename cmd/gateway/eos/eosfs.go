@@ -184,11 +184,34 @@ func (e *eosFS) DeleteCache(ctx context.Context) {
 
 // Check if a file or directory exists (returns true on error or file existence, otherwise false)
 func (e *eosFS) xrdcpFileExists(ctx context.Context, path string) (bool, error) {
+	_, retc, err := e.xrdcpLs(ctx, "sdF", path)
+	if retc == 0 {
+		return true, nil
+	}
 
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=ls&mgm.option=sdF&mgm.path=%s", e.MGMHost, path))
+	if retc == 1 && err != nil {
+		return true, err
+	}
+
+	return false, nil
+}
+
+// Check if a path is a file or directory
+func (e *eosFS) xrdcpIsDir(ctx context.Context, path string) (bool, error) {
+	result, _, err := e.xrdcpLs(ctx, "dF", path)
+	if err == nil && strings.HasSuffix(result, "/") {
+		return true, nil
+	}
+	return false, err
+}
+
+// Perform an "ls" using xrdcp
+func (e *eosFS) xrdcpLs(ctx context.Context, lsflags string, path string) (string, int64, error) {
+
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path=%s", e.MGMHost, lsflags, path))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "xrdcpFileExists", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
-		return true, err
+		return "", 1, err
 	}
 	eosLogger.Log(ctx, LogLevelStat, "xrdcpFileExists", fmt.Sprintf("EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl), nil)
 
@@ -197,17 +220,37 @@ func (e *eosFS) xrdcpFileExists(ctx context.Context, path string) (bool, error) 
 
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "xrdcpFileExists", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
-		return true, err
+		return "", 1, err
 	}
 
 	outputStr := string(output)
 	outputStr = strings.TrimSpace(outputStr)
 
-	if strings.HasSuffix(outputStr, "&mgm.proc.retc=0") {
-		return true, nil
+	stdout, stderr, retc := e.xrdcpResult(ctx, outputStr)
+	eosLogger.Log(ctx, LogLevelInfo, "xrdcpLs", fmt.Sprintf("stdout: %s, stderr: %s, retc: %d", stdout, stderr, retc), err)
+	if retc > 0 {
+		if stderr != "" {
+			return "", retc, errors.New(stderr)
+		}
+		return "", retc, errors.New("Unknown error when parsing ls result")
 	}
 
-	return false, nil
+	return stdout, retc, err
+}
+
+// Helper method to parse xrdcp result format
+func (e *eosFS) xrdcpResult(ctx context.Context, result string) (string, string, int64) {
+
+	stdoutidx := strings.Index(result, "mgm.proc.stdout=")
+	stderridx := strings.Index(result, "&mgm.proc.stderr=")
+	retcidx := strings.Index(result, "&mgm.proc.retc=")
+
+	retc := StringToInt(result[(retcidx + len("&mgm.proc.retc=")):])
+	stderr := result[(stderridx + len("&mgm.proc.stderr=")):retcidx]
+	stdout := result[(stdoutidx + len("mgm.proc.stdout=")):stderridx]
+
+	return stdout, stderr, retc
+
 }
 
 func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string, error) {
@@ -256,6 +299,38 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 	// Make sure we close the pipe so the subprocess doesn't keep running
 	if closePipeErr := pipe.Close(); closePipeErr != nil && err == nil {
 		err = closePipeErr
+	}
+
+	return parsedobjects, nil
+}
+
+func (e *eosFS) xrdcpFileinfo(ctx context.Context, path string) ([]map[string]string, error) {
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.find.maxdepth=1&mgm.path=%s", e.MGMHost, path))
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFileinfo", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
+		return nil, err
+	}
+	eosLogger.Log(ctx, LogLevelStat, "xrdcpFileinfo", fmt.Sprintf("EOScmd: xrdcp.FILEINFO: [path: %s, rooturl: %s]", path, rooturl), nil)
+
+	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFileinfo", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
+		return nil, err
+	}
+
+	outputStr := strings.TrimSpace(string(output))
+	stdout, stderr, retc := e.xrdcpResult(ctx, outputStr)
+
+	if retc != 0 {
+		return nil, errors.New(stderr)
+	}
+
+	parsedobjects := make([]map[string]string, 0)
+	parsed := e.xrdcpFindParseResult(ctx, stdout)
+	if parsed != nil {
+		parsedobjects = append(parsedobjects, parsed)
 	}
 
 	return parsedobjects, nil
@@ -385,7 +460,13 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 	}
 	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache miss: [p: %s, eospath: %s]", p, eospath), nil)
 
-	objects, err := e.xrdcpFind(ctx, eospath)
+	var objects []map[string]string
+	if isdir, _ := e.xrdcpIsDir(ctx, eospath); isdir {
+		objects, err = e.xrdcpFind(ctx, eospath)
+	} else {
+		objects, err = e.xrdcpFileinfo(ctx, eospath)
+	}
+
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, errFileNotFound
