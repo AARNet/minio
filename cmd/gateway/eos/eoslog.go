@@ -1,10 +1,8 @@
 package eos
 
 import (
-	"encoding/json"
-	//	c "github.com/minio/mc/pkg/console"
-	//	"github.com/minio/minio/cmd/logger/message/log"
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/minio/minio/cmd/logger"
 	"path/filepath"
