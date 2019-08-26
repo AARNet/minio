@@ -42,7 +42,6 @@ type eosFS struct {
 var (
 	errFileNotFound     = errors.New("EOS: File Not Found")
 	errDiskAccessDenied = errors.New("EOS: Disk Access Denied")
-	errCantPut          = errors.New("EOS: Unable to PUT")
 	errFilePathBad      = errors.New("EOS: Bad File Path")
 	errResponseIsNil    = errors.New("EOS: Response body is nil")
 )
@@ -236,12 +235,12 @@ func (e *eosFS) xrdcpFind(ctx context.Context, path string) ([]map[string]string
 		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFind", fmt.Sprintf("Object: %s", object), err)
 		// First result is prefixed with &mgm.proc.stdout=, so strip it
 		if strings.Index(object, "&mgm.proc.stdout=") == 0 {
-			object = object[len("&mgm.proc.stdout="):len(object)]
+			object = object[len("&mgm.proc.stdout="):]
 		}
 
 		// Once you get &mgm.proc.stderr=, you have hit the end
 		if strings.Index(object, "&mgm.proc.stderr=") == 0 {
-			errormsg := strings.TrimSpace(object[len("&mgm.proc.stderr="):len(object)])
+			errormsg := strings.TrimSpace(object[len("&mgm.proc.stderr="):])
 			if errormsg != "" && errormsg != "&mgm.proc.retc=0" {
 				return nil, errors.New(errormsg)
 			}
@@ -668,7 +667,6 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 
 		if res.StatusCode != 201 {
 			eosLogger.Log(ctx, LogLevelDebug, "Put", fmt.Sprintf("EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res), nil)
-			err = errCantPut
 			SleepMs(SleepShort)
 			continue
 		}
@@ -720,7 +718,7 @@ func (e *eosFS) xrdcp(ctx context.Context, src, dst string, size int64) error {
 	}
 	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
 	if output != "" {
-		eosLogger.Log(ctx, LogLevelInfo, "xrdcp", fmt.Sprintf("%s", output), nil)
+		eosLogger.Log(ctx, LogLevelInfo, "xrdcp", output, nil)
 	}
 
 	return err
@@ -742,7 +740,7 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 		cmd.Stdout = data
 		cmd.Stderr = &stderr
 		err2 := cmd.Run()
-		errStr := strings.TrimSpace(string(stderr.Bytes()))
+		errStr := strings.TrimSpace(stderr.String())
 		eosLogger.Log(ctx, LogLevelInfo, "ReadChunk", fmt.Sprintf("EOSreadChunk: [script: %s, eosurl: %s, offset: %d, length: %d, uid: %s, gid: %s, error: %+v]", e.Scripts+"/readChunk.py", eosurl, offset, length, e.UID, e.GID, err2), nil)
 		if errStr != "" {
 			eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("ERROR: EOSreadChunk [eosurl: %s, error: %s]", eosurl, errStr), nil)
@@ -764,10 +762,10 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 		cmd.Stderr = &stderr
 		err2 := cmd.Run()
 
-		errStr := strings.TrimSpace(string(stderr.Bytes()))
+		errStr := strings.TrimSpace(stderr.String())
 		eosLogger.Log(ctx, LogLevelInfo, "ReadChunk", fmt.Sprintf("/usr/bin/xrdcp -N %s - %+v", eosurl, err2), nil)
 		if errStr != "" {
-			eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("%s", errStr), nil)
+			eosLogger.Log(ctx, LogLevelError, "ReadChunk", errStr, nil)
 		}
 
 		if offset >= 0 {
@@ -799,9 +797,13 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 			defer res.Body.Close()
 		} else {
 			eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("ERROR: webdav.GET: response body is nil [eosurl: %s, error: %+v]", eosurl, err), nil)
-			err = errResponseIsNil
 		}
+
 		_, err = io.CopyN(data, res.Body, length)
+		if err != nil {
+			eosLogger.Log(ctx, LogLevelDebug, "ReadChunk", fmt.Sprintf("ERROR: webdav.GET: Failed to copy data to writer [eosurl: %s, error: %+v]", eosurl, err), nil)
+			return err
+		}
 	}
 	return err
 }
