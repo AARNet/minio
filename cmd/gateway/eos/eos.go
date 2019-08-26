@@ -100,6 +100,13 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	logger.Info("EOS LOG LEVEL: %d", loglevel)
 
 	// Init filesystem
+	xrdcp := &Xrdcp{
+		MGMHost: os.Getenv("EOS"),
+		Path:    os.Getenv("VOLUME_PATH"),
+		UID:     os.Getenv("EOSUID"),
+		GID:     os.Getenv("EOSGID"),
+	}
+
 	filesystem := &eosFS{
 		MGMHost:    os.Getenv("EOS"),
 		HTTPHost:   httphost,
@@ -111,6 +118,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		ReadMethod: readmethod,
 		Scripts:    os.Getenv("SCRIPTS"),
 		StatCache:  NewRequestStatCache(os.Getenv("VOLUME_PATH")),
+		Xrdcp:      xrdcp,
 	}
 
 	// and go

@@ -686,7 +686,7 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 	reqInfo := logger.GetReqInfo(ctx)
 	fullstagepath := e.stage + "/" + stagepath + "/file"
 	eosLogger.Log(ctx, LogLevelDebug, "TransferFromStaging", fmt.Sprintf("CompleteMultipartUpload: xrdcp: [stagepath: %s, uploadIDpath: %s, size: %d, useragent: %s]", fullstagepath, uploadID+".minio.sys", objInfo.Size, reqInfo.UserAgent), nil)
-	err := e.FileSystem.xrdcp(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
+	err := e.FileSystem.Xrdcp.Put(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "TransferFromStaging", fmt.Sprintf("ERROR: CompleteMultipartUpload: xrdcp: [uploadID: %s, UserAgent: %s, error: %+v]", uploadID, reqInfo.UserAgent, err), err)
 		return err
@@ -807,6 +807,8 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	}
 	path := strings.TrimSuffix(bucket, "/") + "/" + strings.TrimPrefix(prefix, "/")
 	path = filepath.Clean(path)
+
+	//if e.FileSystem.IsDir(ctx, path)
 
 	eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Creating cache for %s", path), nil)
 	if prefix != "" {
