@@ -66,7 +66,6 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 
 // Ls Perform an "ls" using xrdcp
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
-
 	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path=%s", x.MGMHost, lsflags, path))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Ls", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
@@ -105,8 +104,8 @@ func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string,
 	retcidx := strings.Index(result, "&mgm.proc.retc=")
 
 	retc := StringToInt(result[(retcidx + len("&mgm.proc.retc=")):])
-	stderr := result[(stderridx + len("&mgm.proc.stderr=")):retcidx]
-	stdout := result[(stdoutidx + len("mgm.proc.stdout=")):stderridx]
+	stderr := strings.TrimSpace(result[(stderridx + len("&mgm.proc.stderr=")):retcidx])
+	stdout := strings.TrimSpace(result[(stdoutidx + len("mgm.proc.stdout=")):stderridx])
 
 	return stdout, stderr, retc
 
@@ -166,7 +165,7 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]map[string]string, err
 
 // Fileinfo use fileinfo -m to get file info
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]map[string]string, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.find.maxdepth=1&mgm.path=%s", x.MGMHost, path))
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=%s", x.MGMHost, path))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
 		return nil, err
