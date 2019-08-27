@@ -235,7 +235,14 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache miss: [p: %s, eospath: %s]", p, eospath), nil)
 
 	var objects []map[string]string
-	if isdir, _ := e.Xrdcp.IsDir(ctx, eospath); isdir {
+
+	// Check if it's a directory, will error if doesn't exist.
+	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
+	if err != nil {
+		return nil, err
+	}
+
+	if isdir {
 		objects, err = e.Xrdcp.Find(ctx, eospath)
 	} else {
 		objects, err = e.Xrdcp.Fileinfo(ctx, eospath)
