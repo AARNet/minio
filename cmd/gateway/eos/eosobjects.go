@@ -355,14 +355,15 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
 	eosLogger.Log(ctx, LogLevelStat, "GetObjectInfo", fmt.Sprintf("S3cmd: GetObjectInfo: [path: %s]", path), nil)
 
-	stat, err := e.FileSystem.Stat(ctx, path)
 	// We need to try and wait for the file to register with EOS if it's new
-	if stat == nil {
-		maxRetry := 20
-		for retry := 0; retry < maxRetry; retry++ {
-			stat, err = e.FileSystem.Stat(ctx, path)
-			Sleep()
+	maxRetry := 20
+	var stat *FileStat
+	for retry := 0; retry < maxRetry; retry++ {
+		stat, err = e.FileSystem.Stat(ctx, path)
+		if stat != nil {
+			break
 		}
+		Sleep()
 	}
 
 	if err != nil {
