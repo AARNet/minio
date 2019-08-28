@@ -29,6 +29,13 @@ func NewStatCache(path string) *StatCache {
 	return c
 }
 
+// Size returns the len() of the cache
+func (c *StatCache) Size() int {
+	c.RLock()
+	defer c.RUnlock()
+	return len(c.cache)
+}
+
 // Reset deletes and recreates the StatCache's cache
 func (c *StatCache) Reset() {
 	c.Lock()

@@ -3,7 +3,6 @@ package eos
 import (
 	"context"
 	"github.com/minio/minio/cmd/logger"
-	"runtime/debug"
 	"sync"
 )
 
@@ -86,11 +85,23 @@ func (c *RequestStatCache) Delete(ctx context.Context) {
 	if _, ok := c.cache[reqID]; !ok {
 		c.RUnlock()
 		c.Lock()
-		c.cache[reqID] = nil
+		size := c.cache[reqID].Size()
+		delete(c.cache, reqID)
+		// If the cache is a decent size, clean the RequestStatCache
+		if size > 100 {
+			c.clean()
+		}
 		c.Unlock()
 	} else {
 		c.RUnlock()
 	}
-	// Try and force garbage collection
-	debug.FreeOSMemory()
+}
+
+// Recreate the cache to free memory
+func (c *RequestStatCache) clean() {
+	cleaned := make(map[string]*StatCache)
+	for key, value := range c.cache {
+		cleaned[key] = value
+	}
+	c.cache = cleaned
 }
