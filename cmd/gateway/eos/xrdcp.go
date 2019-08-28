@@ -26,8 +26,14 @@ import (
 type Xrdcp struct {
 	Path    string
 	MGMHost string
+	User    string
 	UID     string
 	GID     string
+}
+
+// GetXrootBase Returns the root:// base URL
+func (x *Xrdcp) GetXrootBase() string {
+	return fmt.Sprintf("root://%s@%s/", x.User, x.MGMHost)
 }
 
 // AbsoluteEOSPath Normalise an EOS path
@@ -66,7 +72,7 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 
 // Ls Perform an "ls" using xrdcp
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path=%s", x.MGMHost, lsflags, path))
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("%s/proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path=%s", x.GetXrootBase(), lsflags, path))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Ls", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
 		return "", 1, err
@@ -113,7 +119,7 @@ func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string,
 
 // Find - use find -I to get file information
 func (x *Xrdcp) Find(ctx context.Context, path string) ([]map[string]string, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=%s", x.MGMHost, path))
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("%s/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=%s", x.GetXrootBase(), path))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
 		return nil, err
@@ -165,7 +171,7 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]map[string]string, err
 
 // Fileinfo use fileinfo -m to get file info
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]map[string]string, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("root://%s//proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=%s", x.MGMHost, path))
+	rooturl, err := url.QueryUnescape(fmt.Sprintf("%s//proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=%s", x.GetXrootBase(), path))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
 		return nil, err
@@ -280,7 +286,7 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 		return err
 	}
 	eospath = strings.Replace(eospath, "%", "%25", -1)
-	eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.MGMHost, eospath, x.UID, x.GID, size))
+	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Put", fmt.Sprintf("ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl), err)
 		return err
@@ -309,7 +315,7 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	}
 
 	eospath = strings.Replace(eospath, "%", "%25", -1)
-	eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s", x.MGMHost, eospath, x.UID, x.GID))
+	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s", x.GetXrootBase(), eospath, x.UID, x.GID))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl), err)
 		return err
