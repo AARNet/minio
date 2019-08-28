@@ -3,6 +3,7 @@ package eos
 import (
 	"context"
 	"github.com/minio/minio/cmd/logger"
+	"runtime"
 	"sync"
 )
 
@@ -104,4 +105,5 @@ func (c *RequestStatCache) clean() {
 		cleaned[key] = value
 	}
 	c.cache = cleaned
+	runtime.GC()
 }
