@@ -283,7 +283,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	dir := bucket + "/" + filepath.Dir(object)
 	objectpath := bucket + "/" + object
 
-	if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
+	if exists, _ := e.FileSystem.FileExists(ctx, dir); !exists {
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
 
