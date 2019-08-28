@@ -146,19 +146,7 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, err
 	}
 
-	var objects []map[string]string
-	// Check if it's a directory, will error if doesn't exist.
-	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
-	if err != nil {
-		return nil, err
-	}
-
-	if isdir {
-		objects, err = e.Xrdcp.Find(ctx, eospath)
-	} else {
-		objects, err = e.Xrdcp.Fileinfo(ctx, eospath)
-	}
-
+	objects, err := e.GetObjectStat(ctx, eospath)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, errFileNotFound
@@ -203,6 +191,21 @@ func (e *eosFS) DeleteCache(ctx context.Context) {
 // IsDir returns whether the path is a directory or not.
 func (e *eosFS) IsDir(ctx context.Context, path string) (bool, error) {
 	return e.Xrdcp.IsDir(ctx, path)
+}
+
+// GetObjectStat returns stats for object(s) using Find or Fileinfo depending on it's type
+func (e *eosFS) GetObjectStat(ctx context.Context, eospath string) (objects []map[string]string, err error) {
+	// Check if it's a directory, will error if doesn't exist.
+	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
+	if err != nil {
+		return nil, err
+	}
+
+	if isdir {
+		return e.Xrdcp.Find(ctx, eospath)
+	}
+
+	return e.Xrdcp.Fileinfo(ctx, eospath)
 }
 
 func (e *eosFS) CreateStatEntry(object map[string]string) *FileStat {
@@ -252,21 +255,7 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 	}
 	eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("EOSfsStat: cache miss: [p: %s, eospath: %s]", p, eospath), nil)
 
-	var objects []map[string]string
-
-	// Check if it's a directory, will error if doesn't exist.
-	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find is better for directories, FileInfo for individual files
-	if isdir {
-		objects, err = e.Xrdcp.Find(ctx, eospath)
-	} else {
-		objects, err = e.Xrdcp.Fileinfo(ctx, eospath)
-	}
-
+	objects, err := e.GetObjectStat(ctx, eospath)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
 		return nil, errFileNotFound
