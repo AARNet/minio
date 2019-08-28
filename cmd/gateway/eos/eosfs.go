@@ -224,6 +224,11 @@ func (e *eosFS) DirStat(ctx context.Context, p string) (fi *FileStat, err error)
 		return nil, err
 	}
 
+	// Check cache
+	if fi, ok := reqStatCache.Read(eospath); ok {
+		return fi, nil
+	}
+
 	fileinfo, _ := e.Xrdcp.Fileinfo(ctx, eospath)
 	if len(fileinfo) < 1 {
 		return nil, errFileNotFound
