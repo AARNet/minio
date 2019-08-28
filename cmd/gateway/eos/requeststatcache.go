@@ -9,7 +9,7 @@ import (
 
 // RequestStatCache is used for storing a cache of FileStat's per HTTP request
 type RequestStatCache struct {
-	sync.Mutex
+	sync.RWMutex
 	path  string
 	cache map[string]*StatCache
 }
@@ -22,57 +22,75 @@ func NewRequestStatCache(path string) *RequestStatCache {
 	return rc
 }
 
+// init just initializes the cache if it doesn't exist
 func (c *RequestStatCache) init() {
+	c.Lock()
 	if c.cache == nil {
 		c.cache = make(map[string]*StatCache)
 	}
+	c.Unlock()
 }
 
 // Get returns an already existing StatCache or creates a new one and returns it
-func (c *RequestStatCache) Get(ctx context.Context) *StatCache {
-	c.Lock()
-	c.init()
+func (c *RequestStatCache) Get(ctx context.Context) (result *StatCache) {
 	reqInfo := logger.GetReqInfo(ctx)
 	reqID := "none"
 	if reqInfo.RequestID != "" {
 		reqID = reqInfo.RequestID
 	}
+	c.init()
+	c.RLock()
 	if _, ok := c.cache[reqID]; !ok {
+		c.RUnlock()
+		c.Lock()
 		c.cache[reqID] = NewStatCache(c.path)
+		c.Unlock()
+		c.RLock()
 	}
-	c.Unlock()
-	return c.cache[reqID]
+	result = c.cache[reqID]
+	c.RUnlock()
+	return result
 }
 
 // Reset deletes and recreates a StatCache
-func (c *RequestStatCache) Reset(ctx context.Context) *StatCache {
-	c.Lock()
-	c.init()
+func (c *RequestStatCache) Reset(ctx context.Context) (result *StatCache) {
 	reqInfo := logger.GetReqInfo(ctx)
 	reqID := "none"
 	if reqInfo.RequestID != "" {
 		reqID = reqInfo.RequestID
 	}
+	c.init()
+	c.RLock()
 	if _, ok := c.cache[reqID]; !ok {
+		c.RUnlock()
+		c.Lock()
 		c.cache[reqID] = nil
 		c.cache[reqID] = NewStatCache(c.path)
+		c.Unlock()
+		c.RLock()
 	}
+	result = c.cache[reqID]
 	c.Unlock()
-	return c.cache[reqID]
+	return result
 }
 
 // Delete deletes a StatCache
 func (c *RequestStatCache) Delete(ctx context.Context) {
-	c.Lock()
-	c.init()
 	reqInfo := logger.GetReqInfo(ctx)
 	reqID := "none"
 	if reqInfo.RequestID != "" {
 		reqID = reqInfo.RequestID
 	}
+	c.init()
+	c.RLock()
 	if _, ok := c.cache[reqID]; !ok {
+		c.RUnlock()
+		c.Lock()
 		c.cache[reqID] = nil
+		c.Unlock()
+	} else {
+		c.RUnlock()
 	}
-	c.Unlock()
+	// Try and force garbage collection
 	debug.FreeOSMemory()
 }
