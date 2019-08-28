@@ -97,8 +97,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 	}
 
 	for _, dir := range dirs {
-		var stat *FileStat
-		stat, err = e.FileSystem.Stat(ctx, dir)
+		stat, err := e.FileSystem.DirStat(ctx, dir)
 
 		if stat == nil {
 			eosLogger.Log(ctx, LogLevelError, "ListBuckets", fmt.Sprintf("ERROR: ListBuckets: unable to stat [dir: %s]", dir), err)
@@ -379,18 +378,17 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
 	eosLogger.Log(ctx, LogLevelStat, "GetObjectInfo", fmt.Sprintf("S3cmd: GetObjectInfo: [path: %s]", path), nil)
 
-	stat, err := e.FileSystem.Stat(ctx, path)
-	if err != nil {
-		eosLogger.Log(ctx, LogLevelDebug, "GetObjectInfo", fmt.Sprintf("GetObjectInfo: [error: %+v]", err), nil)
+	if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
+		eosLogger.Log(ctx, LogLevelDebug, "GetObjectInfo", fmt.Sprintf("GetObjectInfo: Request is for directory, returning Not Found [path: %s]", path), nil)
 		err = minio.ObjectNotFound{
 			Bucket: bucket,
 			Object: object}
 		return objInfo, err
 	}
 
-	// Return Not found if object is a directory since S3 has no concept of directory
-	if stat.IsDir() {
-		eosLogger.Log(ctx, LogLevelDebug, "GetObjectInfo", fmt.Sprintf("GetObjectInfo: Request is for directory, returning Not Found [path: %s]", path), nil)
+	stat, err := e.FileSystem.Stat(ctx, path)
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelDebug, "GetObjectInfo", fmt.Sprintf("GetObjectInfo: [error: %+v]", err), nil)
 		err = minio.ObjectNotFound{
 			Bucket: bucket,
 			Object: object}
