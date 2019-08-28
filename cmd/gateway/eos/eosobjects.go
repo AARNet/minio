@@ -73,7 +73,7 @@ func (e *eosObjects) StorageInfo(ctx context.Context) (storageInfo minio.Storage
 func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio.BucketInfo, err error) {
 	eosLogger.Log(ctx, LogLevelStat, "GetBucketInfo", fmt.Sprintf("S3cmd: GetBucketInfo [bucket: %s]", bucket), nil)
 
-	stat, err := e.FileSystem.Stat(ctx, bucket)
+	stat, err := e.FileSystem.DirStat(ctx, bucket)
 	if err == nil {
 		bi = minio.BucketInfo{
 			Name:    bucket,
@@ -251,7 +251,7 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 		return objInfo, err
 	}
 
-	return e.GetObjectInfo(ctx, destBucket, destObject, dstOpts)
+	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts, 20)
 }
 
 // CopyObjectPart creates a part in a multipart upload by copying
@@ -304,7 +304,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		return objInfo, err
 	}
 
-	return e.GetObjectInfo(ctx, bucket, object, opts)
+	return e.GetObjectInfoWithRetry(ctx, bucket, object, opts, 20)
 }
 
 // DeleteObject - Deletes a blob on EOS
@@ -350,22 +350,36 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 	return err
 }
 
+// GetObjectInfoWithRetry because sometimes we need to wait for EOS to properly register a file
+func (e *eosObjects) GetObjectInfoWithRetry(ctx context.Context, bucket, object string, opts minio.ObjectOptions, maxRetry int) (objInfo minio.ObjectInfo, err error) {
+	// We need to try and wait for the file to register with EOS if it's new
+	if maxRetry < 1 {
+		maxRetry = 1
+	}
+	sleepMax := 1000
+	sleepTime := 100
+	sleepInc := 100
+
+	for retry := 0; retry < maxRetry; retry++ {
+		objInfo, err = e.GetObjectInfo(ctx, bucket, object, opts)
+		if err == nil {
+			break
+		}
+		SleepMs(sleepTime)
+		// We want to wait longer if we're not getting good results.
+		if sleepTime < sleepMax {
+			sleepTime = sleepTime + sleepInc
+		}
+	}
+	return objInfo, err
+}
+
 // GetObjectInfo - reads blob metadata properties and replies back minio.ObjectInfo
 func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
 	eosLogger.Log(ctx, LogLevelStat, "GetObjectInfo", fmt.Sprintf("S3cmd: GetObjectInfo: [path: %s]", path), nil)
 
-	// We need to try and wait for the file to register with EOS if it's new
-	maxRetry := 20
-	var stat *FileStat
-	for retry := 0; retry < maxRetry; retry++ {
-		stat, err = e.FileSystem.Stat(ctx, path)
-		if stat != nil {
-			break
-		}
-		Sleep()
-	}
-
+	stat, err := e.FileSystem.Stat(ctx, path)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelDebug, "GetObjectInfo", fmt.Sprintf("GetObjectInfo: [error: %+v]", err), nil)
 		err = minio.ObjectNotFound{
@@ -809,8 +823,6 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	path := strings.TrimSuffix(bucket, "/") + "/" + strings.TrimPrefix(prefix, "/")
 	path = filepath.Clean(path)
 
-	//if e.FileSystem.IsDir(ctx, path)
-
 	eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Creating cache for %s", path), nil)
 	if prefix != "" {
 		prefix = strings.TrimSuffix(prefix, "/") + "/"
@@ -818,6 +830,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 	// Get a list of objects in the directory
 	// or the single object if it's not a directory
+	// TODO: because this recurses, the cache grows until its completely done which can result in memory hogging
 	objects, err := e.FileSystem.BuildCache(ctx, path, true)
 	defer e.FileSystem.DeleteCache(ctx)
 
@@ -844,6 +857,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 			if stat != nil {
 				objname := objprefix + obj
+				// TODO: this could be nicer
 				if len(objects) == 1 && filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
 					objname = obj
 				}

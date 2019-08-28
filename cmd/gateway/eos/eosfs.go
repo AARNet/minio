@@ -184,6 +184,7 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 	return entries, err
 }
 
+// DeleteCache deletes a cache produced by BuildCache
 func (e *eosFS) DeleteCache(ctx context.Context) {
 	e.StatCache.Delete(ctx)
 }
@@ -201,11 +202,38 @@ func (e *eosFS) GetObjectStat(ctx context.Context, eospath string) (objects []ma
 		return nil, err
 	}
 
+	// Find is faster for directories
 	if isdir {
 		return e.Xrdcp.Find(ctx, eospath)
 	}
 
 	return e.Xrdcp.Fileinfo(ctx, eospath)
+}
+
+// GetFolderStat is used for returning only stat information for a folder without recursing
+func (e *eosFS) DirStat(ctx context.Context, p string) (fi *FileStat, err error) {
+	reqStatCache := e.StatCache.Get(ctx)
+	eospath, err := e.AbsoluteEOSPath(p)
+	if err != nil {
+		return nil, err
+	}
+
+	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
+	if err != nil || !isdir {
+		return nil, err
+	}
+
+	fileinfo, _ := e.Xrdcp.Fileinfo(ctx, eospath)
+	if len(fileinfo) < 1 {
+		return nil, errFileNotFound
+	}
+	// Grab the first result
+	object := fileinfo[0]
+
+	// Create stat entry, cache it, return it.
+	fi = e.CreateStatEntry(object)
+	reqStatCache.Write(eospath, fi)
+	return fi, err
 }
 
 func (e *eosFS) CreateStatEntry(object map[string]string) *FileStat {
@@ -521,6 +549,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 			Sleep()
 			continue
 		}
+
 		if res != nil {
 			defer res.Body.Close()
 		} else {
