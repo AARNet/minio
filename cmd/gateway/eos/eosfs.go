@@ -191,7 +191,8 @@ func (e *eosFS) DeleteCache(ctx context.Context) {
 
 // IsDir returns whether the path is a directory or not.
 func (e *eosFS) IsDir(ctx context.Context, path string) (bool, error) {
-	return e.Xrdcp.IsDir(ctx, path)
+	eospath, _ := e.AbsoluteEOSPath(path)
+	return e.Xrdcp.IsDir(ctx, eospath)
 }
 
 // GetObjectStat returns stats for object(s) using Find or Fileinfo depending on it's type
