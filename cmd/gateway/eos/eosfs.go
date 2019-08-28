@@ -46,7 +46,7 @@ var (
 	errResponseIsNil    = errors.New("EOS: Response body is nil")
 )
 
-// Returns a HTTPClient
+// HTTPClient sets up and returns a http.Client
 func (e *eosFS) HTTPClient() *http.Client {
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -66,7 +66,7 @@ func (e *eosFS) HTTPClient() *http.Client {
 	return client
 }
 
-// Sets up a client and a GET request for the MGM
+// NewRequest sets up a client and a GET request for the MGM
 func (e *eosFS) NewRequest(method string, url string, body io.Reader) (*http.Client, *http.Request, error) {
 	client := e.HTTPClient()
 	req, err := http.NewRequest(method, url, body)
@@ -77,12 +77,12 @@ func (e *eosFS) NewRequest(method string, url string, body io.Reader) (*http.Cli
 	return client, req, nil
 }
 
-// Returns common parameters for requests to MGM
+// URLExtras returns common parameters for requests to MGM
 func (e *eosFS) URLExtras() string {
 	return fmt.Sprintf("&eos.ruid=%s&eos.rgid=%s&mgm.format=json", e.UID, e.GID)
 }
 
-// Normalise an EOS path
+// AbsoluteEOSPath normalises and returns the absolute path in EOS
 func (e *eosFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	if strings.Contains(path, "..") {
 		return "", errFilePathBad
@@ -93,7 +93,7 @@ func (e *eosFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	return eosPath, nil
 }
 
-// Makes GET requests to the MGM
+// MGMCurl makes GET requests to the MGM
 func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[string]interface{}, err error) {
 	eosurl := fmt.Sprintf("http://%s/proc/user/?%s", e.HTTPHost, cmd)
 	eosLogger.Log(ctx, LogLevelDebug, "MGMcurl", fmt.Sprintf("EOSMGMcurl: [eosurl: %s]", eosurl), nil)
@@ -134,6 +134,7 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	return body, m, err
 }
 
+// BuildCache creates a cache of file stats for the duration of the request
 func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	if cacheReset {
@@ -145,7 +146,24 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, err
 	}
 
-	objects, err := e.Xrdcp.Find(ctx, eospath)
+	var objects []map[string]string
+	// Check if it's a directory, will error if doesn't exist.
+	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
+	if err != nil {
+		return nil, err
+	}
+
+	if isdir {
+		objects, err = e.Xrdcp.Find(ctx, eospath)
+	} else {
+		objects, err = e.Xrdcp.Fileinfo(ctx, eospath)
+	}
+
+	if err != nil {
+		eosLogger.Log(ctx, LogLevelDebug, "Stat", fmt.Sprintf("ERROR: Unable to read object [eospath: %s, error: %+v]", eospath, err), err)
+		return nil, errFileNotFound
+	}
+
 	if err != nil {
 		// Debug level since it happens quite often
 		// when a file that doesn't exist is checked for
@@ -242,6 +260,7 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 		return nil, err
 	}
 
+	// Find is better for directories, FileInfo for individual files
 	if isdir {
 		objects, err = e.Xrdcp.Find(ctx, eospath)
 	} else {
