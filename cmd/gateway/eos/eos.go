@@ -103,6 +103,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	xrdcp := &Xrdcp{
 		MGMHost: os.Getenv("EOS"),
 		Path:    os.Getenv("VOLUME_PATH"),
+		User:    os.Getenv("EOSUSER"),
 		UID:     os.Getenv("EOSUID"),
 		GID:     os.Getenv("EOSGID"),
 	}
