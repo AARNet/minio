@@ -134,6 +134,15 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	return body, m, err
 }
 
+// isEOSSysFile - checks to see if it matches an EOS system file (prefixed with .sys.[a-z]#)
+func (e *eosFS) isEOSSysFile(name string) bool {
+	size := len(name)
+	if size > 7 && strings.HasPrefix(name, ".sys.") && string(name[6]) == "#" {
+		return true
+	}
+	return false
+}
+
 // BuildCache creates a cache of file stats for the duration of the request
 func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
@@ -163,15 +172,18 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		for _, object := range objects {
 			var fi *FileStat
 			cacheKey := strings.TrimSuffix(object["file"], "/")
-			if !strings.HasPrefix(object["file"], ".sys.v#.") {
-				fi = e.CreateStatEntry(object)
-				reqStatCache.Write(cacheKey, fi)
+			if e.isEOSSysFile(object["file"]) {
+				continue
 			}
 
-			// If we find an entry matching the eospath and it's a file, return it.
+			fi = e.CreateStatEntry(object)
+			reqStatCache.Write(cacheKey, fi)
+
+			// If we find an entry matching the eospath and is a directory, skip it.
 			if object["is_file"] == "false" && object["file"] == strings.TrimSuffix(eospath, "/")+"/" {
 				continue
 			}
+			// If we find an entry matching the eospath and it's a file, return it.
 			if object["is_file"] == "true" && object["file"] == strings.TrimSuffix(eospath, "/") {
 				eosLogger.Log(ctx, LogLevelDebug, "BuildCache", fmt.Sprintf("Object matches requested path, returning it [object: %s, path: %s]", object["file"], eospath), err)
 				return []string{fi.name}, nil
@@ -219,14 +231,14 @@ func (e *eosFS) DirStat(ctx context.Context, p string) (fi *FileStat, err error)
 		return nil, err
 	}
 
-	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
-	if err != nil || !isdir {
-		return nil, err
-	}
-
 	// Check cache
 	if fi, ok := reqStatCache.Read(eospath); ok {
 		return fi, nil
+	}
+
+	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
+	if err != nil || !isdir {
+		return nil, err
 	}
 
 	fileinfo, _ := e.Xrdcp.Fileinfo(ctx, eospath)
