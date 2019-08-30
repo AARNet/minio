@@ -9,18 +9,18 @@
 package eos
 
 import (
-	"syscall"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
 // FileStat is the stat information for an object
 type FileStat struct {
-	id          int64
 	name        string
+	fullpath    string
 	size        int64
 	file        bool
 	modTime     time.Time
-	sys         syscall.Stat_t
 	etag        string
 	contenttype string
 }
@@ -29,9 +29,23 @@ const (
 	defaultETag string = "00000000000000000000000000000000"
 )
 
-// ID returns the FileStat ID
-func (fs *FileStat) ID() int64 {
-	return fs.id
+// NewFileStat creates a new *FileStat
+func NewFileStat(file string, size int64, isFile bool, modTime int64, eTag string, contentType string) *FileStat {
+	if eTag == "" {
+		eTag = defaultETag
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	f := new(FileStat)
+	f.name = strings.TrimSuffix(filepath.Base(file), "/")
+	f.fullpath = file
+	f.file = isFile
+	f.size = size
+	f.modTime = time.Unix(modTime, 0)
+	f.etag = eTag
+	f.contenttype = contentType
+	return f
 }
 
 // Name returns the file name (no path)
@@ -47,11 +61,6 @@ func (fs *FileStat) Size() int64 {
 // ModTime returns the file's modified time
 func (fs *FileStat) ModTime() time.Time {
 	return fs.modTime
-}
-
-// Sys returns ... TODO: find this out
-func (fs *FileStat) Sys() interface{} {
-	return &fs.sys
 }
 
 // IsDir returns if the file is a directory
