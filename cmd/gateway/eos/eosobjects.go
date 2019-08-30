@@ -16,7 +16,6 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -515,8 +514,8 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	}
 
 	size := data.Size()
-	buf, _ := ioutil.ReadAll(data)
 	etag := data.MD5CurrentHexString()
+	buf, _ := ioutil.ReadAll(data)
 
 	newPart := minio.PartInfo{
 		PartNumber:   partID,
@@ -676,7 +675,6 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		}
 
 		e.TransferList.DeleteTransfer(uploadID)
-		e.messagebusAddPutJob(uploadID)
 	}
 
 	err = e.FileSystem.SetETag(ctx, uploadID, etag)
@@ -724,7 +722,6 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 		return err
 	}
 	e.TransferList.DeleteTransfer(uploadID)
-	e.messagebusAddPutJob(uploadID)
 	return nil
 }
 
@@ -798,37 +795,25 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	sort.SliceStable(result.Objects, func(i, j int) bool { return result.Objects[i].Name < result.Objects[j].Name })
 	sort.SliceStable(result.Prefixes, func(i, j int) bool { return result.Prefixes[i] < result.Prefixes[j] })
 
-	for idx, item := range result.Prefixes {
-		// Remove the current directory from the prefixes
-		if item == "./" {
-			result.Prefixes = append(result.Prefixes[:idx], result.Prefixes[idx+1:]...)
-			break
-		}
-	}
-
 	eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Result: %+v", result), nil)
-
 	return result, err
 }
 
 // ListObjectsRecurse - Recursive function for interating through a directory tree
 func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
 	result.IsTruncated = false
+	// Don't do anything if delimiter and prefix are both slashes
 	if delimiter == "/" && prefix == "/" {
-		eosLogger.Log(ctx, LogLevelInfo, "ListObjects", fmt.Sprintf("ListObjects: delimiter and prefix is slash"), nil)
 		return result, nil
 	}
-	path := strings.TrimSuffix(bucket, "/") + "/" + strings.TrimPrefix(prefix, "/")
-	path = filepath.Clean(path)
-
-	eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Creating cache for %s", path), nil)
 	if prefix != "" {
 		prefix = strings.TrimSuffix(prefix, "/") + "/"
 	}
 
 	// Get a list of objects in the directory
 	// or the single object if it's not a directory
-	// TODO: because this recurses, the cache grows until its completely done which can result in memory hogging
+	path := strings.TrimSuffix(bucket, "/") + "/" + strings.TrimPrefix(prefix, "/")
+	path = filepath.Clean(path)
 	objects, err := e.FileSystem.BuildCache(ctx, path, true)
 	defer e.FileSystem.DeleteCache(ctx)
 
@@ -851,29 +836,29 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 			objpath = filepath.Clean(objpath)
 			stat, err = e.FileSystem.Stat(ctx, objpath)
-			eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Stat: %+v", stat), nil)
 
 			if stat != nil {
 				objname := objprefix + obj
-				// TODO: this could be nicer
-				if len(objects) == 1 && filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
-					objname = obj
-				}
-				o := e.NewObjectInfo(bucket, objname, stat)
-				eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Object: %+v", o), nil)
-
 				// Directories get added to prefixes, files to objects.
 				if stat.IsDir() {
-					result.Prefixes = append(result.Prefixes, o.Name)
+					result.Prefixes = append(result.Prefixes, objname)
 				} else {
 					if len(objects) == 1 {
-						eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Only one object, adding '%s' to prefixes", filepath.Dir(o.Name)), nil)
-						result.Prefixes = append(result.Prefixes, filepath.Dir(o.Name)+"/")
+						// Don't add prefix since it'll be in the prefix list
+						if filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
+							objname = obj
+						}
+						// Add the object's directory to prefixes
+						objdir := filepath.Dir(objname) + "/"
+						if objdir != "./" {
+							result.Prefixes = append(result.Prefixes, objdir)
+						}
 					}
+					o := e.NewObjectInfo(bucket, objname, stat)
 					result.Objects = append(result.Objects, o)
 				}
 				if delimiter == "" && stat.IsDir() {
-					eosLogger.Log(ctx, LogLevelDebug, "ListObjects", fmt.Sprintf("ListObjects: Recursing through %s", prefix+obj), nil)
+					eosLogger.Log(ctx, LogLevelDebug, "ListObjects", "ListObjects: Recursing through "+prefix+obj, nil)
 					subdir, err := e.ListObjectsRecurse(ctx, bucket, prefix+obj, marker, delimiter, -1)
 					if err != nil {
 						return result, err
@@ -883,7 +868,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					result.Prefixes = append(result.Prefixes, subdir.Prefixes...)
 				}
 			} else {
-				eosLogger.Log(ctx, LogLevelError, "ListObjects", fmt.Sprintf("ERROR: ListObjects: unable to stat [objpath: %s]", objpath), nil)
+				eosLogger.Log(ctx, LogLevelError, "ListObjects", "ERROR: ListObjects: unable to stat [objpath: "+objpath+"]", nil)
 			}
 		}
 	}
@@ -970,34 +955,3 @@ func (e *eosObjects) IsValidBucketName(name string) bool {
 	}
 	return true
 }
-
-// TODO: These methods are not in use at the moment. They need a new home (like their own type, rather than being on eosObjects)
-func (e *eosObjects) messagebusAddJob(jobType, path string) {
-	if e.hookurl == "" {
-		return
-	}
-
-	eospath, err := e.FileSystem.AbsoluteEOSPath(path)
-	if err != nil {
-		return
-	}
-
-	go func() {
-		joburl := fmt.Sprintf("%s?type=%s&file=%s", e.hookurl, jobType, url.QueryEscape(eospath))
-		res, err := http.Get(joburl)
-		// TODO: Might need to return here if we're not getting a response
-		if res != nil {
-			defer res.Body.Close()
-		} else {
-			eosLogger.Log(context.TODO(), LogLevelError, "messageBusAddJob", fmt.Sprintf("ERROR: messagebusAddJob: response body is nil [joburl: %s, error: %+v]", joburl, err), err)
-		}
-		if err != nil {
-			eosLogger.Log(context.TODO(), LogLevelError, "messageBusAddJob", fmt.Sprintf("S3 Hook: Add job failed [joburl: %s, error: %+v]", joburl, err), err)
-			return
-		}
-		body, _ := ioutil.ReadAll(res.Body)
-		eosLogger.Log(context.TODO(), LogLevelInfo, "messageBusAddJob", fmt.Sprintf("S3 Hook: %s", joburl), nil)
-		_ = body
-	}()
-}
-func (e *eosObjects) messagebusAddPutJob(path string) { e.messagebusAddJob("s3.Add", path) }
