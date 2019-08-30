@@ -72,12 +72,12 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 
 // Ls Perform an "ls" using xrdcp
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("%s/proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path=%s", x.GetXrootBase(), lsflags, path))
+	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=ls&mgm.option=" + lsflags + "&mgm.path=" + path)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Ls", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
 		return "", 1, err
 	}
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Ls", fmt.Sprintf("EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl), nil)
+	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Ls", "EOScmd: xrdcp.LS: [path: "+path+", rooturl: "+rooturl+"]", nil)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
@@ -91,7 +91,6 @@ func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, in
 	outputStr = strings.TrimSpace(outputStr)
 
 	stdout, stderr, retc := x.ParseOutput(ctx, outputStr)
-	eosLogger.Log(ctx, LogLevelDebug, "Xrdcp.Ls", fmt.Sprintf("xrdcp result [stdout: %s, stderr: %s, retc: %d]", stdout, stderr, retc), err)
 	if retc > 0 {
 		if stderr != "" {
 			return "", retc, errors.New(stderr)
@@ -118,29 +117,28 @@ func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string,
 }
 
 // Find - use find -I to get file information
-func (x *Xrdcp) Find(ctx context.Context, path string) ([]map[string]string, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("%s/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=%s", x.GetXrootBase(), path))
+func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
+	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=" + path)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", "ERROR: can not url.QueryUnescape() [path: "+path+", uri: "+rooturl+"]", err)
 		return nil, err
 	}
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Find", fmt.Sprintf("EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl), nil)
+	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Find", "EOScmd: xrdcp.FIND: [path: "+path+", rooturl: "+rooturl+"]", nil)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
 
 	if err := cmd.Start(); err != nil {
-		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
+		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", "ERROR: can not /usr/bin/xrdcp "+rooturl, err)
 		return nil, err
 	}
 	defer cmd.Wait()
 
-	parsedobjects := make([]map[string]string, 0)
+	parsedobjects := make([]*FileStat, 0)
 	var object string
 	reader := bufio.NewReader(pipe)
 	for err == nil {
 		object, err = reader.ReadString('\n')
-		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFind", fmt.Sprintf("Object: %s", object), err)
 		// First result is prefixed with &mgm.proc.stdout=, so strip it
 		if strings.Index(object, "&mgm.proc.stdout=") == 0 {
 			object = object[len("&mgm.proc.stdout="):]
@@ -170,19 +168,19 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]map[string]string, err
 }
 
 // Fileinfo use fileinfo -m to get file info
-func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]map[string]string, error) {
-	rooturl, err := url.QueryUnescape(fmt.Sprintf("%s//proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=%s", x.GetXrootBase(), path))
+func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) {
+	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=" + path)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
 		return nil, err
 	}
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Fileinfo", fmt.Sprintf("EOScmd: xrdcp.FILEINFO: [path: %s, rooturl: %s]", path, rooturl), nil)
+	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Fileinfo", "EOScmd: xrdcp.FILEINFO: [path: "+path+", rooturl: "+rooturl+"]", nil)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
+		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", "ERROR: can not /usr/bin/xrdcp "+rooturl, err)
 		return nil, err
 	}
 
@@ -193,7 +191,7 @@ func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]map[string]string,
 		return nil, errors.New(stderr)
 	}
 
-	parsedobjects := make([]map[string]string, 0)
+	parsedobjects := make([]*FileStat, 0)
 	parsed := x.ParseFileInfo(ctx, stdout)
 	if parsed != nil {
 		parsedobjects = append(parsedobjects, parsed)
@@ -202,81 +200,84 @@ func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]map[string]string,
 	return parsedobjects, nil
 }
 
-// ParseFileInfo parses the xrdcp formatted result into a named array
-func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) map[string]string {
-	object = strings.TrimSpace(object)
-	if object == "" {
-		return nil
-	}
-
+// GetFilenameFromObject finds the filename, removes it from the object and returns it
+func (x *Xrdcp) GetFilenameFromObject(ctx context.Context, object string) (string, string) {
 	// First pair should be keylength.file, which contains the filename length
 	// so split the string on space once to get that value
 	split := strings.SplitN(object, " ", 2)
 	if len(split) < 2 {
-		return nil
+		return "", object
 	}
 	_, keytmp := SplitKeyValuePair(split[0])
 	keylength, err := strconv.Atoi(keytmp)
 	if err != nil {
-		fmt.Println(err) // Log with warning here
-		return nil
+		return "", object
 	}
 	keylength = keylength + 5 // add 5 to it to include the "file=" prefix
 
 	// Check the second part of the split string starts with file=
-	if split[1][0:5] != "file=" {
-		return nil
-	}
-
-	// Check that there'd be a character after file=
-	if len(split[1]) < 6 {
-		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("Object not long enough [object: %s]", object), nil)
-		return nil
-	}
-
-	// Check to make sure we hav enough characters to get the filename
-	if len(split[1]) < keylength {
-		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("keylength.file longer than object [object: %s]", object), nil)
-		return nil
+	// (x added to make sure theres a filename)
+	splitLen := len(split[1])
+	if splitLen < len("file=x") || splitLen < keylength || split[1][0:5] != "file=" {
+		return "", object
 	}
 
 	// Get the filename using the filename length
 	// to avoid splitting on spaces in the filename
 	filename := split[1][5:keylength]
-
 	// Remove the filename from the object
 	object = split[1][keylength:len(split[1])]
 
+	return filename, object
+}
+
+// ParseFileInfo parses the xrdcp formatted result into a named array
+func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
+	object = strings.TrimSpace(object)
+	if object == "" {
+		return nil
+	}
+
+	filename, object := x.GetFilenameFromObject(ctx, object)
+	if filename == "" {
+		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("Unable to get filename from object [object: %s]", object), nil)
+		return nil
+	}
+
 	// Get the rest of the key value pairs
-	m := make(map[string]string)
-	m["file"] = filename
+	var (
+		mtime       int64
+		filesize    int64
+		isfile      = true
+		etag        string
+		contenttype string
+	)
 	kvpairs := strings.Split(object, " ")
 	for idx, pair := range kvpairs {
 		key, value := SplitKeyValuePair(pair)
 		if key != "" {
-			// If its an xattr, get the value from the next pair
-			if key == "xattrn" {
+			switch key {
+			case "mtime":
+				mtime = int64(StringToFloat(value))
+			case "size":
+				filesize = StringToInt(value)
+			case "container":
+				// It's a directory
+				isfile = false
+			case "xattrn":
+				// If its an xattr, get the value from the next pair
 				key = value
-				_, value = SplitKeyValuePair(kvpairs[(idx + 1)])
+				switch key {
+				case "minio_etag":
+					_, etag = SplitKeyValuePair(kvpairs[(idx + 1)])
+				case "minio_contenttype":
+					_, contenttype = SplitKeyValuePair(kvpairs[(idx + 1)])
+				}
 			}
-			// This is handled when xattrn is found, so skip it
-			if key == "xattrv" || key == "" {
-				continue
-			}
-			m[key] = value
 		}
 	}
-	m["is_file"] = "true"
-	// Let's just look for all the attributes that lead
-	// to it being a directory.
-	if _, ok := m["container"]; ok {
-		m["is_file"] = "false"
-	} else if _, ok := m["treesize"]; ok {
-		m["is_file"] = "false"
-	} else if _, ok := m["files"]; ok {
-		m["is_file"] = "false"
-	}
-	return m
+	stat := NewFileStat(filename, filesize, isfile, mtime, etag, contenttype)
+	return stat
 }
 
 // Put ... puts a file
@@ -297,7 +298,7 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Put", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp -N -f -p %s %s [eospath: %s, eosurl: %s]", src, eosurl, eospath, eosurl), err)
+		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Put", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath), err)
 	}
 	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
 	if output != "" {
@@ -315,7 +316,7 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	}
 
 	eospath = strings.Replace(eospath, "%", "%25", -1)
-	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s", x.GetXrootBase(), eospath, x.UID, x.GID))
+	eosurl, err := url.QueryUnescape(x.GetXrootBase() + eospath + "?eos.ruid=" + x.UID + "&eos.rgid=" + x.GID)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl), err)
 		return err
@@ -323,15 +324,17 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 
 	eosLogger.Log(ctx, LogLevelStat, "ReadChunk", fmt.Sprintf("EOScmd: xrdcp.GET: [eosurl: %s]", eosurl), nil)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
+	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-N", eosurl, "-")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err2 := cmd.Run()
+	if err2 != nil {
+		eosLogger.Log(ctx, LogLevelInfo, "ReadChunk", fmt.Sprintf("/usr/bin/xrdcp -N %s - %+v", eosurl, err2), nil)
+	}
 
 	errStr := strings.TrimSpace(stderr.String())
-	eosLogger.Log(ctx, LogLevelInfo, "ReadChunk", fmt.Sprintf("/usr/bin/xrdcp -N %s - %+v", eosurl, err2), nil)
 	if errStr != "" {
 		eosLogger.Log(ctx, LogLevelError, "ReadChunk", errStr, nil)
 	}
