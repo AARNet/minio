@@ -209,7 +209,7 @@ func Sleep() {
 func SplitKeyValuePair(pair string) (string, string) {
 	tmp := strings.Split(pair, "=")
 	if len(tmp) > 1 {
-		return tmp[0], tmp[1]
+		return strings.TrimSpace(tmp[0]), strings.TrimSpace(tmp[1])
 	}
 	return "", ""
 }
