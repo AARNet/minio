@@ -25,8 +25,8 @@ type eosLog struct{}
 // LogEntry defines the structure of a log entry made by the EOS gateway
 type LogEntry struct {
 	Level      string   `json:"level"`
-	Time       string   `json:"time"`
 	RequestID  string   `json:"request_id,omitempty"`
+	Time       string   `json:"time"`
 	Message    string   `json:"message"`
 	Method     string   `json:"method,omitempty"`
 	RemoteHost string   `json:"remote_host,omitempty"`
