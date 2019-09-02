@@ -828,27 +828,25 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		objpath := filepath.Join(path, obj)
 		objprefix := prefix
 
-		if len(objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
+		if len(objects) == 1 && prefix != "" && filepath.Base(objprefix) == obj {
 			// Jump back one directory to fix the prefixes
 			// for individual files
-			objpath = filepath.Join(filepath.Dir(path), obj)
-			objprefix = filepath.Dir(prefix) + "/"
+			objpath = filepath.Join(bucket, objprefix)
+			objprefix = filepath.Dir(objprefix) + "/"
 		}
 
 		objpath = filepath.Clean(objpath)
 		stat, err = e.FileSystem.Stat(ctx, objpath)
 
 		if stat != nil {
-			objname := objprefix + obj
+			objname := filepath.Join(objprefix, obj)
 			// Directories get added to prefixes, files to objects.
 			if stat.IsDir() {
 				result.Prefixes = append(result.Prefixes, objname)
 			} else {
 				if len(objects) == 1 {
 					// Don't add prefix since it'll be in the prefix list
-					if filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
-						objname = obj
-					}
+					objname = obj
 					// Add the object's directory to prefixes
 					objdir := filepath.Dir(objname) + "/"
 					if objdir != "./" {
