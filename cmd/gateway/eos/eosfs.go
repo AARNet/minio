@@ -253,7 +253,8 @@ func (e *eosFS) FileExists(ctx context.Context, p string) (bool, error) {
 	return e.Xrdcp.FileExists(ctx, eospath)
 }
 
-func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
+// Stat looks up and returns information about the path (p) provided. path should be in the format "<bucket>/<prefix>"
+func (e *eosFS) Stat(ctx context.Context, p string) (object *FileStat, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
@@ -271,18 +272,13 @@ func (e *eosFS) Stat(ctx context.Context, p string) (*FileStat, error) {
 		return nil, errFileNotFound
 	}
 
-	// Grab the first entry
-	var object *FileStat
-	if len(objects) > 0 {
-		object = objects[0]
-	} else {
+	if len(objects) < 1 {
 		return nil, errFileNotFound
 	}
 
-	// Create stat entry, cache it, return it.
-	//fi := e.CreateStatEntry(object)
+	// Grab the first entry, cache it and return it
+	object = objects[0]
 	reqStatCache.Write(eospath, object)
-
 	return object, nil
 }
 
