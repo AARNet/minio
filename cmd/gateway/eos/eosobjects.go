@@ -806,13 +806,15 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	if delimiter == "/" && prefix == "/" {
 		return result, nil
 	}
+
+	// Make sure there is a trailing slash so it's added to prefixes correctly (otherwise you get ./<prefix> objects)
 	if prefix != "" {
 		prefix = strings.TrimSuffix(prefix, "/") + "/"
 	}
 
 	// Get a list of objects in the directory
 	// or the single object if it's not a directory
-	path := strings.TrimSuffix(bucket, "/") + "/" + strings.TrimPrefix(prefix, "/")
+	path := filepath.Join(bucket, prefix)
 	path = filepath.Clean(path)
 	objects, err := e.FileSystem.BuildCache(ctx, path, true)
 	defer e.FileSystem.DeleteCache(ctx)
@@ -823,13 +825,13 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 	for _, obj := range objects {
 		var stat *FileStat
-		objpath := strings.TrimSuffix(path, "/") + "/" + obj
+		objpath := filepath.Join(path, obj)
 		objprefix := prefix
 
 		if len(objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
 			// Jump back one directory to fix the prefixes
 			// for individual files
-			objpath = filepath.Dir(strings.TrimSuffix(path, "/")) + "/" + obj
+			objpath = filepath.Join(filepath.Dir(path), obj)
 			objprefix = filepath.Dir(prefix) + "/"
 		}
 
