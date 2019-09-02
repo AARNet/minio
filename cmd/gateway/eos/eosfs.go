@@ -172,7 +172,10 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 			if e.isEOSSysFile(object.name) {
 				continue
 			}
-
+			// Skip minio parts
+			if strings.HasSuffix(object.name, ".minio.sys") {
+				continue
+			}
 			reqStatCache.Write(object.fullpath, object)
 
 			// If we find an entry matching the eospath and is a directory, skip it.

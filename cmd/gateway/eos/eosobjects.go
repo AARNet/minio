@@ -822,54 +822,52 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	}
 
 	for _, obj := range objects {
-		if !strings.HasSuffix(obj, ".minio.sys") {
-			var stat *FileStat
-			objpath := strings.TrimSuffix(path, "/") + "/" + obj
-			objprefix := prefix
+		var stat *FileStat
+		objpath := strings.TrimSuffix(path, "/") + "/" + obj
+		objprefix := prefix
 
-			if len(objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
-				// Jump back one directory to fix the prefixes
-				// for individual files
-				objpath = filepath.Dir(strings.TrimSuffix(path, "/")) + "/" + obj
-				objprefix = filepath.Dir(prefix) + "/"
-			}
+		if len(objects) == 1 && prefix != "" && filepath.Base(prefix) == obj {
+			// Jump back one directory to fix the prefixes
+			// for individual files
+			objpath = filepath.Dir(strings.TrimSuffix(path, "/")) + "/" + obj
+			objprefix = filepath.Dir(prefix) + "/"
+		}
 
-			objpath = filepath.Clean(objpath)
-			stat, err = e.FileSystem.Stat(ctx, objpath)
+		objpath = filepath.Clean(objpath)
+		stat, err = e.FileSystem.Stat(ctx, objpath)
 
-			if stat != nil {
-				objname := objprefix + obj
-				// Directories get added to prefixes, files to objects.
-				if stat.IsDir() {
-					result.Prefixes = append(result.Prefixes, objname)
-				} else {
-					if len(objects) == 1 {
-						// Don't add prefix since it'll be in the prefix list
-						if filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
-							objname = obj
-						}
-						// Add the object's directory to prefixes
-						objdir := filepath.Dir(objname) + "/"
-						if objdir != "./" {
-							result.Prefixes = append(result.Prefixes, objdir)
-						}
-					}
-					o := e.NewObjectInfo(bucket, objname, stat)
-					result.Objects = append(result.Objects, o)
-				}
-				if delimiter == "" && stat.IsDir() {
-					eosLogger.Log(ctx, LogLevelDebug, "ListObjects", "ListObjects: Recursing through "+prefix+obj, nil)
-					subdir, err := e.ListObjectsRecurse(ctx, bucket, prefix+obj, marker, delimiter, -1)
-					if err != nil {
-						return result, err
-					}
-					// Merge objects and prefixes from the recursive call
-					result.Objects = append(result.Objects, subdir.Objects...)
-					result.Prefixes = append(result.Prefixes, subdir.Prefixes...)
-				}
+		if stat != nil {
+			objname := objprefix + obj
+			// Directories get added to prefixes, files to objects.
+			if stat.IsDir() {
+				result.Prefixes = append(result.Prefixes, objname)
 			} else {
-				eosLogger.Log(ctx, LogLevelError, "ListObjects", "ERROR: ListObjects: unable to stat [objpath: "+objpath+"]", nil)
+				if len(objects) == 1 {
+					// Don't add prefix since it'll be in the prefix list
+					if filepath.Base(strings.TrimSuffix(objprefix, "/")) == obj {
+						objname = obj
+					}
+					// Add the object's directory to prefixes
+					objdir := filepath.Dir(objname) + "/"
+					if objdir != "./" {
+						result.Prefixes = append(result.Prefixes, objdir)
+					}
+				}
+				o := e.NewObjectInfo(bucket, objname, stat)
+				result.Objects = append(result.Objects, o)
 			}
+			if delimiter == "" && stat.IsDir() {
+				eosLogger.Log(ctx, LogLevelDebug, "ListObjects", "ListObjects: Recursing through "+prefix+obj, nil)
+				subdir, err := e.ListObjectsRecurse(ctx, bucket, prefix+obj, marker, delimiter, -1)
+				if err != nil {
+					return result, err
+				}
+				// Merge objects and prefixes from the recursive call
+				result.Objects = append(result.Objects, subdir.Objects...)
+				result.Prefixes = append(result.Prefixes, subdir.Prefixes...)
+			}
+		} else {
+			eosLogger.Log(ctx, LogLevelError, "ListObjects", "ERROR: ListObjects: unable to stat [objpath: "+objpath+"]", nil)
 		}
 	}
 
