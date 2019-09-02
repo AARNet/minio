@@ -455,7 +455,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 	}
 
 	dir := bucket + "/" + filepath.Dir(object)
-	if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
+	if exists, _ := e.FileSystem.FileExists(ctx, dir); !exists {
 		eosLogger.Log(ctx, LogLevelInfo, "NewMultipartUpload", fmt.Sprintf("NewMultipartUpload: mkdir: [dir: %s]", dir), nil)
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
