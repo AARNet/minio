@@ -87,7 +87,7 @@ func (e *eosFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 		return "", errFilePathBad
 	}
 	path = strings.ReplaceAll(path, "//", "/")
-	eosPath = strings.TrimSuffix(e.Path+"/"+path, ".")
+	eosPath = strings.TrimSuffix(filepath.Join(e.Path, path), ".")
 	eosPath = filepath.Clean(eosPath)
 	return eosPath, nil
 }
@@ -226,6 +226,10 @@ func (e *eosFS) DirStat(ctx context.Context, p string) (fi *FileStat, err error)
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return nil, err
+	}
+
+	if !strings.HasSuffix(eospath, "/") {
+		eospath = eospath + "/"
 	}
 
 	// Check cache
