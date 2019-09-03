@@ -313,7 +313,7 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 		return minio.NotImplemented{}
 	}
 
-	e.FileSystem.rm(ctx, bucket+"/"+object)
+	e.FileSystem.rm(ctx, filepath.Join(bucket, object))
 	return nil
 }
 
@@ -823,7 +823,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 				return result, err
 			}
 			if stat != nil {
-				result.Prefixes = append(result.Prefixes, prefix)
+				result.Prefixes = append(result.Prefixes, prefix+"/")
 				return result, err
 			}
 		}
@@ -841,8 +841,10 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		var stat *FileStat
 		objpath := filepath.Join(path, obj)
 		objprefix := prefix
+		objIsDir := strings.HasSuffix(obj, "/") // because filepath.Join() strips trailing slashes
+		objCount := len(objects)
 
-		if len(objects) == 1 && prefix != "" && filepath.Base(objprefix) == obj {
+		if objCount == 1 && prefix != "" && filepath.Base(objprefix) == obj {
 			// Jump back one directory to fix the prefixes
 			// for individual files
 			objpath = filepath.Join(bucket, objprefix)
@@ -852,7 +854,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		objpath = filepath.Clean(objpath)
 
 		// We need to call DirStat() so we don't recurse directories when we don't have to
-		if strings.HasSuffix(obj, "/") {
+		if objIsDir {
 			objpath = objpath + "/"
 			stat, err = e.FileSystem.DirStat(ctx, objpath)
 		} else {
@@ -860,27 +862,27 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		}
 
 		if stat != nil {
-			objname := filepath.Join(objprefix, obj)
-			eosLogger.Log(ctx, LogLevelError, "ListObjects", fmt.Sprintf("ListObjects: objname: %s isDir: %s", objname, stat.IsDir()), nil)
+			objName := filepath.Join(objprefix, obj)
 			// Directories get added to prefixes, files to objects.
 			if stat.IsDir() {
-				result.Prefixes = append(result.Prefixes, objname)
+				objName = objName + "/"
+				result.Prefixes = append(result.Prefixes, objName)
 			} else {
-				if len(objects) == 1 {
+				if objCount == 1 {
 					// Don't add the object if there is one object and the prefix ends with / (ie. is a dir)
-					if strings.HasSuffix(prefix, "/") && !strings.HasSuffix(objname, "/") {
+					if strings.HasSuffix(prefix, "/") && !strings.HasSuffix(objName, "/") {
 						return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 					}
 
 					// Don't add prefix since it'll be in the prefix list
 					// Add the object's directory to prefixes
-					objdir := filepath.Dir(objprefix) + "/"
-					if objdir != "./" {
-						result.Prefixes = append(result.Prefixes, objdir)
+					objdir := filepath.Dir(objprefix)
+					if objdir != "." {
+						result.Prefixes = append(result.Prefixes, objdir+"/")
 					}
 				}
-				if objname != "." {
-					o := e.NewObjectInfo(bucket, objname, stat)
+				if objName != "." {
+					o := e.NewObjectInfo(bucket, objName, stat)
 					result.Objects = append(result.Objects, o)
 				}
 			}
