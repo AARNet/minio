@@ -57,6 +57,9 @@ func (c *StatCache) Read(path string) (*FileStat, bool) {
 
 // Write creates a new entry in the StatCache
 func (c *StatCache) Write(path string, obj *FileStat) {
+	if obj.IsDir() && !strings.HasSuffix(path, "/") {
+		path = path + "/"
+	}
 	c.Lock()
 	c.cache[path] = obj
 	c.Unlock()
