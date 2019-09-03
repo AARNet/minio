@@ -187,7 +187,12 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 				eosLogger.Log(ctx, LogLevelDebug, "BuildCache", "Object matches requested path, returning it [object: "+object.fullpath+", path: "+eospath+"]", err)
 				return []string{object.name}, nil
 			}
-			entries = append(entries, object.name)
+			// Add a slash if it's a directory
+			if object.file {
+				entries = append(entries, object.name)
+			} else {
+				entries = append(entries, object.name+"/")
+			}
 		}
 	}
 	return entries, err
