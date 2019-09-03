@@ -808,14 +808,28 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	}
 
 	// Make sure there is a trailing slash so it's added to prefixes correctly (otherwise you get ./<prefix> objects)
-	if prefix != "" {
-		prefix = strings.TrimSuffix(prefix, "/") + "/"
-	}
 
 	// Get a list of objects in the directory
 	// or the single object if it's not a directory
 	path := filepath.Join(bucket, prefix)
 	path = filepath.Clean(path)
+
+	// We only want to list the directory and not it's contents if it doesn't end with /
+	if prefix != "" && delimiter != "" && !strings.HasSuffix(prefix, "/") {
+		if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
+			stat, err := e.FileSystem.DirStat(ctx, path)
+			if err != nil {
+				eosLogger.Log(ctx, LogLevelError, "ListObjects", "ListObjects: Unable to stat directory [path: "+path+"]", nil)
+				return result, err
+			}
+			if stat != nil {
+				result.Prefixes = append(result.Prefixes, prefix)
+				return result, err
+			}
+		}
+	}
+
+	// Otherwise we need to do some other stuff
 	objects, err := e.FileSystem.BuildCache(ctx, path, true)
 	defer e.FileSystem.DeleteCache(ctx)
 
@@ -832,30 +846,46 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 			// Jump back one directory to fix the prefixes
 			// for individual files
 			objpath = filepath.Join(bucket, objprefix)
-			objprefix = filepath.Dir(objprefix) + "/"
+			objprefix = filepath.Dir(objprefix)
 		}
 
 		objpath = filepath.Clean(objpath)
-		stat, err = e.FileSystem.Stat(ctx, objpath)
+
+		// We need to call DirStat() so we don't recurse directories when we don't have to
+		if strings.HasSuffix(obj, "/") {
+			objpath = objpath + "/"
+			stat, err = e.FileSystem.DirStat(ctx, objpath)
+		} else {
+			stat, err = e.FileSystem.Stat(ctx, objpath)
+		}
 
 		if stat != nil {
 			objname := filepath.Join(objprefix, obj)
+			eosLogger.Log(ctx, LogLevelError, "ListObjects", fmt.Sprintf("ListObjects: objname: %s isDir: %s", objname, stat.IsDir()), nil)
 			// Directories get added to prefixes, files to objects.
 			if stat.IsDir() {
 				result.Prefixes = append(result.Prefixes, objname)
 			} else {
 				if len(objects) == 1 {
+					// Don't add the object if there is one object and the prefix ends with / (ie. is a dir)
+					if strings.HasSuffix(prefix, "/") && !strings.HasSuffix(objname, "/") {
+						return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
+					}
+
 					// Don't add prefix since it'll be in the prefix list
-					objname = obj
 					// Add the object's directory to prefixes
-					objdir := filepath.Dir(objname) + "/"
+					objdir := filepath.Dir(objprefix) + "/"
 					if objdir != "./" {
 						result.Prefixes = append(result.Prefixes, objdir)
 					}
 				}
-				o := e.NewObjectInfo(bucket, objname, stat)
-				result.Objects = append(result.Objects, o)
+				if objname != "." {
+					o := e.NewObjectInfo(bucket, objname, stat)
+					result.Objects = append(result.Objects, o)
+				}
 			}
+
+			// If there's no delimiter, we need to get information from subdirectories too
 			if delimiter == "" && stat.IsDir() {
 				eosLogger.Log(ctx, LogLevelDebug, "ListObjects", "ListObjects: Recursing through "+prefix+obj, nil)
 				subdir, err := e.ListObjectsRecurse(ctx, bucket, prefix+obj, marker, delimiter, -1)
