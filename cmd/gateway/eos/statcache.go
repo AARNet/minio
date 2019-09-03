@@ -52,10 +52,6 @@ func (c *StatCache) Read(path string) (*FileStat, bool) {
 	if ok {
 		return fi, true
 	}
-	// Try it as a directory
-	if path[len(path)-1:] != "/" {
-		return c.Read(path + "/")
-	}
 	return nil, false
 }
 
