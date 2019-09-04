@@ -322,8 +322,12 @@ func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects [
 	eosLogger.Log(ctx, LogLevelStat, "DeleteObjects", fmt.Sprintf("S3cmd: DeleteObjects: [bucket: %s]", bucket), nil)
 
 	errs := make([]error, len(objects))
+	deleted := make(map[string]bool, 0)
 	for idx, object := range objects {
-		errs[idx] = e.DeleteObject(ctx, bucket, object)
+		if _, ok := deleted[object]; !ok {
+			errs[idx] = e.DeleteObject(ctx, bucket, object)
+			deleted[object] = true
+		}
 	}
 
 	return errs, nil
@@ -380,12 +384,6 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	var stat *FileStat
 	if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
 		stat, err = e.FileSystem.DirStat(ctx, path)
-		/*		eosLogger.Log(ctx, LogLevelDebug, "GetObjectInfo", fmt.Sprintf("GetObjectInfo: Request is for directory, returning Not Found [path: %s]", path), nil)
-				err = minio.ObjectNotFound{
-					Bucket: bucket,
-					Object: object}
-				return objInfo, err
-		*/
 	} else {
 		stat, err = e.FileSystem.Stat(ctx, path)
 	}
