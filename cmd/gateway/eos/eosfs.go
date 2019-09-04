@@ -323,22 +323,7 @@ func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {
 }
 
 func (e *eosFS) rmdir(ctx context.Context, p string) error {
-	eospath, err := e.AbsoluteEOSPath(p)
-	if err != nil {
-		return err
-	}
-
-	eosLogger.Log(ctx, LogLevelStat, "rmdir", "EOScmd: procuser.rmdir [eospath: "+eospath+"]", nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.URLExtras()))
-	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "rmdir", fmt.Sprintf("ERROR: EOSrmdir curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
-		return err
-	}
-
-	if interfaceToString(m["errormsg"]) != "" && !strings.HasPrefix(interfaceToString(m["errormsg"]), "error: no such file or directory") {
-		return errDiskAccessDenied
-	}
-
+	e.rm(ctx, p) // these functions are the same, why do we have two.
 	return nil
 }
 
