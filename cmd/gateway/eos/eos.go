@@ -227,12 +227,12 @@ func PathJoin(elem ...string) string {
 }
 
 // PathDir uses path.Dir() while retaining the trailing slash
-func PathDir(elem ...string) string {
+func PathDir(elem string) string {
 	trailingSlash := ""
 	if len(elem) > 0 {
-		if strings.HasSuffix(elem[len(elem)-1], "/") {
+		if strings.HasSuffix(elem, "/") {
 			trailingSlash = "/"
 		}
 	}
-	return path.Dir(elem...) + trailingSlash
+	return path.Dir(elem) + trailingSlash
 }
