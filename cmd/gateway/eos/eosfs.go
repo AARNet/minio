@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -87,8 +86,7 @@ func (e *eosFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 		return "", errFilePathBad
 	}
 	path = strings.ReplaceAll(path, "//", "/")
-	eosPath = strings.TrimSuffix(filepath.Join(e.Path, path), ".")
-	eosPath = filepath.Clean(eosPath)
+	eosPath = strings.TrimSuffix(PathJoin(e.Path, path), ".")
 	return eosPath, nil
 }
 
@@ -97,30 +95,23 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	eosurl := "http://" + e.HTTPHost + "/proc/user/?" + cmd
 	eosLogger.Log(ctx, LogLevelDebug, "MGMcurl", "EOSMGMcurl: [eosurl: "+eosurl+"]", nil)
 
-	maxRetries := 10
 	var (
 		res    *http.Response
 		client *http.Client
 		req    *http.Request
 	)
-	for try := 1; try <= maxRetries; try++ {
-		client, req, err = e.NewRequest("GET", eosurl, nil)
-		if err != nil {
-			return nil, nil, err
-		}
+	client, req, err = e.NewRequest("GET", eosurl, nil)
+	if err != nil {
+		return nil, nil, err
+	}
 
-		res, err = client.Do(req)
+	res, err = client.Do(req)
 
-		if res != nil {
-			defer res.Body.Close()
-			if res.StatusCode > 0 {
-				break
-			}
-		}
-		if res == nil && err == nil {
-			err = errResponseIsNil
-		}
-		Sleep()
+	if res != nil {
+		defer res.Body.Close()
+	}
+	if res == nil && err == nil {
+		err = errResponseIsNil
 	}
 	if err != nil {
 		return nil, nil, err
@@ -130,6 +121,22 @@ func (e *eosFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	m = make(map[string]interface{})
 	err = json.Unmarshal([]byte(body), &m)
 
+	return body, m, err
+}
+
+// MGMCurl makes GET requests to the MGM
+func (e *eosFS) MGMcurlWithRetry(ctx context.Context, cmd string) (body []byte, m map[string]interface{}, err error) {
+	eosurl := "http://" + e.HTTPHost + "/proc/user/?" + cmd
+	eosLogger.Log(ctx, LogLevelDebug, "MGMcurl", "EOSMGMcurl: [eosurl: "+eosurl+"]", nil)
+
+	maxRetries := 10
+	for try := 1; try <= maxRetries; try++ {
+		body, m, err = e.MGMcurl(ctx, cmd)
+		if err == nil {
+			break
+		}
+		Sleep()
+	}
 	return body, m, err
 }
 
@@ -301,7 +308,7 @@ func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "mkdirWithOption", "EOScmd: procuser.mkdir [eospath: "+eospath+"]", nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.URLExtras()))
+	_, m, err := e.MGMcurlWithRetry(ctx, fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "mkdirWithOption", fmt.Sprintf("ERROR: EOSmkdirWithOption curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
@@ -328,11 +335,7 @@ func (e *eosFS) rmdir(ctx context.Context, p string) error {
 		return err
 	}
 
-	if interfaceToString(m["errormsg"]) != "" {
-		if strings.HasPrefix(interfaceToString(m["errormsg"]), "error: no such file or directory") {
-			return nil
-		}
-		eosLogger.Log(ctx, LogLevelError, "mkdirWithOption", "ERROR: EOS procuser.rm [eospath: "+eospath+", error: "+interfaceToString(m["errormsg"])+"]", err)
+	if interfaceToString(m["errormsg"]) != "" && !strings.HasPrefix(interfaceToString(m["errormsg"]), "error: no such file or directory") {
 		return errDiskAccessDenied
 	}
 
@@ -347,7 +350,7 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 
 	eosLogger.Log(ctx, LogLevelStat, "rm", "EOScmd: procuser.rm [eospath: "+eospath+"]", nil)
 	url := "mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=" + url.QueryEscape(eospath) + e.URLExtras()
-	_, m, err := e.MGMcurl(ctx, url)
+	_, m, err := e.MGMcurlWithRetry(ctx, url)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "rm", "ERROR: EOSrm curl to MGM failed [eospath: "+eospath+", error: "+err.Error()+"]", err)
 		return err
@@ -376,7 +379,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 	fileinfourl := "mgm.cmd=fileinfo&mgm.path=" + url.QueryEscape(eossrcpath) + e.URLExtras()
 	for {
 		eosLogger.Log(ctx, LogLevelStat, "Copy", "EOScmd: procuser.fileinfo [eospath: "+eossrcpath+"]", nil)
-		_, m, err := e.MGMcurl(ctx, fileinfourl)
+		_, m, err := e.MGMcurlWithRetry(ctx, fileinfourl)
 		if err == nil && interfaceToInt64(m["size"]) >= size {
 			break
 		}
@@ -385,7 +388,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "Copy", "EOScmd: procuser.file.copy [src: "+eossrcpath+", dst: "+eosdstpath+"]", nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.URLExtras()))
+	_, m, err := e.MGMcurlWithRetry(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Copy", fmt.Sprintf("ERROR: EOScopy curl to MGM failed [src: %s, dst: %s, error: %+v]", eossrcpath, eosdstpath, err), err)
 		return err
@@ -410,7 +413,7 @@ func (e *eosFS) Touch(ctx context.Context, p string, size int64) error {
 	}
 
 	eosLogger.Log(ctx, LogLevelStat, "Touch", "EOScmd: procuser.file.touch [eospath: "+eospath+"]", nil)
-	_, m, err := e.MGMcurl(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.URLExtras(), size))
+	_, m, err := e.MGMcurlWithRetry(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.URLExtras(), size))
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Touch", fmt.Sprintf("ERROR: EOStouch curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
@@ -436,7 +439,7 @@ func (e *eosFS) Rename(ctx context.Context, from, to string) error {
 
 	eosLogger.Log(ctx, LogLevelStat, "Rename", "EOScmd: procuser.file.rename [src: "+eosfrompath+", dst: "+eostopath+"]", nil)
 	renameurl := "mgm.cmd=file&mgm.subcmd=rename&mgm.path=" + url.QueryEscape(eosfrompath) + "&mgm.file.target=" + url.QueryEscape(eostopath) + e.URLExtras()
-	_, m, err := e.MGMcurl(ctx, renameurl)
+	_, m, err := e.MGMcurlWithRetry(ctx, renameurl)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "Rename", fmt.Sprintf("ERROR: EOSrename curl to MGM failed [src: %s, dst: %s, error: %+v]", eosfrompath, eostopath, err), err)
 		return err
@@ -461,7 +464,7 @@ func (e *eosFS) SetMeta(ctx context.Context, p, key, value string) error {
 	}
 	eosLogger.Log(ctx, LogLevelStat, "SetMeta", "EOScmd: procuser.attr.set [path: "+eospath+", key: "+key+", value: "+value+"]", nil)
 	cmd := "mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_" + url.QueryEscape(key) + "&mgm.attr.value=" + url.QueryEscape(value) + "&mgm.path=" + url.QueryEscape(eospath) + e.URLExtras()
-	_, m, err := e.MGMcurl(ctx, cmd)
+	_, m, err := e.MGMcurlWithRetry(ctx, cmd)
 	if err != nil {
 		eosLogger.Log(ctx, LogLevelError, "SetMeta", fmt.Sprintf("ERROR: EOSsetMeta curl to MGM failed [eospath: %s, error: %+v]", eospath, err), err)
 		return err
