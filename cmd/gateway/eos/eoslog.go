@@ -38,6 +38,30 @@ type LogEntry struct {
 
 var eosLogger eosLog
 
+func (e *eosLog) Debug(ctx context.Context, method string, messagefmt string, args ...interface{}) {
+	if LogLevelDebug >= MaxLogLevel {
+		e.Log(ctx, LogLevelDebug, method, fmt.Sprintf(messagefmt, args...), nil)
+	}
+}
+
+func (e *eosLog) Error(ctx context.Context, method string, err error, messagefmt string, args ...interface{}) {
+	if LogLevelError >= MaxLogLevel {
+		e.Log(ctx, LogLevelError, method, fmt.Sprintf(messagefmt, args...), nil)
+	}
+}
+
+func (e *eosLog) Info(ctx context.Context, method string, messagefmt string, args ...interface{}) {
+	if LogLevelInfo >= MaxLogLevel {
+		e.Log(ctx, LogLevelInfo, method, fmt.Sprintf(messagefmt, args...), nil)
+	}
+}
+
+func (e *eosLog) Stat(ctx context.Context, method string, messagefmt string, args ...interface{}) {
+	if LogLevelStat >= MaxLogLevel {
+		e.Log(ctx, LogLevelStat, method, fmt.Sprintf(messagefmt, args...), nil)
+	}
+}
+
 func (e *eosLog) Log(ctx context.Context, level int, method string, message string, err error) {
 	var levelString string
 	switch level {
