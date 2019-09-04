@@ -10,6 +10,7 @@ package eos
 
 import (
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -212,4 +213,26 @@ func SplitKeyValuePair(pair string) (string, string) {
 		return strings.TrimSpace(tmp[0]), strings.TrimSpace(tmp[1])
 	}
 	return "", ""
+}
+
+// PathJoin uses path.Clean and path.Join while retaining the trailing slash
+func PathJoin(elem ...string) string {
+	trailingSlash := ""
+	if len(elem) > 0 {
+		if strings.HasSuffix(elem[len(elem)-1], "/") {
+			trailingSlash = "/"
+		}
+	}
+	return path.Clean(path.Join(elem...)) + trailingSlash
+}
+
+// PathDir uses path.Dir() while retaining the trailing slash
+func PathDir(elem ...string) string {
+	trailingSlash := ""
+	if len(elem) > 0 {
+		if strings.HasSuffix(elem[len(elem)-1], "/") {
+			trailingSlash = "/"
+		}
+	}
+	return path.Dir(elem...) + trailingSlash
 }
