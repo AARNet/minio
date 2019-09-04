@@ -17,7 +17,6 @@ import (
 	"io"
 	"net/url"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -41,9 +40,7 @@ func (x *Xrdcp) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	if strings.Contains(path, "..") {
 		return "", errFilePathBad
 	}
-	path = strings.ReplaceAll(path, "//", "/")
-	eosPath = strings.TrimSuffix(x.Path+"/"+path, ".")
-	eosPath = filepath.Clean(eosPath)
+	eosPath = strings.TrimSuffix(PathJoin(x.Path, path), ".")
 	return eosPath, nil
 }
 
