@@ -5,281 +5,37 @@
  *
  * This is a gateway for AARNet's CERN's EOS storage backend (v4.2.29)
  *
+ * TODO: Move EOS MGM and filesystem interactions to it's own type
  */
 
 package eos
 
 import (
-	"github.com/minio/cli"
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+	"errors"
+
 	minio "github.com/minio/minio/cmd"
+	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/madmin"
+	"github.com/minio/minio/pkg/policy"
+	"github.com/minio/minio/pkg/policy/condition"
 )
-
-const (
-	eosBackend = "eos"
-)
-
-func init() {
-	const eosGatewayTemplate = `NAME:
-  {{.HelpName}} - {{.Usage}}
-
-USAGE:
-  {{.HelpName}} {{if .VisibleFlags}}[FLAGS]{{end}} PATH
-{{if .VisibleFlags}}
-FLAGS:
-  {{range .VisibleFlags}}{{.}}
-  {{end}}{{end}}
-PATH:
-  Path to EOS mount point.
-
-ENVIRONMENT VARIABLES:
-  ACCESS:
-     MINIO_ACCESS_KEY: Username or access key of minimum 3 characters in length.
-     MINIO_SECRET_KEY: Password or secret key of minimum 8 characters in length.
-
-  BROWSER:
-     MINIO_BROWSER: To disable web browser access, set this value to "off".
-
-  DOMAIN:
-     MINIO_DOMAIN: To enable virtual-host-style requests, set this value to Minio host domain name.
-
-  EOS:
-     EOSLOGLEVEL: 0..n 0=off, 1=errors only, 2=errors/info, 3+ = "debug"
-     EOS: url to eos
-     EOSUSER: eos username
-     EOSUID: eos user uid
-     EOSGID: eos user gid
-     EOSSTAGE: local fast disk to stage multipart uploads
-     EOSREADONLY: true/false
-     EOSREADMETHOD: webdav/xrootd/xrdcp (DEFAULT: webdav)
-     EOSSLEEP: int ms sleep 1000ms = 1s (default 100 ms)
-     VOLUME_PATH: path on eos
-     HOOKSURL: url to s3 hooks (not setting this will disable hooks)
-     SCRIPTS: path to xroot script
-     EOSVALIDBUCKETS: true/false (DEFAULT: true)
-
-  CACHE:
-     MINIO_CACHE_DRIVES: List of mounted drives or directories delimited by ";".
-     MINIO_CACHE_EXCLUDE: List of cache exclusion patterns delimited by ";".
-     MINIO_CACHE_EXPIRY: Cache expiry duration in days.
-     MINIO_CACHE_MAXUSE: Maximum permitted usage of the cache in percentage (0-100).
-
-EXAMPLES:
-  1. Start minio gateway server for EOS backend.
-     $ export MINIO_ACCESS_KEY=accesskey
-     $ export MINIO_SECRET_KEY=secretkey
-     $ export EOS=url to eos
-     $ export EOSLOGLEVEL=1
-     $ export EOSUSER=eos username
-     $ export EOSUID=eos user uid
-     $ export EOSGID=eos user gid
-     $ export EOSSTAGE=local fast disk to stage multipart uploads
-     $ export VOLUME_PATH=path on eos
-     $ export HOOKSURL=url to s3 hooks
-     $ export SCRIPTS=path to xroot script
-     $ {{.HelpName}} ${VOLUME_PATH}
-
-  2. Start minio gateway server for EOS with edge caching enabled.
-     $ export MINIO_ACCESS_KEY=accesskey
-     $ export MINIO_SECRET_KEY=secretkey
-     $ export EOS=url to eos
-     $ export EOSLOGLEVEL=1
-     $ export EOSUSER=eos username
-     $ export EOSUID=eos user uid
-     $ export EOSGID=eos user gid
-     $ export EOSSTAGE=local fast disk to stage multipart uploads
-     $ export VOLUME_PATH=path on eos
-     $ export HOOKSURL=url to s3 hooks
-     $ export SCRIPTS=path to xroot script
-     $ export MINIO_CACHE_DRIVES="/mnt/drive1;/mnt/drive2;/mnt/drive3;/mnt/drive4"
-     $ export MINIO_CACHE_EXCLUDE="bucket1/*;*.png"
-     $ export MINIO_CACHE_EXPIRY=40
-     $ export MINIO_CACHE_MAXUSE=80
-     $ {{.HelpName}} ${VOLUME_PATH}
-`
-	minio.RegisterGatewayCommand(cli.Command{
-		Name:               eosBackend,
-		Usage:              "AARNet's CERN's EOS",
-		Action:             eosGatewayMain,
-		CustomHelpTemplate: eosGatewayTemplate,
-		HideHelpCommand:    true,
-	})
-}
-
-// Handler for 'minio gateway eos' command line.
-func eosGatewayMain(ctx *cli.Context) {
-	// Validate gateway arguments.
-	if !ctx.Args().Present() || ctx.Args().First() == "help" {
-		cli.ShowCommandHelpAndExit(ctx, eosBackend, 1)
-	}
-
-	minio.StartGateway(ctx, &EOS{ctx.Args().First()})
-}
-
-// EOS implements Gateway.
-type EOS struct {
-	path string
-}
-
-// Name implements Gateway interface.
-func (g *EOS) Name() string {
-	return eosBackend
-}
-
-// NewGatewayLayer returns eos gatewaylayer.
-func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
-	loglevel, ok := strconv.Atoi(os.Getenv("EOSLOGLEVEL"))
-	if ok != nil {
-		loglevel = 0
-	}
-
-	const CLR_W = "\x1b[37;1m"
-	const CLR_B = "\x1b[34;1m"
-	const CLR_Y = "\x1b[33;1m"
-	const CLR_G = "\x1b[32;1m"
-	const CLR_N = "\x1b[0m"
-
-	stage := os.Getenv("EOSSTAGE")
-	if stage != "" {
-		os.MkdirAll(stage, 0700)
-	}
-
-	readonly := false
-	if os.Getenv("EOSREADONLY") == "true" {
-		readonly = true
-	}
-
-	readmethod := "webdav"
-	if strings.ToLower(os.Getenv("EOSREADMETHOD")) == "xrootd" {
-		readmethod = "xrootd"
-	} else if strings.ToLower(os.Getenv("EOSREADMETHOD")) == "xrdcp" {
-		readmethod = "xrdcp"
-	}
-
-	procuserMax := 12
-	ret, err := strconv.Atoi(os.Getenv("EOSMAXPROCUSER"))
-	if err == nil {
-		procuserMax = ret
-	}
-
-	webdavMax := 0
-	ret, err = strconv.Atoi(os.Getenv("EOSMAXWEBDAV"))
-	if err == nil {
-		webdavMax = ret
-	}
-
-	xrdcpMax := 0
-	ret, err = strconv.Atoi(os.Getenv("EOSMAXXRDCP"))
-	if err == nil {
-		xrdcpMax = ret
-	}
-
-	xrootdMax := 0
-	ret, err = strconv.Atoi(os.Getenv("EOSMAXXROOTD"))
-	if err == nil {
-		xrootdMax = ret
-	}
-
-	waitSleep := 100
-	ret, err = strconv.Atoi(os.Getenv("EOSSLEEP"))
-	if err == nil {
-		waitSleep = ret
-	}
-
-	validbuckets := true
-	if os.Getenv("EOSVALIDBUCKETS") == "false" {
-		validbuckets = false
-	}
-
-	logger.Info("EOS URL: %s", os.Getenv("EOS"))
-	logger.Info("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
-	logger.Info("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
-	logger.Info("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
-	logger.Info("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
-
-	if stage != "" {
-		logger.Info("EOS staging: %s", stage)
-	} else {
-		logger.Info("EOS staging: DISABLED")
-	}
-
-	if readonly {
-		logger.Info("EOS read only mode: ENABLED")
-	}
-
-	if !validbuckets {
-		logger.Info("EOS allowing invalid bucket names (RISK)")
-	}
-
-	logger.Info("EOS READ METHOD: %s", readmethod)
-	logger.Info("EOS /proc/user MAX: %d", procuserMax)
-	logger.Info("EOS WebDav MAX: %d", webdavMax)
-	logger.Info("EOS xrdcp MAX: %d", xrdcpMax)
-	logger.Info("EOS xrootd MAX: %d", xrootdMax)
-	logger.Info("EOS SLEEP: %d", waitSleep)
-
-	logger.Info("EOS LOG LEVEL: %d", loglevel)
-
-	procuserJobs := eosJobs{
-		kind:     "procuser",
-		jobs:     make(map[int]*eosJob),
-		max:      procuserMax,
-		waiting:  0,
-		sleep:    waitSleep,
-		loglevel: loglevel,
-	}
-
-	webdavJobs := eosJobs{
-		kind:     "webdav",
-		jobs:     make(map[int]*eosJob),
-		max:      webdavMax,
-		waiting:  0,
-		sleep:    waitSleep,
-		loglevel: loglevel,
-	}
-
-	xrdcpJobs := eosJobs{
-		kind:     "xrdcp",
-		jobs:     make(map[int]*eosJob),
-		max:      xrdcpMax,
-		waiting:  0,
-		sleep:    waitSleep,
-		loglevel: loglevel,
-	}
-
-	xrootdJobs := eosJobs{
-		kind:     "xrootd",
-		jobs:     make(map[int]*eosJob),
-		max:      xrootdMax,
-		waiting:  0,
-		sleep:    waitSleep,
-		loglevel: loglevel,
-	}
-
-	return &eosObjects{
-		loglevel:     loglevel,
-		url:          os.Getenv("EOS"),
-		path:         os.Getenv("VOLUME_PATH"),
-		hookurl:      os.Getenv("HOOKSURL"),
-		scripts:      os.Getenv("SCRIPTS"),
-		user:         os.Getenv("EOSUSER"),
-		uid:          os.Getenv("EOSUID"),
-		gid:          os.Getenv("EOSGID"),
-		stage:        stage,
-		readonly:     readonly,
-		readmethod:   readmethod,
-		waitSleep:    waitSleep,
-		procuserJobs: procuserJobs,
-		webdavJobs:   webdavJobs,
-		xrdcpJobs:    xrdcpJobs,
-		xrootdJobs:   xrootdJobs,
-		validbuckets: validbuckets,
-	}, nil
-}
-
-// Production - eos gateway is production ready.
-func (g *EOS) Production() bool {
-	return false //hahahahaha
-}
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
@@ -295,12 +51,18 @@ type eosObjects struct {
 	readonly     bool
 	readmethod   string
 	waitSleep    int
-	procuserJobs eosJobs
-	webdavJobs   eosJobs
-	xrdcpJobs    eosJobs
-	xrootdJobs   eosJobs
 	validbuckets bool
+	StatCache    *StatCache
+	DirCache     eosDirCacheType
+	BucketCache  map[string]minio.BucketInfo 
+	TransferList *TransferList
 }
+
+// Errors
+var eoserrFileNotFound = errors.New("EOS: file not found")
+var eoserrDiskAccessDenied = errors.New("EOS: disk access denied")
+var eoserrCantPut = errors.New("EOS: can't put")
+var eoserrFilePathBad = errors.New("EOS: bad file path")
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
 func (e *eosObjects) IsNotificationSupported() bool {
@@ -332,13 +94,13 @@ func (e *eosObjects) StorageInfo(ctx context.Context) (storageInfo minio.Storage
 
 // GetBucketInfo - Get bucket metadata
 func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio.BucketInfo, err error) {
-	e.Log(2, "S3cmd: GetBucketInfo %s", bucket)
+	e.Log(2, "S3cmd: GetBucketInfo [bucket: %s]", bucket)
 
-	if bi, ok := eosBucketCache[bucket]; ok {
-		e.Log(3, "bucket cache hit: %s", bucket)
+	if bi, ok := e.BucketCache[bucket]; ok {
+		e.Log(3, "GetBucketInfo: cache miss: [bucket: %s]", bucket)
 		return bi, nil
 	}
-	e.Log(3, "bucket cache miss: %s", bucket)
+	e.Log(3, "GetBucketInfo: cache miss: [bucket: %s]", bucket)
 	stat, err := e.EOSfsStat(bucket)
 
 	if err == nil {
@@ -346,7 +108,7 @@ func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio
 			Name:    bucket,
 			Created: stat.ModTime()}
 
-		eosBucketCache[bucket] = bi
+		e.BucketCache[bucket] = bi
 	} else {
 		err = minio.BucketNotFound{Bucket: bucket}
 	}
@@ -357,7 +119,7 @@ func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio
 func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInfo, err error) {
 	e.Log(2, "S3cmd: ListBuckets")
 
-	eosBucketCache = make(map[string]minio.BucketInfo)
+	e.BucketCache = make(map[string]minio.BucketInfo)
 
 	dirs, err := e.EOSreadDir("", false)
 	if err != nil {
@@ -373,7 +135,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 					Name:    dir,
 					Created: stat.ModTime()}
 				buckets = append(buckets, b)
-				eosBucketCache[strings.TrimSuffix(dir, "/")] = b
+				e.BucketCache[strings.TrimSuffix(dir, "/")] = b
 			} else {
 				if !stat.IsDir() {
 					e.Log(3, "Bucket: %s not a directory", dir)
@@ -383,20 +145,20 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 				}
 			}
 		} else {
-			e.Log(1, "ERROR: ListBuckets - can not stat %s", dir)
+			e.Log(1, "ERROR: ListBuckets: unable to stat [dir: %s]", dir)
 		}
 	}
 
-	eosDirCache.path = ""
+	e.DirCache.path = ""
 
-	e.Log(3, "BucketCache: %+v", eosBucketCache)
+	e.Log(3, "DEBUG: BucketCache: %+v", e.BucketCache)
 
 	return buckets, err
 }
 
 // MakeBucketWithLocation - Create a new container.
 func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
-	e.Log(2, "S3cmd: MakeBucketWithLocation: %s %s", bucket, location)
+	e.Log(2, "S3cmd: MakeBucketWithLocation: [bucket: %s, location: %s]", bucket, location)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -420,7 +182,7 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, locatio
 
 // DeleteBucket - delete a container
 func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
-	e.Log(2, "S3cmd: DeleteBucket: %s", bucket)
+	e.Log(2, "S3cmd: DeleteBucket: [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -431,7 +193,7 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 
 // GetBucketPolicy - Get the container ACL
 func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
-	e.Log(2, "S3cmd: GetBucketPolicy: %s", bucket)
+	e.Log(2, "S3cmd: GetBucketPolicy: [bucket: %s]", bucket)
 
 	return &policy.Policy{
 		Version: policy.DefaultVersion,
@@ -456,7 +218,7 @@ func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*polic
 
 // SetBucketPolicy
 func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketPolicy *policy.Policy) error {
-	e.Log(2, "S3cmd: SetBucketPolicy: %s, %+v", bucket, bucketPolicy)
+	e.Log(2, "S3cmd: SetBucketPolicy: [bucket: %s, bucketPolicy: %+v]", bucket, bucketPolicy)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -467,7 +229,7 @@ func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketP
 
 // DeleteBucketPolicy - Set the container ACL to "private"
 func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	e.Log(2, "S3cmd: DeleteBucketPolicy: %s", bucket)
+	e.Log(2, "S3cmd: DeleteBucketPolicy: [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -481,12 +243,15 @@ func (e *eosObjects) IsListenBucketSupported() bool {
 	return false
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////
-//  Object
+/*********************
+ *  Object           *
+ ********************/
 
 // CopyObject - Copies a blob from source container to destination container.
 func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	e.Log(2, "S3cmd: CopyObject: %s -> %s : %+v", srcBucket+"/"+srcObject, destBucket+"/"+destObject, srcInfo)
+	srcpath := srcBucket+"/"+srcObject
+	destpath := destBucket+"/"+destObject
+	e.Log(2, "S3cmd: CopyObject: [from: %s, to: %s, srcInfo: %+v]", srcpath, destpath, srcInfo)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
@@ -497,29 +262,29 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 		e.EOSmkdirWithOption(dir, "&mgm.option=p")
 	}
 
-	err = e.EOScopy(srcBucket+"/"+srcObject, destBucket+"/"+destObject, srcInfo.Size)
+	err = e.EOScopy(srcpath, destpath, srcInfo.Size)
 	if err != nil {
-		e.Log(1, "ERROR: COPY:%+v", err)
+		e.Log(1, "ERROR: COPY: %+v", err)
 		return objInfo, err
 	}
-	err = e.EOSsetETag(destBucket+"/"+destObject, srcInfo.ETag)
+	err = e.EOSsetETag(destpath, srcInfo.ETag)
 	if err != nil {
-		e.Log(1, "ERROR: COPY:%+v", err)
+		e.Log(1, "ERROR: COPY: %+v", err)
 		return objInfo, err
 	}
-	err = e.EOSsetContentType(destBucket+"/"+destObject, srcInfo.ContentType)
+	err = e.EOSsetContentType(destpath, srcInfo.ContentType)
 	if err != nil {
-		e.Log(1, "ERROR: COPY:%+v", err)
+		e.Log(1, "ERROR: COPY: %+v", err)
 		return objInfo, err
 	}
 
-	e.EOScacheDeleteObject(destBucket, destObject)
+	e.StatCache.DeleteObject(destBucket, destObject)
 	return e.GetObjectInfo(ctx, destBucket, destObject, dstOpts)
 }
 
 // CopyObjectPart creates a part in a multipart upload by copying
 func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (p minio.PartInfo, err error) {
-	e.Log(2, "S3cmd: CopyObjectPart: %s/%s to %s/%s", srcBucket, srcObject, destBucket, destObject)
+	e.Log(2, "S3cmd: CopyObjectPart: [srcpath: %s/%s, destpath: %s/%s", srcBucket, srcObject, destBucket, destObject)
 
 	if e.readonly {
 		return p, minio.NotImplemented{}
@@ -530,45 +295,48 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 
 // PutObject - Create a new blob with the incoming data
 func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	e.Log(2, "S3cmd: PutObject: %s/%s", bucket, object)
+	e.Log(2, "S3cmd: PutObject: [path: %s/%s]", bucket, object)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
 	}
 
 	for key, val := range opts.UserDefined {
-		e.Log(3, "PutObject %s = %s", key, val)
+		e.Log(3, "PutObject [path: %s/%s, key: %s, value: %s]", bucket, object, key, val)
 	}
 
 	buf, _ := ioutil.ReadAll(data)
-	etag := hex.EncodeToString(data.MD5Current())
-
+	hasher := md5.New()
+	hasher.Write([]byte(buf))
+	etag := hex.EncodeToString(hasher.Sum(nil))
 	dir := bucket + "/" + filepath.Dir(object)
+	objectpath := bucket+"/"+object
+
 	if _, err := e.EOSfsStat(dir); err != nil {
 		e.EOSmkdirWithOption(dir, "&mgm.option=p")
 	}
 
-	err = e.EOSput(bucket+"/"+object, buf)
+	err = e.EOSput(objectpath, buf)
 	if err != nil {
-		e.Log(1, "ERROR: PUT:%+v", err)
+		e.Log(1, "ERROR: PUT: %+v", err)
 		return objInfo, err
 	}
-	err = e.EOSsetETag(bucket+"/"+object, etag)
+	err = e.EOSsetETag(objectpath, etag)
 	if err != nil {
-		e.Log(1, "ERROR: PUT:%+v", err)
+		e.Log(1, "ERROR: PUT: %+v", err)
 		return objInfo, err
 	}
-	err = e.EOSsetContentType(bucket+"/"+object, opts.UserDefined["content-type"])
+	err = e.EOSsetContentType(objectpath, opts.UserDefined["content-type"])
 	if err != nil {
-		e.Log(1, "ERROR: PUT:%+v", err)
+		e.Log(1, "ERROR: PUT: %+v", err)
 		return objInfo, err
 	}
 
-	e.EOScacheDeleteObject(bucket, object)
+	e.StatCache.DeleteObject(bucket, object)
 	return e.GetObjectInfo(ctx, bucket, object, opts)
 }
 
-// DeleteObject - Deletes a blob on azure container
+// DeleteObject - Deletes a blob on EOS
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
 	e.Log(2, "S3cmd: DeleteObject: %s/%s", bucket, object)
 
@@ -577,25 +345,25 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 	}
 
 	e.EOSrm(bucket + "/" + object)
-
 	return nil
 }
 
+// DeleteObjects - Deletes multiple blobs on EOS
 func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error) {
-	e.Log(2, "S3cmd: DeleteObjects: %s", bucket)
+	e.Log(2, "S3cmd: DeleteObjects: [bucket: %s]", bucket)
 
 	errs := make([]error, len(objects))
 	for idx, object := range objects {
 		errs[idx] = e.DeleteObject(ctx, bucket, object)
 	}
+
 	return errs, nil
 }
 
 // GetObject - reads an object from EOS
 func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string, opts minio.ObjectOptions) error {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
-
-	e.Log(2, "S3cmd: GetObject: %s from %d for %d byte(s)", path, startOffset, length)
+	e.Log(2, "S3cmd: GetObject: [path: %s, startOffset: %d, length: %d]", path, startOffset, length)
 
 	if etag != "" {
 		objInfo, err := e.GetObjectInfo(ctx, bucket, object, opts)
@@ -615,13 +383,19 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 // GetObjectInfo - reads blob metadata properties and replies back minio.ObjectInfo
 func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
-
-	e.Log(2, "S3cmd: GetObjectInfo: %s", path)
+	e.Log(2, "S3cmd: GetObjectInfo: [path: %s]", path)
 
 	stat, err := e.EOSfsStat(path)
+	if stat == nil {
+		maxRetry := 20
+		for retry := 0; retry < maxRetry; retry++ {
+			stat, err = e.EOSfsStat(path)
+			e.EOSsleep()
+		}
+	}
 
 	if err != nil {
-		e.Log(3, "%+v", err)
+		e.Log(3, "DEBUG: GetObjectInfo: [error: %+v]", err)
 		err = minio.ObjectNotFound{
 			Bucket: bucket,
 			Object: object}
@@ -638,7 +412,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		ContentType: stat.ContentType(),
 	}
 
-	e.Log(2, "%s etag:%s content-type:%s", path, stat.ETag(), stat.ContentType())
+	e.Log(3, "GetObjectInfo: [path: %s, etag: %s, content-type: %s]", path, stat.ETag(), stat.ContentType())
 	return objInfo, err
 }
 
@@ -661,6 +435,7 @@ func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 		err := e.GetObject(ctx, bucket, object, startOffset, length, pw, objInfo.ETag, opts)
 		pw.CloseWithError(err)
 	}()
+
 	// Setup cleanup function to cause the above go-routine to
 	// exit in case of partial read
 	pipeCloser := func() { pr.Close() }
@@ -669,13 +444,13 @@ func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 
 // ListMultipartUploads - lists all multipart uploads.
 func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result minio.ListMultipartsInfo, err error) {
-	e.Log(2, "S3cmd: ListMultipartUploads: %s %s %s %s %s %d", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
+	e.Log(2, "S3cmd: ListMultipartUploads: [bucket: %s, prefix: %s, keyMarket: %s, uploadIDMarker: %s, delimiter: %s, maxUploads: %d]", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
 	return result, minio.NotImplemented{}
 }
 
 // NewMultipartUpload
 func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (uploadID string, err error) {
-	e.Log(2, "S3cmd: NewMultipartUpload: %s/%s +%v", bucket, object, opts)
+	e.Log(2, "S3cmd: NewMultipartUpload: [path: %s/%s, options:  +%v]", bucket, object, opts)
 
 	if e.readonly {
 		return "", minio.NotImplemented{}
@@ -689,11 +464,11 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 
 	dir := bucket + "/" + filepath.Dir(object)
 	if _, err := e.EOSfsStat(dir); err != nil {
-		e.Log(2, "MKDIR : %s", dir)
+		e.Log(2, "NewMultipartUpload: mkdir: [dir: %s]", dir)
 		e.EOSmkdirWithOption(dir, "&mgm.option=p")
 	}
 
-	mp := eosMultiPartsType{
+	mp := Transfer{
 		parts:       make(map[int]minio.PartInfo),
 		partsCount:  0,
 		size:        0,
@@ -710,37 +485,45 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 		stagepath := hex.EncodeToString(hasher.Sum(nil))
 
 		//make sure it is clear of older junk
-		os.RemoveAll(e.stage + "/" + stagepath)
+		absstagepath := e.stage + "/" + stagepath
+		os.RemoveAll(absstagepath)
 
-		err = os.MkdirAll(e.stage+"/"+stagepath, 0700)
+		err = os.MkdirAll(absstagepath, 0700)
 		if err != nil {
-			e.Log(2, "MKDIR %s FAILED %+v", e.stage+"/"+stagepath, err)
+			e.Log(2, "mkdir failed [path: %s, error: %+v]", absstagepath, err)
 		}
 		mp.stagepath = stagepath
 	}
 
-	eosMultiParts[uploadID] = &mp
-
-	e.Log(2, "uploadID : %s", uploadID)
+	e.TransferList.AddTransfer(uploadID, &mp)
+	e.Log(2, "NewMultipartUpload: [uploadID: %s]", uploadID)
 	return uploadID, nil
 }
 
 // PutObjectPart
 func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
-	e.Log(2, "S3cmd: PutObjectPart: %s/%s %s [%d] %d", bucket, object, uploadID, partID, data.Size())
+	e.Log(2, "S3cmd: PutObjectPart: [object: %s/%s, uploadID: %s, partId: %d, size: %d]", bucket, object, uploadID, partID, data.Size())
 
 	if e.readonly {
 		return info, minio.NotImplemented{}
 	}
 
-	for eosMultiParts[uploadID].parts == nil {
-		e.Log(2, "PutObjectPart called before NewMultipartUpload finished...")
+	transfer := e.TransferList.GetTransfer(uploadID)
+	for {
+		transfer.RLock()
+		parts := transfer.parts
+		transfer.RUnlock()
+		//parts := transfer.GetParts()
+		if parts != nil {
+			break
+		}
+		e.Log(1, "PutObjectPart called before NewMultipartUpload finished. [object: %s/%s, uploadID: %d]", bucket, object, partID)
 		e.EOSsleep()
 	}
 
 	size := data.Size()
 	buf, _ := ioutil.ReadAll(data)
-	etag := hex.EncodeToString(data.MD5Current())
+	etag := data.MD5CurrentHexString()
 
 	newPart := minio.PartInfo{
 		PartNumber:   partID,
@@ -749,34 +532,46 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		Size:         size,
 	}
 
-	eosMultiParts[uploadID].mutex.Lock()
-	eosMultiParts[uploadID].parts[partID] = newPart
-	eosMultiParts[uploadID].mutex.Unlock()
+	transfer.AddPart(partID, newPart)
 
 	if partID == 1 {
-		eosMultiParts[uploadID].mutex.Lock()
-		eosMultiParts[uploadID].firstByte = buf[0]
-		eosMultiParts[uploadID].chunkSize = size
-		eosMultiParts[uploadID].mutex.Unlock()
+		transfer.Lock()
+		transfer.firstByte = buf[0]
+		transfer.chunkSize = size
+		transfer.Unlock()
 	} else {
-		for eosMultiParts[uploadID].chunkSize == 0 {
-			e.Log(2, "PutObjectPart ok, waiting for first chunk (processing part %d)...", partID)
+		for {
+			transfer.RLock()
+			chunksize := transfer.chunkSize
+			transfer.RUnlock()
+
+			if chunksize != 0 {
+				break
+			}
+			e.Log(3, "PutObjectPart: waiting for first chunk [object: %s/%s, processing_part: %d]", bucket, object, partID)
 			e.EOSsleep()
 		}
 	}
 
-	eosMultiParts[uploadID].mutex.Lock()
-	eosMultiParts[uploadID].partsCount++
-	eosMultiParts[uploadID].AddToSize(size)
-	eosMultiParts[uploadID].mutex.Unlock()
+	transfer.Lock()
+	transfer.partsCount++
+	transfer.AddToSize(size)
+	chunksize := transfer.chunkSize
+	transfer.Unlock()
 
-	offset := eosMultiParts[uploadID].chunkSize * int64(partID-1)
-	e.Log(3, "PutObjectPart offset = %d = %d", (partID - 1), offset)
+	offset := chunksize * int64(partID-1)
+	e.Log(3, "PutObjectPart offset [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
 
 	if e.stage != "" { //staging
-		e.Log(2, "PutObjectPart Staging")
+		e.Log(3, "PutObjectPart: staging transfer [object: %s/%s]", bucket, object)
 
-		f, err := os.OpenFile(e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		stagepath := transfer.GetStagePath()
+		absstagepath := e.stage+"/"+stagepath
+
+		if _, err := os.Stat(absstagepath); os.IsNotExist(err) {
+			err = os.MkdirAll(absstagepath, 0700)
+		}
+		f, err := os.OpenFile(absstagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			e.Log(1, "ERROR: Write ContentType: %+v", err)
 			return newPart, err
@@ -788,151 +583,184 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 		f.Close()
 	} else { // use xrootd
-		go func() {
+//		go func() {
 			err = e.EOSxrootdWriteChunk(uploadID, offset, offset+size, "0", buf)
-		}()
+//		}()
 	}
 
-	go func() {
-		for eosMultiParts[uploadID].md5PartID != partID {
-			e.Log(3, "PutObjectPart waiting for md5PartID = %d, currently = %d", eosMultiParts[uploadID].md5PartID, partID)
+//	go func() {
+//		transfer := e.TransferList.GetTransfer(uploadID)
+		transfer = e.TransferList.GetTransfer(uploadID)
+		for {
+			if transfer != nil {
+				transfer.RLock()
+				md5PartID := transfer.md5PartID
+				transfer.RUnlock()
+				if md5PartID == partID {
+					break
+				}
+				e.Log(3, "PutObjectPart: waiting for part [uploadID: %s, md5PartID: %d, currentPart: %d]", uploadID, md5PartID, partID)
+			}
 			e.EOSsleep()
 		}
-		eosMultiParts[uploadID].mutex.Lock()
-		eosMultiParts[uploadID].md5.Write(buf)
-		eosMultiParts[uploadID].md5PartID++
-		eosMultiParts[uploadID].mutex.Unlock()
-	}()
+		transfer.Lock()
+		transfer.md5.Write(buf)
+		transfer.md5PartID++
+		transfer.Unlock()
+//	}()
 
 	return newPart, nil
 }
 
 // CompleteMultipartUpload
 func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	e.Log(2, "S3cmd: CompleteMultipartUpload: %s size : %d firstByte : %d", uploadID, eosMultiParts[uploadID].size, eosMultiParts[uploadID].firstByte)
+	transfer := e.TransferList.GetTransfer(uploadID)
+	transfer.RLock()
+	size := transfer.size
+	firstByte := transfer.firstByte
+	transfer.RUnlock()
+	e.Log(2, "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d, firstByte: %d]", uploadID, size, firstByte)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
 	}
 
-	for eosMultiParts[uploadID].md5PartID != eosMultiParts[uploadID].partsCount+1 {
-		e.Log(3, "CompleteMultipartUpload waiting for all md5Parts, %d remaining", eosMultiParts[uploadID].partsCount+1-eosMultiParts[uploadID].md5PartID)
+	for {
+		transfer.RLock()
+		if transfer.md5PartID == transfer.partsCount+1 {
+			break
+		}
+		e.Log(3, "CompleteMultipartUpload waiting for all md5Parts [uploadID: %s, total_parts: %s, remaining: %d", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
+		transfer.RUnlock()
 		e.EOSsleep()
 	}
-	etag := hex.EncodeToString(eosMultiParts[uploadID].md5.Sum(nil))
-	e.Log(2, "ETAG: %s", etag)
+
+	etag := transfer.GetETag()
+	contenttype := transfer.GetContentType()
+	stagepath := transfer.GetStagePath()
+
+	e.Log(3, "CompleteMultipartUpload: [uploadID: %s, etag: %s]", uploadID, etag)
 
 	objInfo = minio.ObjectInfo{
 		Bucket:      bucket,
 		Name:        object,
 		ModTime:     time.Now(),
-		Size:        eosMultiParts[uploadID].size,
+		Size:        size,
 		IsDir:       false,
 		ETag:        etag,
-		ContentType: eosMultiParts[uploadID].contenttype,
+		ContentType: contenttype,
 	}
 
 	if e.stage != "" { //staging
-		err = e.EOStouch(uploadID, eosMultiParts[uploadID].size)
+		err = e.EOStouch(uploadID, size)
 		if err != nil {
-			e.Log(1, "ERROR: CompleteMultipartUpload: EOStouch :%+v", err)
+			e.Log(1, "ERROR: CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
 			return objInfo, err
 		}
 
 		//upload in background
 		go func() {
-			e.Log(3, "CompleteMultipartUpload xrdcp: %s => %s size: %d", e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", uploadID+".minio.sys", eosMultiParts[uploadID].size)
-			err := e.EOSxrdcp(e.stage+"/"+eosMultiParts[uploadID].stagepath+"/file", uploadID+".minio.sys", eosMultiParts[uploadID].size)
+			fullstagepath := e.stage+"/"+stagepath+"/file"
+			e.Log(3, "CompleteMultipartUpload: xrdcp: [stagepath: %s, uploadIDpath: %s, size: %d]", fullstagepath, uploadID+".minio.sys", size)
+			err := e.EOSxrdcp(fullstagepath, uploadID+".minio.sys", size)
 			if err != nil {
-				e.Log(1, "ERROR: CompleteMultipartUpload: xrdcp: %+v", err)
+				e.Log(1, "ERROR: CompleteMultipartUpload: xrdcp: [uploadID: %s, error: %+v]", uploadID, err)
 				return
 			}
 
 			err = e.EOSrename(uploadID+".minio.sys", uploadID)
 			if err != nil {
-				e.Log(1, "ERROR: CompleteMultipartUpload: EOSrename: %+v", err)
+				e.Log(1, "ERROR: CompleteMultipartUpload: EOSrename: [uploadID: %s, error: %+v]", uploadID, err)
 				return
 			}
 
 			err = e.EOSsetETag(uploadID, etag)
 			if err != nil {
-				e.Log(1, "ERROR: CompleteMultipartUpload: EOSsetETag: %+v", err)
+				e.Log(1, "ERROR: CompleteMultipartUpload: EOSsetETag: [uploadID: %s, error: %+v]", uploadID, err)
 				return
 			}
 
-			err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].contenttype)
+			err = e.EOSsetContentType(uploadID, contenttype)
 			if err != nil {
-				e.Log(1, "ERROR: CompleteMultipartUpload: EOSsetContentType: %+v", err)
+				e.Log(1, "ERROR: CompleteMultipartUpload: EOSsetContentType: [uploadID: %s, error: %+v]", uploadID, err)
 				return
 			}
 
-			err = os.RemoveAll(e.stage + "/" + eosMultiParts[uploadID].stagepath)
+			err = os.RemoveAll(e.stage + "/" + stagepath)
 			if err != nil {
 				return
 			}
 
-			delete(eosMultiParts, uploadID)
+			e.TransferList.DeleteTransfer(uploadID)
 			e.messagebusAddPutJob(uploadID)
 		}()
 	} else { //use xrootd
-		err = e.EOSxrootdWriteChunk(uploadID, 0, eosMultiParts[uploadID].size, "1", []byte{eosMultiParts[uploadID].firstByte})
+		transfer.RLock()
+		firstbyte := []byte{transfer.firstByte}
+		transfer.RUnlock()
+
+		err = e.EOSxrootdWriteChunk(uploadID, 0, size, "1", firstbyte)
 		if err != nil {
-			e.Log(1, "ERROR: CompleteMultipartUpload: EOSwriteChunk: %+v", err)
+			e.Log(1, "ERROR: CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s, error: %+v]", uploadID, err)
 			return objInfo, err
 		}
 
-		delete(eosMultiParts, uploadID)
+		e.TransferList.DeleteTransfer(uploadID)
 		e.messagebusAddPutJob(uploadID)
 	}
 
 	err = e.EOSsetETag(uploadID, etag)
 	if err != nil {
-		e.Log(1, "ERROR: CompleteMultipartUpload:%+v", err)
+		e.Log(1, "ERROR: CompleteMultipartUpload: [uploadID: %s, error: %+v]", uploadID, err)
 		return objInfo, err
 	}
-	err = e.EOSsetContentType(uploadID, eosMultiParts[uploadID].contenttype)
+	err = e.EOSsetContentType(uploadID, contenttype)
 	if err != nil {
-		e.Log(1, "ERROR: CompleteMultipartUpload:%+v", err)
+		e.Log(1, "ERROR: CompleteMultipartUpload: [uploadID: %s, error: %+v]", err)
 		return objInfo, err
 	}
 
 	//populate cache
-	e.EOScacheDeletePath(uploadID)
+	e.StatCache.DeletePath(uploadID)
 	stat, err := e.EOSfsStat(uploadID)
-	e.EOScacheDeletePath(uploadID)
+	e.StatCache.DeletePath(uploadID) // not sure why this is here twice..
 	stat.size = objInfo.Size
 	stat.file = true
 	stat.etag = objInfo.ETag
 	stat.contenttype = objInfo.ContentType
 	stat.modTime = objInfo.ModTime
 	eospath, err := e.EOSpath(uploadID)
-	e.EOScacheWrite(eospath, *stat)
+	if stat != nil {
+		e.StatCache.Write(eospath, *stat)
+	}
 
 	return objInfo, nil
 }
 
 //AbortMultipartUpload
 func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string) (err error) {
-	e.Log(2, "S3cmd: AbortMultipartUpload: %s/%s %s", bucket, object, uploadID)
+	e.Log(2, "S3cmd: AbortMultipartUpload: [object: %s/%s, uploadID: %d]", bucket, object, uploadID)
 
 	if e.readonly {
 		return minio.NotImplemented{}
 	}
 
-	if e.stage != "" { //staging
-		os.RemoveAll(e.stage + "/" + eosMultiParts[uploadID].stagepath)
+	if e.stage != "" && e.TransferList.TransferExists(uploadID) {
+		transfer := e.TransferList.GetTransfer(uploadID)
+		stagepath := transfer.GetStagePath()
+
+		os.RemoveAll(e.stage + "/" + stagepath)
 	}
 
 	e.EOSrm(bucket + "/" + object)
-
-	delete(eosMultiParts, uploadID)
+	e.TransferList.DeleteTransfer(uploadID)
 
 	return nil
 }
 
 // ListObjectParts
 func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, options minio.ObjectOptions) (result minio.ListPartsInfo, err error) {
-	e.Log(2, "S3cmd: ListObjectParts: %s %d %d", uploadID, partNumberMarker, maxParts)
+	e.Log(2, "S3cmd: ListObjectParts: [uploadID: %s, part: %d, maxParts: %d]", uploadID, partNumberMarker, maxParts)
 
 	result.Bucket = bucket
 	result.Object = object
@@ -940,26 +768,41 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.MaxParts = maxParts
 	result.PartNumberMarker = partNumberMarker
 
-	eosMultiParts[uploadID].mutex.Lock()
-	i := 0
-	size := eosMultiParts[uploadID].partsCount
+	transfer := e.TransferList.GetTransfer(uploadID)
+	transfer.RLock()
+	size := transfer.partsCount
+	parts := transfer.parts
 	result.Parts = make([]minio.PartInfo, size)
-	for _, part := range eosMultiParts[uploadID].parts {
+	i := 0
+	for _, part := range parts {
 		if i < size {
 			result.Parts[i] = part
 			i++
 		}
 	}
-	eosMultiParts[uploadID].mutex.Unlock()
+	transfer.RUnlock()
 
 	return result, nil
 }
 
+// Return an initialised minio.ObjectInfo
+func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *eosFileStat) (obj minio.ObjectInfo) {
+	return minio.ObjectInfo{
+		Bucket:      bucket,
+		Name:        name,
+		ModTime:     stat.ModTime(),
+		Size:        stat.Size(),
+		IsDir:       stat.IsDir(),
+		ETag:        stat.ETag(),
+		ContentType: stat.ContentType(),
+	}
+}
+
 // ListObjects - lists all blobs in a container filtered by prefix and marker
 func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
-	e.Log(2, "S3cmd: ListObjects: %s, %s, %s, %s, %d", bucket, prefix, marker, delimiter, maxKeys)
+	e.Log(2, "S3cmd: ListObjects: [bucket: %s, prefix: %s, marker: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, marker, delimiter, maxKeys)
 	if delimiter == "/" && prefix == "/" {
-		e.Log(2, "delimiter and prefix is slash")
+		e.Log(2, "ListObjects: delimiter and prefix is slash")
 		return result, nil
 	}
 
@@ -968,85 +811,67 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	if prefix != "" {
 		prefix = strings.TrimSuffix(prefix, "/") + "/"
 	}
-	//if eosDirCache.path != path || len(eosDirCache.objects) == 0 {
-	e.Log(3, "NEW CACHE for %s", path)
-	eosDirCache.path = path
-	eosDirCache.objects, err = e.EOSreadDir(path, true)
+
+	e.Log(3, "ListObjects: Creating cache for %s", path)
+	e.DirCache.path = path
+	e.DirCache.objects, err = e.EOSreadDir(path, true)
 	if err != nil {
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 	}
-	//}
 
-	// No objects, in the given path - let's treat it like an object if it doesn't end in a delimiter
-	if len(eosDirCache.objects) == 0 {
-		e.Log(3, "No objects found for path %s, treating as an object", path)
+	// Doesn't look like it's a directory, try it as an object
+	object_found := false
+	if len(e.DirCache.objects) == 0 {
+		e.Log(3, "ListObjects: No objects found for path %s, treating as an object", path)
 		var stat *eosFileStat
 		prefix = strings.TrimSuffix(prefix, "/")
 		stat, err = e.EOSfsStat(path)
 
-		if stat != nil && !strings.HasSuffix(path, ".minio.sys") {
-			o := minio.ObjectInfo{
-				Bucket:      bucket,
-				Name:        prefix,
-				ModTime:     stat.ModTime(),
-				Size:        stat.Size(),
-				IsDir:       stat.IsDir(),
-				ETag:        stat.ETag(),
-				ContentType: stat.ContentType(),
-			}
+                if stat != nil && !strings.HasSuffix(path, ".minio.sys") {
+			o := e.NewObjectInfo(bucket, prefix, stat)
 			result.Objects = append(result.Objects, o)
+			object_found = true
+			e.DirCache.objects = nil
+			e.DirCache.objects = []string{}
 		}
-		// reset cache
-		eosDirCache.objects = nil
-		eosDirCache.objects = []string{}
-	} else {
-		for _, obj := range eosDirCache.objects {
+	}
+
+	// If no object is found, treat it as a directory anyway
+	if !object_found {
+		for _, obj := range e.DirCache.objects {
 			var stat *eosFileStat
 			objpath := path + "/" + obj
 			stat, err = e.EOSfsStat(objpath)
 
 			if stat != nil && !strings.HasSuffix(obj, ".minio.sys") {
-				e.Log(3, "%s, %s, %s = %s", bucket, prefix, obj, bucket+"/"+prefix+obj)
-				e.Log(3, "%s <=> %s etag:%s content-type:%s", objpath, prefix+obj, stat.ETag(), stat.ContentType())
-				o := minio.ObjectInfo{
-					Bucket:      bucket,
-					Name:        prefix + obj,
-					ModTime:     stat.ModTime(),
-					Size:        stat.Size(),
-					IsDir:       stat.IsDir(),
-					ETag:        stat.ETag(),
-					ContentType: stat.ContentType(),
-				}
-
+				e.Log(3, "ListObjects: Stat: %s <=> %s [etag: %s, content-type: %s]", objpath, prefix+obj, stat.ETag(), stat.ContentType())
+				o := e.NewObjectInfo(bucket, prefix+obj, stat)
 				result.Objects = append(result.Objects, o)
 
-				if delimiter == "" { //recursive
-					if stat.IsDir() {
-						e.Log(3, "ASKING FOR -r on : %s", prefix+obj)
-						subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
-						if err != nil {
-							return result, err
-						}
-						for _, subobj := range subdir.Objects {
-							result.Objects = append(result.Objects, subobj)
-						}
+				if delimiter == "" && stat.IsDir() {
+					e.Log(3, "ListObjects: Recursing through %s", prefix+obj)
+					subdir, err := e.ListObjects(ctx, bucket, prefix+obj, marker, delimiter, -1)
+					if err != nil {
+						return result, err
+					}
+					for _, subobj := range subdir.Objects {
+						result.Objects = append(result.Objects, subobj)
 					}
 				}
 			} else {
-				e.Log(1, "ERROR: ListObjects - can not stat %s", objpath)
+				e.Log(1, "ERROR: ListObjects: unable to stat [objpath: %s]", objpath)
 			}
 		}
 	}
 
 	result.IsTruncated = false
-	//result.Prefixes = append(result.Prefixes, prefix)
 
 	return result, err
 }
 
 // ListObjectsV2 - list all blobs in a container filtered by prefix
 func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (result minio.ListObjectsV2Info, err error) {
-	e.Log(2, "S3cmd: ListObjectsV2: %s, %s, %s, %s, %d", bucket, prefix, continuationToken, delimiter, maxKeys)
+	e.Log(2, "S3cmd: ListObjectsV2: [bucket: %s, prefix: %s, continuationToken: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, continuationToken, delimiter, maxKeys)
 
 	marker := continuationToken
 	if marker == "" {
@@ -1067,8 +892,9 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 	return result, nil
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////
-//  Don't think we need this...
+/* 
+ *  Methods that are not implemented
+ */
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
@@ -1112,79 +938,9 @@ func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool,
 	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
 
-/////////////////////////////////////////////////////////////////////////////////////////////
-//  Helpers
-
-type eosFileStat struct {
-	id          int64
-	name        string
-	size        int64
-	file        bool
-	modTime     time.Time
-	sys         syscall.Stat_t
-	etag        string
-	contenttype string
-	//checksum    string
-}
-
-func (fs *eosFileStat) Id() int64          { return fs.id }
-func (fs *eosFileStat) Name() string       { return fs.name }
-func (fs *eosFileStat) Size() int64        { return fs.size }
-func (fs *eosFileStat) ModTime() time.Time { return fs.modTime }
-func (fs *eosFileStat) Sys() interface{}   { return &fs.sys }
-func (fs *eosFileStat) IsDir() bool        { return !fs.file }
-
-//func (fs *eosFileStat) Checksum() string   { return fs.checksum }
-func (fs *eosFileStat) ETag() string {
-	if fs.IsDir() || fs.etag == "" {
-		return "00000000000000000000000000000000"
-	}
-	return fs.etag
-}
-func (fs *eosFileStat) ContentType() string {
-	if fs.IsDir() {
-		return "application/x-directory"
-	}
-	if fs.contenttype == "" {
-		return "application/octet-stream"
-	}
-	return fs.contenttype
-}
-
-type eosDirCacheType struct {
-	objects []string
-	path    string
-}
-
-var eosFileStatCache = make(map[string]eosFileStat)
-var eosDirCache = eosDirCacheType{}
-var eosBucketCache = make(map[string]minio.BucketInfo)
-
-var eoserrFileNotFound = errors.New("EOS: file not found")
-var eoserrDiskAccessDenied = errors.New("EOS: disk access denied")
-var eoserrCantPut = errors.New("EOS: can't put")
-var eoserrFilePathBad = errors.New("EOS: bad file path")
-
-//var eoserrSetMeta = errors.New("EOS: can't set metadata")
-
-var eosfsStatMutex = sync.RWMutex{}
-
-type eosMultiPartsType struct {
-	parts       map[int]minio.PartInfo
-	partsCount  int
-	size        int64
-	chunkSize   int64
-	firstByte   byte
-	contenttype string
-	stagepath   string
-	md5         hash.Hash
-	md5PartID   int
-	mutex       sync.Mutex
-}
-
-func (mp *eosMultiPartsType) AddToSize(size int64) { mp.size += size }
-
-var eosMultiParts = make(map[string]*eosMultiPartsType)
+/*
+ * Helpers
+ */
 
 func (e *eosObjects) interfaceToInt64(in interface{}) int64 {
 	if in == nil {
@@ -1238,8 +994,17 @@ func (e *eosObjects) messagebusAddJob(jobType, path string) {
 
 	go func() {
 		joburl := fmt.Sprintf("%s?type=%s&file=%s", e.hookurl, jobType, url.QueryEscape(eospath))
-		res, _ := http.Get(joburl)
-		defer res.Body.Close()
+		res, err := http.Get(joburl)
+		// TODO: Might need to return here if we're not getting a response
+		if res != nil {
+			defer res.Body.Close()
+		} else {
+			e.Log(1, "ERROR: messagebusAddJob: response body is nil [joburl: %s, error: %+v]", joburl, err)
+		}
+		if err != nil {
+			e.Log(1, "S3 Hook: Add job failed [joburl: %s, error: %+v]", joburl, err)
+			return
+		}
 		body, _ := ioutil.ReadAll(res.Body)
 		e.Log(2, "S3 Hook: %s", joburl)
 		e.Log(3, "%s", body)
@@ -1271,71 +1036,43 @@ func (e *eosObjects) EOSpath(path string) (eosPath string, err error) {
 	return eosPath, nil
 }
 
-func (e *eosObjects) EOScacheReset() {
-	eosfsStatMutex.Lock()
-	eosFileStatCache = make(map[string]eosFileStat)
-	eosfsStatMutex.Unlock()
-}
-
-func (e *eosObjects) EOScacheRead(eospath string) (*eosFileStat, bool) {
-	eosfsStatMutex.RLock()
-	fi, ok := eosFileStatCache[eospath]
-	eosfsStatMutex.RUnlock()
-	if ok {
-		return &fi, true
-	}
-	return nil, false
-}
-
-func (e *eosObjects) EOScacheWrite(eospath string, obj eosFileStat) {
-	eosfsStatMutex.Lock()
-	eosFileStatCache[eospath] = obj
-	eosfsStatMutex.Unlock()
-}
-
-func (e *eosObjects) EOScacheDeletePath(eospath string) {
-	eosfsStatMutex.Lock()
-	if _, ok := eosFileStatCache[eospath]; ok {
-		delete(eosFileStatCache, eospath)
-	}
-	eosfsStatMutex.Unlock()
-}
-
-func (e *eosObjects) EOScacheDeleteObject(bucket, object string) {
-	eospath, err := e.EOSpath(bucket + "/" + object)
-	if err == nil {
-		e.EOScacheDeletePath(eospath)
-	}
-}
-
 func (e *eosObjects) EOSMGMcurl(cmd string) (body []byte, m map[string]interface{}, err error) {
-	slot := e.procuserJobs.waitForSlot()
-
 	eosurl := fmt.Sprintf("http://%s:8000/proc/user/?%s", e.url, cmd)
-	e.Log(3, "curl '%s'", eosurl)
+	e.Log(3, "EOSGMcurl: [eosurl: %s]", eosurl)
+
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			e.Log(3, "http client wants to redirect")
+			e.Log(3, "EOSMGMcurl: http client wants to redirect")
 			return nil
 		},
 		Timeout: 0,
+//		Transport: MGMTransport,
 	}
 	req, _ := http.NewRequest("GET", eosurl, nil)
 	req.Header.Set("Remote-User", e.user)
-	res, _ := client.Do(req)
-	defer res.Body.Close()
+	res, err := client.Do(req)
+	// TODO: Might need to return here if we're not getting a response
+	if res != nil {
+		defer res.Body.Close()
+	} else {
+		e.Log(1, "ERROR: EOSMGMcurl - response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+	}
+
+
+	if err != nil {
+		return nil, nil, err
+	}
 	body, _ = ioutil.ReadAll(res.Body)
 
 	m = make(map[string]interface{})
 	err = json.Unmarshal([]byte(body), &m)
 
-	e.procuserJobs.freeSlot(slot)
 	return body, m, err
 }
 
 func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []string, err error) {
 	if cacheReset {
-		e.EOScacheReset()
+		e.StatCache.Reset()
 	}
 
 	eospath, err := e.EOSpath(dirPath)
@@ -1343,22 +1080,22 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 		return nil, err
 	}
 
-	e.Log(2, "EOScmd: procuser.fileinfo %s", eospath)
+	e.Log(2, "EOScmd: procuser.fileinfo [eospath: %s]", eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: EOSreadDir can not json.Unmarshal() MGM response")
+		e.Log(1, "ERROR: EOSreadDir curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return nil, err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR: EOS procuser.fileinfo %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR: EOS procuser.fileinfo [eospath: %s, error: %s]", eospath, e.interfaceToString(m["errormsg"]))
 		return nil, eoserrFileNotFound
 	}
 
 	if c, ok := m["children"]; ok {
 		err = json.Unmarshal([]byte(body), &c)
 		if err != nil {
-			e.Log(1, "ERROR: EOSreadDir can not json.Unmarshal() children")
+			e.Log(1, "ERROR: EOSreadDir can not json.Unmarshal() children [eospath: %s]", eospath)
 			return nil, err
 		}
 
@@ -1390,7 +1127,7 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 					}
 				}
 
-				e.EOScacheWrite(eospath+obj, eosFileStat{
+				e.StatCache.Write(eospath+obj, eosFileStat{
 					id:          e.interfaceToInt64(child["id"]),
 					name:        e.interfaceToString(child["name"]),
 					size:        e.interfaceToInt64(child["size"]) + e.interfaceToInt64(child["treesize"]),
@@ -1404,7 +1141,6 @@ func (e *eosObjects) EOSreadDir(dirPath string, cacheReset bool) (entries []stri
 		}
 	}
 
-	//e.Log(3,"cache: %+v", eosFileStatCache)
 	return entries, err
 }
 
@@ -1413,25 +1149,25 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	if err != nil {
 		return nil, err
 	}
-	if fi, ok := e.EOScacheRead(eospath); ok {
-		e.Log(3, "cache hit: %s", eospath)
+	if fi, ok := e.StatCache.Read(eospath); ok {
+		e.Log(3, "EOSfsStat: cache hit: [eospath: %s]", eospath)
 		return fi, nil
 	}
-	e.Log(3, "cache miss: %s", eospath)
+	e.Log(3, "EOSfsStat: cache miss: [eospath: %s]", eospath)
 
-	e.Log(2, "EOScmd: procuser.fileinfo %s", eospath)
+	e.Log(2, "EOScmd: procuser.fileinfo [eospath: %s]", eospath)
 	body, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: EOSfsStat can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSfsStat curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return nil, err
 	}
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(3, "EOS procuser.fileinfo %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(3, "EOS procuser.fileinfo [eospath: %s, error: %s]", eospath, e.interfaceToString(m["errormsg"]))
 		return nil, eoserrFileNotFound
 	}
 
-	e.Log(3, "EOS STAT name:%s mtime:%d mode:%d size:%d", e.interfaceToString(m["name"]), e.interfaceToInt64(m["mtime"]), e.interfaceToInt64(m["mode"]), e.interfaceToInt64(m["size"]))
-	e.Log(3, "EOSfsStat return body : %s", strings.Replace(string(body), "\n", " ", -1))
+	e.Log(3, "EOSfsStat: stat result [eospath: %s, name: %s, mtime: %d, mode:%d, size: %d]", eospath, e.interfaceToString(m["name"]), e.interfaceToInt64(m["mtime"]), e.interfaceToInt64(m["mode"]), e.interfaceToInt64(m["size"]))
+	e.Log(3, "EOSfsStat: request response body [eospath: %s, body: %s]", eospath, strings.Replace(string(body), "\n", " ", -1))
 
 	//some defaults
 	meta := make(map[string]string)
@@ -1439,7 +1175,6 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 	meta["etag"] = "00000000000000000000000000000000"
 	if _, ok := m["xattr"]; ok {
 		xattr, _ := m["xattr"].(map[string]interface{})
-		//e.Log(3, "xattr: %+v", xattr)
 		if contenttype, ok := xattr["minio_contenttype"]; ok {
 			ct := e.interfaceToString(contenttype)
 			if ct != "" {
@@ -1465,7 +1200,7 @@ func (e *eosObjects) EOSfsStat(p string) (*eosFileStat, error) {
 		//checksum:    e.interfaceToString(m["checksumvalue"]),
 	}
 
-	e.EOScacheWrite(eospath, fi)
+	e.StatCache.Write(eospath, fi)
 
 	return &fi, nil
 }
@@ -1479,12 +1214,12 @@ func (e *eosObjects) EOSmkdirWithOption(p, option string) error {
 	e.Log(2, "EOScmd: procuser.mkdir %s", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSmkdirWithOption curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.mkdir %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR: EOS procuser.mkdir [eospath: %s, error: %s]", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1499,15 +1234,15 @@ func (e *eosObjects) EOSrmdir(p string) error {
 		return err
 	}
 
-	e.Log(2, "EOScmd: procuser.rm %s", eospath)
+	e.Log(2, "EOScmd: procuser.rm [eospath: %s]", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSrmdir curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.rm %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.rm [eospath: %s, error: %s]", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1522,21 +1257,19 @@ func (e *eosObjects) EOSrm(p string) error {
 		return err
 	}
 
-	e.Log(2, "EOScmd: procuser.rm %s", eospath)
+	e.Log(2, "EOScmd: procuser.rm [eospath: %s]", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=%s%s", url.QueryEscape(eospath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSrm curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.rm %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.rm [eospath: %s, error: %s]", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
-
-	e.EOScacheDeletePath(p)
+	e.StatCache.DeletePath(p)
 	e.messagebusAddDeleteJob(p)
-
 	return nil
 }
 
@@ -1552,31 +1285,31 @@ func (e *eosObjects) EOScopy(src, dst string, size int64) error {
 
 	//need to wait for file, it is possible it is uploaded via a background job
 	for {
-		e.Log(2, "EOScmd: procuser.fileinfo %s", eossrcpath)
+		e.Log(2, "EOScmd: procuser.fileinfo [eospath: %s]", eossrcpath)
 		_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=fileinfo&mgm.path=%s%s", url.QueryEscape(eossrcpath), e.EOSurlExtras()))
 		if err == nil {
 			if e.interfaceToInt64(m["size"]) >= size {
 				break
 			}
 		}
-		e.Log(2, "EOScopy waiting for src file to arrive : %s size: %d", eossrcpath, size)
-		e.Log(3, "EOScopy expecting size: %d found size: %d", size, e.interfaceToInt64(m["size"]))
+		e.Log(2, "EOScopy waiting for src file to arrive: [eospath: %s, size: %d]", eossrcpath, size)
+		e.Log(3, "EOScopy expecting size: %d found size: %d [eospath: %s]", size, e.interfaceToInt64(m["size"]), eossrcpath)
 		e.EOSsleepSlow()
 	}
 
-	e.Log(2, "EOScmd: procuser.file.copy %s %s", eossrcpath, eosdstpath)
+	e.Log(2, "EOScmd: procuser.file.copy [src: %s, dst: %s]", eossrcpath, eosdstpath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOScopy curl to MGM failed [src: %s, dst: %s, error: %+v]", eossrcpath, eosdstpath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.file.copy %s %s : %s", eossrcpath, eosdstpath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.file.copy [src: %s, dst: %s, error: %s]", eossrcpath, eosdstpath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
-	e.EOScacheDeletePath(dst)
+	e.StatCache.DeletePath(dst)
 	e.messagebusAddPutJob(dst)
 
 	return nil
@@ -1589,15 +1322,15 @@ func (e *eosObjects) EOStouch(p string, size int64) error {
 		return err
 	}
 
-	e.Log(2, "EOScmd: procuser.file.touch %s", eospath)
+	e.Log(2, "EOScmd: procuser.file.touch [eospath: %s]", eospath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.EOSurlExtras(), size))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOStouch curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.file.touch %s : %s", eospath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.file.touch [eospath: %s, error: %s]", eospath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1614,15 +1347,15 @@ func (e *eosObjects) EOSrename(from, to string) error {
 		return err
 	}
 
-	e.Log(2, "EOScmd: procuser.file.rename %s %s", eosfrompath, eostopath)
+	e.Log(2, "EOScmd: procuser.file.rename [src: %s, dst: %s]", eosfrompath, eostopath)
 	_, m, err := e.EOSMGMcurl(fmt.Sprintf("mgm.cmd=file&mgm.subcmd=rename&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eosfrompath), url.QueryEscape(eostopath), e.EOSurlExtras()))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSrename curl to MGM failed [src: %s, dst: %s, error: %+v]", eosfrompath, eostopath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.file.rename %s : %s", eosfrompath, eostopath, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.file.rename [src: %s, dst: %s, error: %s]", eosfrompath, eostopath, e.interfaceToString(m["errormsg"]))
 		return eoserrDiskAccessDenied
 	}
 
@@ -1631,6 +1364,7 @@ func (e *eosObjects) EOSrename(from, to string) error {
 
 func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	if key == "" || value == "" {
+		e.Log(3, "procuser.attr.set key or value is empty. [path: %s, key: %s, value: %s]", p, key, value)
 		//dont bother setting if we don't get what we need
 		return nil
 	}
@@ -1638,17 +1372,17 @@ func (e *eosObjects) EOSsetMeta(p, key, value string) error {
 	if err != nil {
 		return err
 	}
-	e.Log(2, "EOScmd: procuser.attr.set %s=%s %s", key, value, eospath)
+	e.Log(2, "EOScmd: procuser.attr.set [path: %s, key: %s, value: %s]", eospath, key, value)
 	cmd := fmt.Sprintf("mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_%s&mgm.attr.value=%s&mgm.path=%s%s", url.QueryEscape(key), url.QueryEscape(value), url.QueryEscape(eospath), e.EOSurlExtras())
 	body, m, err := e.EOSMGMcurl(cmd)
-	e.Log(3, "Meta Tag return body : %s", strings.Replace(string(body), "\n", " ", -1))
+	e.Log(3, "EOSsetMeta: meta tag return body [eospath: %s, body: %s]", eospath, strings.Replace(string(body), "\n", " ", -1))
 	if err != nil {
-		e.Log(1, "ERROR: can not json.Unmarshal()")
+		e.Log(1, "ERROR: EOSsetMeta curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
 		return err
 	}
 
 	if e.interfaceToString(m["errormsg"]) != "" {
-		e.Log(1, "ERROR EOS procuser.attr.set %s : %s : %s", eospath, cmd, e.interfaceToString(m["errormsg"]))
+		e.Log(1, "ERROR EOS procuser.attr.set [eospath: %s, command: %s, error: %s]", eospath, cmd, e.interfaceToString(m["errormsg"]))
 		//return eoserrSetMeta
 	}
 
@@ -1659,7 +1393,7 @@ func (e *eosObjects) EOSsetContentType(p, ct string) error { return e.EOSsetMeta
 func (e *eosObjects) EOSsetETag(p, etag string) error      { return e.EOSsetMeta(p, "etag", etag) }
 
 func (e *eosObjects) EOSput(p string, data []byte) error {
-	e.Log(2, "EOSput: %s", p)
+	e.Log(2, "EOSput: [path: %s]", p)
 	//curl -L -X PUT -T somefile -H 'Remote-User: minio' -sw '%{http_code}' http://eos:8000/eos-path/somefile
 
 	eospath, err := e.EOSpath(p)
@@ -1668,34 +1402,31 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 	}
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
-	e.Log(3, "%s", eosurl)
+	e.Log(3, "DEBUG: [eosurl: %s]", eosurl)
 
-	e.Log(2, "EOScmd: webdav.PUT : %s", eosurl)
+	e.Log(2, "EOScmd: webdav.PUT [eosurl: %s]", eosurl)
 
 	maxRetry := 10
 	retry := 0
 	for retry < maxRetry {
 		retry = retry + 1
 
+		// SPECIAL CASE = contains a %
 		if strings.IndexByte(p, '%') >= 0 {
-			slot := e.webdavJobs.waitForSlot()
-
-			e.Log(2, "EOScmd: webdav.PUT : SPECIAL CASE using curl: %s", eosurl)
+			e.Log(2, "EOScmd: webdav.PUT : SPECIAL CASE using curl [eosurl: %s]", eosurl)
 			cmd := exec.Command("curl", "-L", "-X", "PUT", "--data-binary", "@-", "-H", "Remote-User: minio", "-sw", "'%{http_code}'", eosurl)
 			cmd.Stdin = bytes.NewReader(data)
 			stdoutStderr, err := cmd.CombinedOutput()
 
-			e.webdavJobs.freeSlot(slot)
-
 			if err != nil {
-				e.Log(1, "ERROR: can not curl %s", eosurl)
-				e.Log(2, "%s", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
+				e.Log(1, "ERROR: curl failed [eosurl: %s]", eosurl)
+				e.Log(3, "DEBUG: [eosurl: %s, stderr: %s]", eosurl, strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
 				e.EOSsleep()
 				continue
 			}
 			if strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)) != "'201'" {
-				e.Log(1, "ERROR: wrong response from curl")
-				e.Log(2, "%s", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
+				e.Log(1, "ERROR: incorrect response from curl [eosurl: %s]", eosurl)
+				e.Log(3, "DEBUG: [eosurl: %s, stderr: %s]", eosurl, strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
 				e.EOSsleep()
 				continue
 			}
@@ -1703,11 +1434,10 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 			return err
 		}
 
-		slot := e.webdavJobs.waitForSlot()
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				e.Log(2, "http client wants to redirect")
-				e.Log(3, "%+v", req)
+				e.Log(3, "EOSput: http client wants to redirect [eosurl: %s]", eosurl)
+				e.Log(3, "DEBUG: [eosurl: %s, req: %+v]", eosurl, req)
 				return nil
 			},
 			Timeout: 0,
@@ -1718,20 +1448,27 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		req.ContentLength = int64(len(data))
 		req.Close = true
 		res, err := client.Do(req)
-		e.webdavJobs.freeSlot(slot)
 
 		if err != nil {
-			e.Log(2, "http ERROR message: %+v", err)
-			e.Log(2, "http ERROR response: %+v", res)
+			e.Log(3, "EOSput: http ERROR message: [eosurl: %s, error: %+v]", eosurl, err)
+			if res != nil {
+				e.Log(3, "EOSput: http ERROR response: [eosurl: %s, response: %+v]", eosurl, res)
+			}
 
 			//req.URL.RawPath = strings.Replace(req.URL.RawPath[:strings.IndexByte(req.URL.RawPath, '?')], "%", "%25", -1) + "?" + req.URL.RawQuery
 
 			e.EOSsleep()
 			continue
 		}
-		defer res.Body.Close()
+		// TODO: Might need to return here if we're not getting a response
+		if res != nil {
+			defer res.Body.Close()
+		} else {
+			e.Log(1, "ERROR: EOSput: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+		}
+
 		if res.StatusCode != 201 {
-			e.Log(2, "http StatusCode != 201: %+v", res)
+			e.Log(3, "EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res)
 			err = eoserrCantPut
 			e.EOSsleep()
 			continue
@@ -1740,7 +1477,7 @@ func (e *eosObjects) EOSput(p string, data []byte) error {
 		e.messagebusAddPutJob(p)
 		return err
 	}
-	e.Log(1, "ERROR: EOSput failed %d times", maxRetry)
+	e.Log(1, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
 	return err
 }
 
@@ -1750,17 +1487,15 @@ func (e *eosObjects) EOSxrootdWriteChunk(p string, offset, size int64, checksum 
 		return err
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-	e.Log(2, "EOScmd: xrootd.PUT : %s %s %d %d %s %d %d", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
-	slot := e.xrootdJobs.waitForSlot()
+	e.Log(2, "EOScmd: xrootd.PUT: [script: %s, eosurl: %s, offset: %d, size: %d, checksum: %s, uid: %d, gid: %d]", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
 
 	cmd := exec.Command(e.scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.uid, e.gid)
 	cmd.Stdin = bytes.NewReader(data)
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
-		e.Log(1, "ERROR: can not %s %s %d %d %s %s %s", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
-		e.Log(2, "%s", strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
+		e.Log(1, "ERROR: can not [script: %s, eosurl: %s, offset: %d, size: %d, checksum: %s, uid: %s, gid: %s]", e.scripts+"/writeChunk.py", eosurl, offset, size, checksum, e.uid, e.gid)
+		e.Log(3, "DEBUG: [eosurl: %s, stderr: %s]", eosurl, strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
 	}
-	e.xrootdJobs.freeSlot(slot)
 
 	return err
 }
@@ -1773,23 +1508,21 @@ func (e *eosObjects) EOSxrdcp(src, dst string, size int64) error {
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", e.url, eospath, e.uid, e.gid, size))
 	if err != nil {
-		e.Log(1, "ERROR: can not url.QueryUnescape()")
+		e.Log(1, "ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl)
 		return err
 	}
 
-	e.Log(2, "EOScmd: xrdcp.PUT : %s", eosurl)
-	slot := e.xrdcpJobs.waitForSlot()
+	e.Log(2, "EOScmd: xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
-		e.Log(1, "ERROR: can not /usr/bin/xrdcp -N -f -p %s %s", src, eosurl)
+		e.Log(1, "ERROR: can not /usr/bin/xrdcp -N -f -p %s %s [eospath: %s, eosurl: %s]", src, eosurl, eospath, eosurl)
 	}
 	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
 	if output != "" {
 		e.Log(2, "%s", output)
 	}
-	e.xrdcpJobs.freeSlot(slot)
 
 	return err
 }
@@ -1802,8 +1535,7 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 
 	if e.readmethod == "xrootd" {
 		eosurl := fmt.Sprintf("root://%s@%s/%s", e.user, e.url, eospath)
-		e.Log(2, "EOScmd: xrootd.GET : %s", eosurl)
-		slot := e.xrootdJobs.waitForSlot()
+		e.Log(2, "EOScmd: xrootd.GET: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 		cmd := exec.Command(e.scripts+"/readChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(length, 10), e.uid, e.gid)
 		var stderr bytes.Buffer
@@ -1811,21 +1543,19 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		cmd.Stderr = &stderr
 		err2 := cmd.Run()
 		errStr := strings.TrimSpace(string(stderr.Bytes()))
-		e.Log(2, "%s %s %d %d %s %s %+v", e.scripts+"/readChunk.py", eosurl, offset, length, e.uid, e.gid, err2)
+		e.Log(2, "EOSreadChunk: [script: %s, eosurl: %s, offset: %d, length: %d, uid: %s, gid: %s, error: %+v]", e.scripts+"/readChunk.py", eosurl, offset, length, e.uid, e.gid, err2)
 		if errStr != "" {
-			e.Log(2, "%s", errStr)
+			e.Log(1, "ERROR: EOSreadChunk [eosurl: %s, error: %s]", eosurl, errStr)
 		}
-		e.xrootdJobs.freeSlot(slot)
 	} else if e.readmethod == "xrdcp" {
 		eospath = strings.Replace(eospath, "%", "%25", -1)
 		eosurl, err := url.QueryUnescape(fmt.Sprintf("root://%s/%s?eos.ruid=%s&eos.rgid=%s", e.url, eospath, e.uid, e.gid))
 		if err != nil {
-			e.Log(1, "ERROR: can not url.QueryUnescape()")
+			e.Log(1, "ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl)
 			return err
 		}
 
-		e.Log(2, "EOScmd: xrdcp.GET : %s", eosurl)
-		slot := e.xrdcpJobs.waitForSlot()
+		e.Log(2, "EOScmd: xrdcp.GET: [eosurl: %s]", eosurl)
 
 		cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
 		var stdout bytes.Buffer
@@ -1845,21 +1575,16 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		}
 		stdout.Truncate(int(length))
 		stdout.WriteTo(data)
-
-		e.xrdcpJobs.freeSlot(slot)
 	} else { //webdav
 		//curl -L -X GET -H 'Remote-User: minio' -H 'Range: bytes=5-7' http://eos:8000/eos-path-to-file
 
 		eospath = strings.Replace(eospath, "%", "%25", -1)
 		eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
-		//e.Log(3,"%s", eosurl)
-		//e.Log(3,"Range: bytes=%d-%d", offset, offset+length-1)
-		e.Log(2, "EOScmd: webdav.GET : %s", eosurl)
+		e.Log(2, "EOScmd: webdav.GET: [eosurl: %s]", eosurl)
 
-		slot := e.webdavJobs.waitForSlot()
 		client := &http.Client{
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				e.Log(2, "http client wants to redirect")
+				e.Log(2, "webdav.GET: http client wants to redirect")
 				return nil
 			},
 			Timeout: 0,
@@ -1869,14 +1594,17 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
 		req.Close = true
 		res, err := client.Do(req)
-		e.webdavJobs.freeSlot(slot)
 
 		if err != nil {
-			e.Log(2, "%+v", err)
+			e.Log(1, "ERROR: webdav.GET [eosurl: %s, error: %+v]", eosurl, err)
 			return err
 		}
-
-		defer res.Body.Close()
+		// TODO: Might need to return here if res is nil
+		if res != nil {
+			defer res.Body.Close()
+		} else {
+			e.Log(1, "ERROR: webdav.GET: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+		}
 		_, err = io.CopyN(data, res.Body, length)
 	}
 	return err
@@ -1884,16 +1612,16 @@ func (e *eosObjects) EOSreadChunk(p string, offset, length int64, data io.Writer
 
 func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 	eospath, err := e.EOSpath(p)
+	default_md5 := "00000000000000000000000000000000"
 	if err != nil {
-		return "00000000000000000000000000000000", err
+		return default_md5, err
 	}
 	eosurl := fmt.Sprintf("http://%s:8000%s", e.url, eospath)
-	e.Log(2, "EOScmd: webdav.GET : %s", eosurl)
+	e.Log(2, "EOScmd: webdav.GET: [eosurl: %s]", eosurl)
 
-	slot := e.webdavJobs.waitForSlot()
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			e.Log(2, "http client wants to redirect")
+			e.Log(2, "EOScalcMD5: http client wants to redirect")
 			return nil
 		},
 		Timeout: 0,
@@ -1902,14 +1630,19 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 	req.Header.Set("Remote-User", "minio")
 	req.Close = true
 	res, err := client.Do(req)
-	e.webdavJobs.freeSlot(slot)
 
 	if err != nil {
 		e.Log(2, "%+v", err)
-		return "00000000000000000000000000000000", err
+		return default_md5, err
 	}
 
-	defer res.Body.Close()
+	// TODO: Might need to return here if we're not getting a response
+	if res != nil {
+		defer res.Body.Close()
+	} else {
+		e.Log(1, "ERROR: EOScalcMD5: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+	}
+
 	hash := md5.New()
 	reader := bufio.NewReader(res.Body)
 	for {
@@ -1922,138 +1655,4 @@ func (e *eosObjects) EOScalcMD5(p string) (md5sum string, err error) {
 	}
 	md5sum = hex.EncodeToString(hash.Sum(nil))
 	return md5sum, err
-}
-
-/////////////////////////////////////////////////////////////////////////////////////////////
-//  Rate Limit
-
-type eosJob struct {
-	busy    bool
-	lastrun int64
-}
-
-type eosJobs struct {
-	kind     string
-	jobs     map[int]*eosJob
-	max      int
-	waiting  int
-	sleep    int
-	mutex    sync.Mutex
-	loglevel int
-}
-
-func (j *eosJobs) Log(level int, format string, a ...interface{}) {
-	if level == 1 {
-		err := fmt.Errorf(format, a...)
-		logger.LogIf(context.Background(), err)
-	} else if j.loglevel >= level {
-		logger.Info(format, a...)
-	}
-}
-
-func (j *eosJobs) amountRunning() int {
-	count := 0
-	for i := 0; i < j.max; i++ {
-		job, ok := j.jobs[i]
-		if ok {
-			if job.busy {
-				count++
-			}
-		}
-	}
-	return count
-}
-
-func (j *eosJobs) amountRead() (waiting, running int) {
-	j.mutex.Lock()
-	running = j.amountRunning()
-	defer j.mutex.Unlock()
-	return j.waiting, running
-}
-
-func (j *eosJobs) amountWaitingInc() (waiting, busy int) {
-	j.mutex.Lock()
-	j.waiting++
-	running := j.amountRunning()
-	defer j.mutex.Unlock()
-	return j.waiting, running
-}
-
-func (j *eosJobs) getFreeSlot() int {
-	slot := -1
-	if j.max == 0 {
-		return -1
-	}
-
-	now := time.Now().Unix()
-	j.mutex.Lock()
-	for i := 0; i < j.max; i++ {
-		job, ok := j.jobs[i]
-		if ok {
-			j.Log(3, "%s slot %d job: %+v", j.kind, i, job)
-			if !job.busy && now-job.lastrun >= 1 {
-				slot = i
-				j.waiting--
-				job.busy = true
-				job.lastrun = now
-				break
-			}
-		} else {
-			j.Log(3, "%s slot %d does not exist, creating", j.kind, i)
-			slot = i
-			j.waiting--
-			newJob := eosJob{
-				busy:    true,
-				lastrun: now,
-			}
-			j.jobs[i] = &newJob
-			break
-		}
-	}
-	defer j.mutex.Unlock()
-	return slot
-}
-
-func (j *eosJobs) waitForSlot() int {
-	slot := -1
-	if j.max == 0 {
-		return -1
-	}
-
-	amountWaiting, amountRunning := j.amountWaitingInc()
-	j.Log(3, "%s AmountRunning / Max (%d/%d), AmountWaiting: %d Before curl", j.kind, amountRunning, j.max, amountWaiting)
-
-	//wait for task to be not busy
-	for amountRunning >= j.max {
-		j.Log(3, "%s AmountRunning >= Max (%d>=%d), AmountWaiting: %d, sleeping %dms", j.kind, amountRunning, j.max, amountWaiting, j.sleep)
-		time.Sleep(time.Duration(j.sleep) * time.Millisecond)
-		amountWaiting, amountRunning = j.amountRead()
-	}
-
-	//wait for non busy slot to age at least 1s
-	for slot == -1 {
-		slot = j.getFreeSlot()
-		if slot == -1 {
-			j.Log(3, "%s slots are maxed out this second, sleeping %dms", j.kind, j.sleep)
-			time.Sleep(time.Duration(j.sleep) * time.Millisecond)
-		}
-	}
-	return slot
-}
-
-func (j *eosJobs) freeSlot(slot int) {
-	if j.max == 0 || slot == -1 {
-		return
-	}
-	j.Log(3, "%s slot %d try to free", j.kind, slot)
-
-	j.mutex.Lock()
-	job, ok := j.jobs[slot]
-	if ok {
-		j.Log(3, "%s slot %d set to free SUCCESS", j.kind, slot)
-		job.busy = false
-	} else {
-		j.Log(3, "%s slot %d set to free FAILED", j.kind, slot)
-	}
-	defer j.mutex.Unlock()
 }
