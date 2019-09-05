@@ -24,6 +24,7 @@ import (
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
+	"github.com/minio/minio/pkg/lifecycle"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/policy"
 	"github.com/minio/minio/pkg/policy/condition"
@@ -158,6 +159,39 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 		return minio.BucketNotFound{Bucket: bucket}
 	}
 	return err
+}
+
+// GetBucketLifecycle - not implemented
+func (e *eosObjects) GetBucketLifecycle(ctx context.Context, bucket string) (*lifecycle.Lifecycle, error) {
+	eosLogger.Log(ctx, LogLevelStat, "GetBucketLfiecycle", fmt.Sprintf("S3cmd: GetBucketLifecycle [bucket: %s]", bucket), nil)
+
+	if e.readonly {
+		return nil, minio.NotImplemented{}
+	}
+
+	return nil, minio.NotImplemented{}
+}
+
+// SetBucketLifecycle - not implemented
+func (e *eosObjects) SetBucketLifecycle(ctx context.Context, bucket string, lifecycle *lifecycle.Lifecycle) error {
+	eosLogger.Log(ctx, LogLevelStat, "SetBucketLifecycle", fmt.Sprintf("S3cmd: SetBucketLifecycle [bucket: %s]", bucket), nil)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
+
+	return minio.NotImplemented{}
+}
+
+// DeleteBucketLifecycle - not implemented
+func (e *eosObjects) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
+	eosLogger.Log(ctx, LogLevelStat, "DeleteBucketLifecycle", fmt.Sprintf("S3cmd: DeleteBucketLifecycle [bucket: %s]", bucket), nil)
+
+	if e.readonly {
+		return minio.NotImplemented{}
+	}
+
+	return minio.NotImplemented{}
 }
 
 // GetBucketPolicy - Get the container ACL
@@ -322,7 +356,7 @@ func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects [
 	eosLogger.Log(ctx, LogLevelStat, "DeleteObjects", fmt.Sprintf("S3cmd: DeleteObjects: [bucket: %s]", bucket), nil)
 
 	errs := make([]error, len(objects))
-	deleted := make(map[string]bool, 0)
+	deleted := make(map[string]bool)
 	for idx, object := range objects {
 		if _, ok := deleted[object]; !ok {
 			errs[idx] = e.DeleteObject(ctx, bucket, object)
@@ -814,7 +848,7 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 
 // ListObjectsRecurse - Recursive function for interating through a directory tree
 func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
-	eosLogger.Debug(ctx, "ListObjectsRecurse", "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %s", bucket, prefix, delimiter, maxKeys)
+	eosLogger.Debug(ctx, "ListObjectsRecurse", "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %d", bucket, prefix, delimiter, maxKeys)
 	result.IsTruncated = false
 	isRecursive := (len(delimiter) == 0)
 
