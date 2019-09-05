@@ -131,6 +131,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		validbuckets: validbuckets,
 		TransferList: NewTransferList(),
 		FileSystem:   filesystem,
+		readonly:     readonly,
 	}, nil
 }
 
