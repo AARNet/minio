@@ -71,16 +71,16 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
 	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=ls&mgm.option=" + lsflags + "&mgm.path=" + path)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Ls", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
+		eosLogger.Error(ctx, "Xrdcp.Ls", err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
 		return "", 1, err
 	}
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Ls", "EOScmd: xrdcp.LS: [path: "+path+", rooturl: "+rooturl+"]", nil)
+	eosLogger.Stat(ctx, "Xrdcp.Ls", "EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Ls", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp %s", rooturl), err)
+		eosLogger.Error(ctx, "Xrdcp.Ls", err, "ERROR: can not /usr/bin/xrdcp %s", rooturl)
 		return "", 1, err
 	}
 
@@ -117,16 +117,16 @@ func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string,
 func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=" + path)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", "ERROR: can not url.QueryUnescape() [path: "+path+", uri: "+rooturl+"]", err)
+		eosLogger.Error(ctx, "xrdcpFind", err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
 		return nil, err
 	}
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Find", "EOScmd: xrdcp.FIND: [path: "+path+", rooturl: "+rooturl+"]", nil)
+	eosLogger.Stat(ctx, "Xrdcp.Find", "EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
 
 	if err := cmd.Start(); err != nil {
-		eosLogger.Log(ctx, LogLevelError, "xrdcpFind", "ERROR: can not /usr/bin/xrdcp "+rooturl, err)
+		eosLogger.Error(ctx, "xrdcpFind", err, "ERROR: can not /usr/bin/xrdcp %s ", rooturl)
 		return nil, err
 	}
 	defer cmd.Wait()
@@ -168,16 +168,16 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) {
 	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=" + path)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", fmt.Sprintf("ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl), err)
+		eosLogger.Error(ctx, "Xrdcp.Fileinfo", err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
 		return nil, err
 	}
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Fileinfo", "EOScmd: xrdcp.FILEINFO: [path: "+path+", rooturl: "+rooturl+"]", nil)
+	eosLogger.Stat(ctx, "Xrdcp.Fileinfo", "EOScmd: xrdcp.FILEINFO: [path: %s, rooturl: %s]", path, rooturl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Fileinfo", "ERROR: can not /usr/bin/xrdcp "+rooturl, err)
+		eosLogger.Error(ctx, "Xrdcp.Fileinfo", err, "ERROR: can not /usr/bin/xrdcp %s", rooturl)
 		return nil, err
 	}
 
@@ -237,7 +237,7 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 
 	filename, object := x.GetFilenameFromObject(ctx, object)
 	if filename == "" {
-		eosLogger.Log(ctx, LogLevelDebug, "xrdcpFindParseResult", fmt.Sprintf("Unable to get filename from object [object: %s]", object), nil)
+		eosLogger.Debug(ctx, "xrdcpFindParseResult", "Unable to get filename from object [object: %s]", object)
 		return nil
 	}
 
@@ -286,20 +286,20 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Put", fmt.Sprintf("ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl), err)
+		eosLogger.Error(ctx, "Xrdcp.Put", err, "ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl)
 		return err
 	}
 
-	eosLogger.Log(ctx, LogLevelStat, "Xrdcp.Put", fmt.Sprintf("EOScmd: xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl), nil)
+	eosLogger.Stat(ctx, "Xrdcp.Put", "EOScmd: xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "Xrdcp.Put", fmt.Sprintf("ERROR: can not /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath), err)
+		eosLogger.Error(ctx, "Xrdcp.Put", err, "ERROR: can not /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath)
 	}
 	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
 	if output != "" {
-		eosLogger.Log(ctx, LogLevelInfo, "Xrdcp.Put", output, nil)
+		eosLogger.Info(ctx, "Xrdcp.Put", output, nil)
 	}
 
 	return err
@@ -315,11 +315,11 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(x.GetXrootBase() + eospath + "?eos.ruid=" + x.UID + "&eos.rgid=" + x.GID)
 	if err != nil {
-		eosLogger.Log(ctx, LogLevelError, "ReadChunk", fmt.Sprintf("ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl), err)
+		eosLogger.Error(ctx, "ReadChunk", err, "ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl)
 		return err
 	}
 
-	eosLogger.Log(ctx, LogLevelStat, "ReadChunk", fmt.Sprintf("EOScmd: xrdcp.GET: [eosurl: %s]", eosurl), nil)
+	eosLogger.Stat(ctx, "ReadChunk", "EOScmd: xrdcp.GET: [eosurl: %s]", eosurl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-N", eosurl, "-")
 	var stdout bytes.Buffer
@@ -328,12 +328,12 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	cmd.Stderr = &stderr
 	err2 := cmd.Run()
 	if err2 != nil {
-		eosLogger.Log(ctx, LogLevelInfo, "ReadChunk", fmt.Sprintf("/usr/bin/xrdcp -N %s - %+v", eosurl, err2), nil)
+		eosLogger.Info(ctx, "ReadChunk", "/usr/bin/xrdcp -N %s - %+v", eosurl, err2)
 	}
 
 	errStr := strings.TrimSpace(stderr.String())
 	if errStr != "" {
-		eosLogger.Log(ctx, LogLevelError, "ReadChunk", errStr, nil)
+		eosLogger.Error(ctx, "ReadChunk", nil, errStr)
 	}
 
 	if offset >= 0 {
