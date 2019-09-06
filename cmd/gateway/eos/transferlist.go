@@ -25,8 +25,8 @@ func NewTransferList() *TransferList {
 // AddTransfer adds a Transfer to the list
 func (p *TransferList) AddTransfer(id string, t *Transfer) {
 	p.Lock()
+	defer p.Unlock()
 	p.transfer[id] = t
-	p.Unlock()
 }
 
 // GetTransfer returns a Transfer in the list
@@ -38,7 +38,15 @@ func (p *TransferList) GetTransfer(id string) *Transfer {
 
 // DeleteTransfer deletes a transfer from the list
 func (p *TransferList) DeleteTransfer(id string) {
-	delete(p.transfer, id)
+	p.RLock()
+	if _, ok := p.transfer[id]; ok {
+		p.RUnlock()
+		p.Lock()
+		delete(p.transfer, id)
+		p.Unlock()
+		p.RLock()
+	}
+	p.RUnlock()
 }
 
 // TransferExists checks to see if the transfer exists in the list
