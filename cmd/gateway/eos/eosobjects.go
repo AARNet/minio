@@ -850,6 +850,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	eosLogger.Debug(ctx, "ListObjectsRecurse", "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %d", bucket, prefix, delimiter, maxKeys)
 	result.IsTruncated = false
 	isRecursive := (len(delimiter) == 0)
+	prefixIsDir := strings.HasSuffix(prefix, "/")
 
 	// Don't do anything if delimiter and prefix are both slashes
 	if delimiter == "/" && prefix == "/" {
@@ -863,7 +864,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	eosLogger.Debug(ctx, "ListObjectsRecurse", "Path after cleaning: path: %s", path)
 
 	// We only want to list the directory and not it's contents if it doesn't end with /
-	if prefix != "" && !isRecursive && !strings.HasSuffix(prefix, "/") {
+	if prefix != "" && !isRecursive && !prefixIsDir {
 		if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
 			stat, err := e.FileSystem.DirStat(ctx, path)
 			if err != nil {
@@ -882,6 +883,10 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	defer e.FileSystem.DeleteCache(ctx)
 
 	if err != nil {
+		// In case it's trying to list a prefix and it doesn't exist, return an empty result
+		if isRecursive && prefixIsDir && err == errFileNotFound {
+			return result, nil
+		}
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 	}
 
