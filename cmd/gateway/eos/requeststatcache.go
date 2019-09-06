@@ -33,11 +33,7 @@ func (c *RequestStatCache) init() {
 
 // Get returns an already existing StatCache or creates a new one and returns it
 func (c *RequestStatCache) Get(ctx context.Context) (result *StatCache) {
-	reqInfo := logger.GetReqInfo(ctx)
-	reqID := "none"
-	if reqInfo.RequestID != "" {
-		reqID = reqInfo.RequestID
-	}
+	reqID := c.getReqID(ctx)
 	c.init()
 	c.RLock()
 	if _, ok := c.cache[reqID]; !ok {
@@ -54,11 +50,7 @@ func (c *RequestStatCache) Get(ctx context.Context) (result *StatCache) {
 
 // Reset deletes and recreates a StatCache
 func (c *RequestStatCache) Reset(ctx context.Context) (result *StatCache) {
-	reqInfo := logger.GetReqInfo(ctx)
-	reqID := "none"
-	if reqInfo.RequestID != "" {
-		reqID = reqInfo.RequestID
-	}
+	reqID := c.getReqID(ctx)
 	c.init()
 	c.RLock()
 	if _, ok := c.cache[reqID]; !ok {
@@ -76,11 +68,7 @@ func (c *RequestStatCache) Reset(ctx context.Context) (result *StatCache) {
 
 // Delete deletes a StatCache
 func (c *RequestStatCache) Delete(ctx context.Context) {
-	reqInfo := logger.GetReqInfo(ctx)
-	reqID := "none"
-	if reqInfo.RequestID != "" {
-		reqID = reqInfo.RequestID
-	}
+	reqID := c.getReqID(ctx)
 	c.init()
 	c.RLock()
 	if _, ok := c.cache[reqID]; !ok {
@@ -96,6 +84,16 @@ func (c *RequestStatCache) Delete(ctx context.Context) {
 	} else {
 		c.RUnlock()
 	}
+}
+
+// getReqID returns the request ID associated with the context
+func (c *RequestStatCache) getReqID(ctx context.Context) string {
+	reqInfo := logger.GetReqInfo(ctx)
+	reqID := "none"
+	if reqInfo.RequestID != "" {
+		reqID = reqInfo.RequestID
+	}
+	return reqID
 }
 
 // Recreate the cache to free memory
