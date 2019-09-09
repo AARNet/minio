@@ -16,7 +16,6 @@ import (
 	"time"
 
 	minio "github.com/minio/minio/cmd"
-	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 )
 
@@ -72,17 +71,17 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	}
 
 	if stage != "" {
-		logger.Info("EOS staging: %s", stage)
+		eosLogger.Startup("EOS staging: %s", stage)
 	} else {
-		logger.Info("EOS staging: DISABLED")
+		eosLogger.Startup("EOS staging: DISABLED")
 	}
 
 	if readonly {
-		logger.Info("EOS read only mode: ENABLED")
+		eosLogger.Startup("EOS read only mode: ENABLED")
 	}
 
 	if !validbuckets {
-		logger.Info("EOS allowing invalid bucket names (RISK)")
+		eosLogger.Startup("EOS allowing invalid bucket names (RISK)")
 	}
 
 	httphost := os.Getenv("EOSHTTPHOST")
@@ -90,15 +89,15 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		httphost = os.Getenv("EOS") + ":8000"
 	}
 
-	logger.Info("EOS URL: %s", os.Getenv("EOS"))
-	logger.Info("EOS HTTP URL: %s", httphost)
-	logger.Info("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
-	logger.Info("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
-	logger.Info("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
-	logger.Info("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
-	logger.Info("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
-	logger.Info("EOS READ METHOD: %s", readmethod)
-	logger.Info("EOS LOG LEVEL: %d", loglevel)
+	eosLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
+	eosLogger.Startup("EOS HTTP URL: %s", httphost)
+	eosLogger.Startup("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
+	eosLogger.Startup("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
+	eosLogger.Startup("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
+	eosLogger.Startup("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
+	eosLogger.Startup("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
+	eosLogger.Startup("EOS READ METHOD: %s", readmethod)
+	eosLogger.Startup("EOS LOG LEVEL: %d", loglevel)
 
 	// Init filesystem
 	xrdcp := &Xrdcp{
