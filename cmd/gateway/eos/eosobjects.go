@@ -76,7 +76,7 @@ func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio
 	if err == nil {
 		bi = minio.BucketInfo{
 			Name:    bucket,
-			Created: stat.ModTime(),
+			Created: stat.ModTime,
 		}
 	} else {
 		err = minio.BucketNotFound{Bucket: bucket}
@@ -106,7 +106,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		if stat.IsDir() && e.IsValidBucketName(strings.TrimRight(dir, "/")) {
 			b := minio.BucketInfo{
 				Name:    strings.TrimSuffix(dir, "/"),
-				Created: stat.ModTime(),
+				Created: stat.ModTime,
 			}
 			buckets = append(buckets, b)
 		} else {
@@ -431,14 +431,14 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	objInfo = minio.ObjectInfo{
 		Bucket:      bucket,
 		Name:        object,
-		ModTime:     stat.ModTime(),
-		Size:        stat.Size(),
+		ModTime:     stat.ModTime,
+		Size:        stat.Size,
 		IsDir:       stat.IsDir(),
-		ETag:        stat.ETag(),
-		ContentType: stat.ContentType(),
+		ETag:        stat.GetETag(),
+		ContentType: stat.ContentType,
 	}
 
-	eosLogger.Debug(ctx, "GetObjectInfo", "GetObjectInfo: [path: %s, etag: %s, content-type: %s]", path, stat.ETag(), stat.ContentType())
+	eosLogger.Debug(ctx, "GetObjectInfo", "GetObjectInfo: [path: %s, etag: %s, content-type: %s]", path, stat.GetETag(), stat.ContentType)
 	return objInfo, err
 }
 
@@ -811,12 +811,12 @@ func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) (
 	return minio.ObjectInfo{
 		Bucket:      bucket,
 		Name:        name,
-		ModTime:     stat.ModTime(),
-		Size:        stat.Size(),
+		ModTime:     stat.ModTime,
+		Size:        stat.Size,
 		IsDir:       stat.IsDir(),
-		ETag:        stat.ETag(),
-		AccTime:     stat.ModTime(),
-		ContentType: stat.ContentType(),
+		ETag:        stat.GetETag(),
+		AccTime:     stat.ModTime,
+		ContentType: stat.ContentType,
 	}
 }
 
@@ -825,6 +825,9 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	eosLogger.Stat(ctx, "ListObjects", "S3cmd: ListObjects: [bucket: %s, prefix: %s, marker: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, marker, delimiter, maxKeys)
 
 	result, err = e.ListObjectsRecurse(ctx, bucket, prefix, marker, delimiter, -1)
+
+	// It's never truncated.
+	result.IsTruncated = false
 
 	// Need unique prefixes
 	trackUniq := make(map[string]bool)
@@ -848,7 +851,6 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 // ListObjectsRecurse - Recursive function for interating through a directory tree
 func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
 	eosLogger.Debug(ctx, "ListObjectsRecurse", "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %d", bucket, prefix, delimiter, maxKeys)
-	result.IsTruncated = false
 	isRecursive := (len(delimiter) == 0)
 	prefixIsDir := strings.HasSuffix(prefix, "/")
 
