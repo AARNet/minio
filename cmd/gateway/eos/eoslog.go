@@ -66,6 +66,11 @@ func (e *eosLog) Stat(ctx context.Context, method string, messagefmt string, arg
 	}
 }
 
+// Startup -
+func (e *eosLog) Startup(messagefmt string, args ...interface{}) {
+	e.Log(context.TODO(), LogLevelInfo, "", fmt.Sprintf(messagefmt, args...), nil)
+}
+
 // Log actually logs the message
 func (e *eosLog) Log(ctx context.Context, level int, method string, message string, err error) {
 	var levelString string
@@ -88,9 +93,9 @@ func (e *eosLog) Log(ctx context.Context, level int, method string, message stri
 			RequestID:  req.RequestID,
 			RemoteHost: req.RemoteHost,
 			UserAgent:  req.UserAgent,
-			Error:      fmt.Sprintf("%+v", err),
 		}
 		if err != nil {
+			entry.Error = fmt.Sprintf("%+v", err)
 			entry.Trace = getTrace(3)
 		}
 
