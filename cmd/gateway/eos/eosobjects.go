@@ -17,7 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
+	//	"sort"
 	"strings"
 	"time"
 
@@ -534,48 +534,46 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		return info, minio.NotImplemented{}
 	}
 
-	transfer := e.TransferList.GetTransfer(uploadID)
+	// Wait for transfer to be added to list
+	var transfer *Transfer
 	for {
-		transfer.RLock()
-		parts := transfer.parts
-		transfer.RUnlock()
-
-		if parts != nil {
+		transfer := e.TransferList.GetTransfer(uploadID)
+		if transfer != nil {
+			for {
+				parts := transfer.GetParts()
+				if parts != nil {
+					break
+				}
+				eosLogger.Error(ctx, "PutObjectPart", err, "PutObjectPart called before NewMultipartUpload finished. [object: %s/%s, uploadID: %d]", bucket, object, partID)
+				Sleep()
+			}
 			break
+		} else {
+			Sleep()
 		}
-		eosLogger.Error(ctx, "PutObjectPart", err, "PutObjectPart called before NewMultipartUpload finished. [object: %s/%s, uploadID: %d]", bucket, object, partID)
-		Sleep()
+
 	}
 
-	size := data.Size()
-	etag := data.MD5CurrentHexString()
-	buf, _ := ioutil.ReadAll(data)
+	info.PartNumber = partID
+	info.LastModified = minio.UTCNow()
+	info.Size = data.Reader.Size()
+	info.ETag = data.MD5CurrentHexString()
 
-	newPart := minio.PartInfo{
-		PartNumber:   partID,
-		LastModified: time.Now(),
-		ETag:         etag,
-		Size:         size,
-	}
+	buf, _ := ioutil.ReadAll(data) // This is a memory hog because it reads the entire chunk into memory
 
-	transfer.AddPart(partID, newPart)
+	e.TransferList.AddPartToTransfer(uploadID, partID, info)
 
 	if partID == 1 {
-		transfer.Lock()
-		if len(buf) < 1 {
+		if info.Size < 1 {
 			eosLogger.Error(ctx, "PutObjectPart", err, "PutObjectPart received 0 bytes in the buffer. [object: %s/%s, uploadID: %d]", bucket, object, partID)
-			transfer.firstByte = 0
+			e.TransferList.SetFirstByte(uploadID, 0)
 		} else {
-			transfer.firstByte = buf[0]
+			e.TransferList.SetFirstByte(uploadID, buf[0])
 		}
-		transfer.chunkSize = size
-		transfer.Unlock()
+		e.TransferList.SetChunkSize(uploadID, info.Size)
 	} else {
 		for {
-			transfer.RLock()
-			chunksize := transfer.chunkSize
-			transfer.RUnlock()
-
+			chunksize := e.TransferList.GetChunkSize(uploadID)
 			if chunksize != 0 {
 				break
 			}
@@ -584,11 +582,9 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 	}
 
-	transfer.Lock()
-	transfer.partsCount++
-	transfer.AddToSize(size)
-	chunksize := transfer.chunkSize
-	transfer.Unlock()
+	e.TransferList.IncrementPartsCount(uploadID)
+	e.TransferList.AddToSize(uploadID, info.Size)
+	chunksize := e.TransferList.GetChunkSize(uploadID)
 
 	offset := chunksize * int64(partID-1)
 	eosLogger.Debug(ctx, "PutObjectPart", "PutObjectPart offset [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
@@ -596,7 +592,7 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	if e.stage != "" { //staging
 		eosLogger.Debug(ctx, "PutObjectPart", "PutObjectPart: staging transfer [object: %s/%s]", bucket, object)
 
-		stagepath := transfer.GetStagePath()
+		stagepath := e.TransferList.GetStagePath(uploadID)
 		absstagepath := e.stage + "/" + stagepath
 
 		if _, err := os.Stat(absstagepath); os.IsNotExist(err) {
@@ -605,17 +601,18 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		f, err := os.OpenFile(absstagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			eosLogger.Error(ctx, "PutObjectPart", err, "ERROR: Write ContentType: %+v", err)
-			return newPart, err
+			return info, err
 		}
 		_, err = f.WriteAt(buf, offset)
 		if err != nil {
 			eosLogger.Error(ctx, "PutObjectPart", err, "ERROR: Write ContentType: %+v", err)
-			return newPart, err
+			return info, err
 		}
 		f.Close()
+
 	} else { // use xrootd
 		go func() {
-			err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, offset, offset+size, "0", buf)
+			err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, offset, offset+info.Size, "0", buf)
 		}()
 	}
 
@@ -635,12 +632,13 @@ func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 		}
 		Sleep()
 	}
+
 	transfer.Lock()
 	transfer.md5.Write(buf)
 	transfer.md5PartID++
 	transfer.Unlock()
 
-	return newPart, nil
+	return info, nil
 }
 
 // CompleteMultipartUpload
@@ -722,7 +720,6 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 		return objInfo, err
 	}
 
-	e.TransferList.DeleteTransfer(uploadID)
 	return objInfo, nil
 }
 
@@ -790,24 +787,26 @@ func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, upload
 	result.PartNumberMarker = partNumberMarker
 
 	transfer := e.TransferList.GetTransfer(uploadID)
-	transfer.RLock()
-	size := transfer.partsCount
-	parts := transfer.parts
-	result.Parts = make([]minio.PartInfo, size)
-	i := 0
-	for _, part := range parts {
-		if i < size {
-			result.Parts[i] = part
-			i++
+	if transfer != nil {
+		size := e.TransferList.GetPartsCount(uploadID)
+		transfer.RLock()
+		parts := transfer.parts
+		result.Parts = make([]minio.PartInfo, size)
+		i := 0
+		for _, part := range parts {
+			if i < size {
+				result.Parts[i] = part
+				i++
+			}
 		}
+		transfer.RUnlock()
 	}
-	transfer.RUnlock()
 
 	return result, nil
 }
 
 // Return an initialized minio.ObjectInfo
-func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) (obj minio.ObjectInfo) {
+func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) minio.ObjectInfo {
 	return minio.ObjectInfo{
 		Bucket:      bucket,
 		Name:        name,
@@ -841,8 +840,8 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	result.Prefixes = prefixes
 
 	// Sort the results to make them an easier list to read for most clients
-	sort.SliceStable(result.Objects, func(i, j int) bool { return result.Objects[i].Name < result.Objects[j].Name })
-	sort.SliceStable(result.Prefixes, func(i, j int) bool { return result.Prefixes[i] < result.Prefixes[j] })
+	//sort.SliceStable(result.Objects, func(i, j int) bool { return result.Objects[i].Name < result.Objects[j].Name })
+	//sort.SliceStable(result.Prefixes, func(i, j int) bool { return result.Prefixes[i] < result.Prefixes[j] })
 
 	eosLogger.Debug(ctx, "ListObjects", "ListObjects: Result: %+v", result)
 	return result, err
