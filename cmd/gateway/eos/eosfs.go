@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -176,32 +177,34 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 
 	if len(objects) > 0 {
 		for _, object := range objects {
-			if e.isEOSSysFile(object.name) {
+			if e.isEOSSysFile(object.Name) {
 				continue
 			}
 			// Skip minio parts
-			if strings.HasSuffix(object.name, ".minio.sys") {
+			if strings.HasSuffix(object.Name, ".minio.sys") {
 				continue
 			}
-			reqStatCache.Write(object.fullpath, object)
+			reqStatCache.Write(object.FullPath, object)
 
 			// If we find an entry matching the eospath and is a directory, skip it.
-			if !object.file && object.fullpath == strings.TrimSuffix(eospath, "/")+"/" {
+			if !object.File && object.FullPath == strings.TrimSuffix(eospath, "/")+"/" {
 				continue
 			}
 			// If we find an entry matching the eospath and it's a file, return it.
-			if object.file && object.fullpath == strings.TrimSuffix(eospath, "/") {
-				eosLogger.Debug(ctx, "BuildCache", "Object matches requested path, returning it [object: %s, path: %s]", object.fullpath, eospath)
-				return []string{object.name}, nil
+			if object.File && object.FullPath == strings.TrimSuffix(eospath, "/") {
+				eosLogger.Debug(ctx, "BuildCache", "Object matches requested path, returning it [object: %s, path: %s]", object.FullPath, eospath)
+				return []string{object.Name}, nil
 			}
 			// Add a slash if it's a directory
-			if object.file {
-				entries = append(entries, object.name)
+			if object.File {
+				entries = append(entries, object.Name)
 			} else {
-				entries = append(entries, object.name+"/")
+				entries = append(entries, object.Name+"/")
 			}
 		}
 	}
+
+	sort.Strings(entries)
 	return entries, err
 }
 
