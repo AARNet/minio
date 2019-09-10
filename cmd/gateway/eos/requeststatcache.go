@@ -56,7 +56,7 @@ func (c *RequestStatCache) Reset(ctx context.Context) (result *StatCache) {
 	if _, ok := c.cache[reqID]; !ok {
 		c.RUnlock()
 		c.Lock()
-		c.cache[reqID] = nil
+		delete(c.cache, reqID)
 		c.cache[reqID] = NewStatCache(c.path)
 		c.Unlock()
 		c.RLock()
@@ -101,6 +101,7 @@ func (c *RequestStatCache) clean() {
 	cleaned := make(map[string]*StatCache)
 	for key, value := range c.cache {
 		cleaned[key] = value
+		delete(c.cache, key)
 	}
 	c.cache = cleaned
 	runtime.GC()
