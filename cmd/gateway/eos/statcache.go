@@ -39,7 +39,9 @@ func (c *StatCache) Size() int {
 // Reset deletes and recreates the StatCache's cache
 func (c *StatCache) Reset() {
 	c.Lock()
-	c.cache = nil
+	for key := range c.cache {
+		delete(c.cache, key)
+	}
 	c.cache = make(map[string]*FileStat)
 	c.Unlock()
 }
