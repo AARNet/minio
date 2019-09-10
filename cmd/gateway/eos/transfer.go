@@ -38,7 +38,9 @@ func (mp *Transfer) AddPart(partid int, part minio.PartInfo) {
 
 // AddToSize adds size to the total size of the transfer
 func (mp *Transfer) AddToSize(size int64) {
+	mp.Lock()
 	mp.size += size
+	mp.Unlock()
 }
 
 // GetStagePath returns the configured staging path
@@ -64,7 +66,6 @@ func (mp *Transfer) GetETag() string {
 
 // GetParts returns all parts for the transfer
 func (mp *Transfer) GetParts() map[int]minio.PartInfo {
-	// TODO: Currently causing a nil or invalid pointer panic
 	mp.RLock()
 	defer mp.RUnlock()
 	return mp.parts
@@ -75,4 +76,32 @@ func (mp *Transfer) GetPartsCount() int {
 	mp.RLock()
 	defer mp.RUnlock()
 	return mp.partsCount
+}
+
+// SetFirstByte -
+func (mp *Transfer) SetFirstByte(firstByte byte) {
+	mp.Lock()
+	defer mp.Unlock()
+	mp.firstByte = firstByte
+}
+
+// SetChunkSize -
+func (mp *Transfer) SetChunkSize(size int64) {
+	mp.Lock()
+	mp.chunkSize = size
+	mp.Unlock()
+}
+
+// GetChunkSize -
+func (mp *Transfer) GetChunkSize() (size int64) {
+	mp.RLock()
+	defer mp.RUnlock()
+	return mp.chunkSize
+}
+
+// IncrementPartsCount -
+func (mp *Transfer) IncrementPartsCount() {
+	mp.Lock()
+	mp.partsCount++
+	mp.Unlock()
 }
