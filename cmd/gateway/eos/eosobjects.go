@@ -547,24 +547,18 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	info.Size = data.Reader.Size()
 	info.ETag = data.MD5CurrentHexString()
 
-	buf, _ := ioutil.ReadAll(data) // This is a memory hog because it reads the entire chunk into memory
+	//	buf, _ := ioutil.ReadAll(data) // This is a memory hog because it reads the entire chunk into memory
 
 	e.TransferList.AddPartToTransfer(uploadID, partID, info)
 
 	if partID == 1 {
-		if info.Size < 1 {
-			eosLogger.Error(ctx, "PutObjectPartStaging", err, "PutObjectPart received 0 bytes in the buffer. [object: %s/%s, uploadID: %d]", bucket, object, partID)
-			e.TransferList.SetFirstByte(uploadID, 0)
-		} else {
-			e.TransferList.SetFirstByte(uploadID, buf[0])
-		}
 		e.TransferList.SetChunkSize(uploadID, info.Size)
-	} else {
-		for {
-			chunksize := e.TransferList.GetChunkSize(uploadID)
-			if chunksize != 0 {
-				break
-			}
+	}
+
+	var chunksize int64
+	for chunksize == 0 {
+		chunksize = e.TransferList.GetChunkSize(uploadID)
+		if chunksize == 0 {
 			eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart: waiting for first chunk [object: %s/%s, processing_part: %d]", bucket, object, partID)
 			Sleep()
 		}
@@ -572,13 +566,9 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 
 	e.TransferList.IncrementPartsCount(uploadID)
 	e.TransferList.AddToSize(uploadID, info.Size)
-	chunksize := e.TransferList.GetChunkSize(uploadID)
 
 	offset := chunksize * int64(partID-1)
-	eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart offset [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
-
-	eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart: staging transfer [object: %s/%s]", bucket, object)
-
+	eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart staging transfer [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
 	stagepath := e.TransferList.GetStagePath(uploadID)
 	absstagepath := e.stage + "/" + stagepath
 
@@ -587,12 +577,17 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	}
 	f, err := os.OpenFile(absstagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Write ContentType: %+v", err)
+		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
-	_, err = f.WriteAt(buf, offset)
+	_, err = f.Seek(offset, 0)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Write ContentType: %+v", err)
+		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
+		return info, err
+	}
+	_, err = io.Copy(f, data.Reader)
+	if err != nil {
+		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	f.Close()
@@ -614,10 +609,25 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		Sleep()
 	}
 
+	f, err = os.OpenFile(absstagepath+"/file", os.O_RDONLY, 0600)
+	if err != nil {
+		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
+		return info, err
+	}
+	_, err = f.Seek(offset, 0)
+	if err != nil {
+		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
+		return info, err
+	}
 	transfer.Lock()
-	transfer.md5.Write(buf)
+	_, err = io.CopyN(transfer.md5, f, chunksize)
 	transfer.md5PartID++
 	transfer.Unlock()
+	if err != nil {
+		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
+		return info, err
+	}
+	f.Close()
 
 	return info, nil
 }
@@ -705,31 +715,26 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 
 // CompleteMultipartUploadStaging
 func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	reqInfo := logger.GetReqInfo(ctx)
-	transfer := e.TransferList.GetTransfer(uploadID)
-	transfer.RLock()
-	size := transfer.size
-	firstByte := transfer.firstByte
-	transfer.RUnlock()
-	eosLogger.Stat(ctx, "CompleteMultipartUpload", "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d, firstByte: %d, useragent: %s]", uploadID, size, firstByte, reqInfo.UserAgent)
-
-	if e.readonly {
-		return objInfo, minio.NotImplemented{}
-	}
+	size := e.TransferList.GetSize(uploadID)
+	eosLogger.Stat(ctx, "CompleteMultipartUpload", "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d]", uploadID, size)
 
 	for {
-		transfer.RLock()
-		if transfer.md5PartID == transfer.partsCount+1 {
-			break
+		transfer := e.TransferList.GetTransfer(uploadID)
+		if transfer != nil {
+			transfer.RLock()
+			if transfer.md5PartID == transfer.partsCount+1 {
+				break
+			}
+			eosLogger.Debug(ctx, "CompleteMultipartUploadStaging", "CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
+			transfer.RUnlock()
 		}
-		eosLogger.Debug(ctx, "CompleteMultipartUploadStaging", "CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
-		transfer.RUnlock()
 		Sleep()
 	}
 
-	etag := transfer.GetETag()
-	contenttype := transfer.GetContentType()
-	stagepath := transfer.GetStagePath()
+	etag := e.TransferList.GetEtag(uploadID)
+	//etag := minio.ComputeCompleteMultipartMD5(uploadedParts)
+	contenttype := e.TransferList.GetContentType(uploadID)
+	stagepath := e.TransferList.GetStagePath(uploadID)
 
 	eosLogger.Debug(ctx, "CompleteMultipartUploadStaging", "CompleteMultipartUpload: [uploadID: %s, etag: %s]", uploadID, etag)
 
@@ -743,42 +748,30 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 		ContentType: contenttype,
 	}
 
-	if e.stage != "" { //staging
-		err = e.FileSystem.Touch(ctx, uploadID, size)
-		if err != nil {
-			eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
-			return objInfo, err
-		}
+	err = e.FileSystem.Touch(ctx, uploadID, size)
+	if err != nil {
+		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
+		return objInfo, err
+	}
 
-		// Upload the transfer to EOS in the background
-		if strings.HasPrefix(reqInfo.UserAgent, "rclone") {
+	// Upload the transfer to EOS in the background
+	reqInfo := logger.GetReqInfo(ctx)
+	if strings.HasPrefix(reqInfo.UserAgent, "rclone") {
+		_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
+	} else {
+		go func() {
 			_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
-		} else {
-			go func() {
-				_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
-			}()
-		}
-	} else { //use xrootd
-		transfer.RLock()
-		firstbyte := []byte{transfer.firstByte}
-		transfer.RUnlock()
-		err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, 0, size, "1", firstbyte)
-		if err != nil {
-			eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s, error: %+v]", uploadID, err)
-			return objInfo, err
-		}
-
-		e.TransferList.DeleteTransfer(uploadID)
+		}()
 	}
 
 	err = e.FileSystem.SetETag(ctx, uploadID, etag)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, contenttype)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 
@@ -874,6 +867,7 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 		eosLogger.Error(ctx, "TransferFromStaging", err, "ERROR: CompleteMultipartUpload: EOSsetContentType: [uploadID: %s, error: %+v]", uploadID, err)
 		return err
 	}
+
 	err = os.RemoveAll(e.stage + "/" + stagepath)
 	if err != nil {
 		return err
