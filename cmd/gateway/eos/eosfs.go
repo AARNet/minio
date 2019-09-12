@@ -325,9 +325,18 @@ func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {
 	return nil
 }
 
-func (e *eosFS) rmdir(ctx context.Context, p string) error {
-	e.rm(ctx, p) // these functions are the same, why do we have two.
-	return nil
+// mkdirp is essentially `mkdir -p`, checks for existence before creating.
+func (e *eosFS) mkdirp(ctx context.Context, dir string) (err error) {
+	if exists, _ := e.FileExists(ctx, dir); !exists {
+		err = e.mkdirWithOption(ctx, dir, "&mgm.option=p")
+	}
+	return err
+}
+
+// rmdir is the same as rm.
+func (e *eosFS) rmdir(ctx context.Context, p string) (err error) {
+	err = e.rm(ctx, p)
+	return err
 }
 
 func (e *eosFS) rm(ctx context.Context, p string) error {
