@@ -83,11 +83,13 @@ func (e *eosLog) Log(ctx context.Context, level int, method string, message stri
 		levelString = "INFO"
 	}
 
+	format := "2006-01-02 15:04:05.00"
 	if level <= MaxLogLevel || level == LogLevelStat {
 		req := logger.GetReqInfo(ctx)
 		entry := &LogEntry{
-			Level:      levelString,
-			Time:       time.Now().UTC().Format(time.RFC3339Nano),
+			Level: levelString,
+			Time:  time.Now().UTC().Format(format),
+			//Time:       time.Now().UTC().Format(time.RFC3339Nano),
 			Method:     method,
 			Message:    message,
 			RequestID:  req.RequestID,
