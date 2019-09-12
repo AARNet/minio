@@ -76,6 +76,24 @@ func (p *TransferList) SetChunkSize(id string, size int64) {
 	}
 }
 
+// GetEtag -
+func (p *TransferList) GetEtag(id string) (etag string) {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		etag = transfer.GetETag()
+	}
+	return etag
+}
+
+// GetContentType -
+func (p *TransferList) GetContentType(id string) (etag string) {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		etag = transfer.GetContentType()
+	}
+	return etag
+}
+
 // GetChunkSize -
 func (p *TransferList) GetChunkSize(id string) (size int64) {
 	transfer := p.GetTransfer(id)
@@ -126,6 +144,15 @@ func (p *TransferList) AddToSize(id string, size int64) {
 	if transfer != nil {
 		transfer.AddToSize(size)
 	}
+}
+
+// GetSize -
+func (p *TransferList) GetSize(id string) int64 {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		return transfer.GetSize()
+	}
+	return 0
 }
 
 // TransferExists checks to see if the transfer exists in the list
