@@ -94,11 +94,20 @@ func (p *TransferList) GetStagePath(id string) (stage string) {
 	return stage
 }
 
+// GetParts -
+func (p *TransferList) GetParts(id string) map[int]minio.PartInfo {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		return transfer.GetParts()
+	}
+	return nil
+}
+
 // GetPartsCount -
 func (p *TransferList) GetPartsCount(id string) int {
 	transfer := p.GetTransfer(id)
 	if transfer != nil {
-		transfer.GetPartsCount()
+		return transfer.GetPartsCount()
 	}
 	return 0
 }
@@ -127,4 +136,15 @@ func (p *TransferList) TransferExists(id string) bool {
 		return true
 	}
 	return false
+}
+
+// WaitForTransfer ...
+func (p *TransferList) WaitForTransfer(uploadID string) {
+	for { // TODO: Fix this infinite loop.
+		parts := p.GetParts(uploadID)
+		if parts != nil {
+			break
+		}
+		Sleep()
+	}
 }
