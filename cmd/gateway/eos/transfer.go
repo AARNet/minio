@@ -57,6 +57,13 @@ func (mp *Transfer) GetContentType() string {
 	return mp.contenttype
 }
 
+// GetSize ...
+func (mp *Transfer) GetSize() int64 {
+	mp.RLock()
+	defer mp.RUnlock()
+	return mp.size
+}
+
 // GetETag returns the ETag for the transfer
 func (mp *Transfer) GetETag() string {
 	mp.RLock()
