@@ -70,7 +70,7 @@ func (e *eosObjects) StorageInfo(ctx context.Context) (storageInfo minio.Storage
 
 // GetBucketInfo - Get bucket metadata
 func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio.BucketInfo, err error) {
-	eosLogger.Stat(ctx, "GetBucketInfo", "S3cmd: GetBucketInfo [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: GetBucketInfo [bucket: %s]", bucket)
 
 	stat, err := e.FileSystem.DirStat(ctx, bucket)
 	if err == nil {
@@ -86,7 +86,7 @@ func (e *eosObjects) GetBucketInfo(ctx context.Context, bucket string) (bi minio
 
 // ListBuckets - Lists all root folders
 func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInfo, err error) {
-	eosLogger.Stat(ctx, "ListBuckets", "S3cmd: ListBuckets")
+	eosLogger.Stat(ctx, "S3cmd: ListBuckets")
 
 	dirs, err := e.FileSystem.BuildCache(ctx, "", false)
 	defer e.FileSystem.DeleteCache(ctx)
@@ -99,7 +99,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		stat, err := e.FileSystem.DirStat(ctx, dir)
 
 		if stat == nil {
-			eosLogger.Error(ctx, "ListBuckets", err, "ERROR: ListBuckets: unable to stat [dir: %s]", dir)
+			eosLogger.Error(ctx, err, "ERROR: ListBuckets: unable to stat [dir: %s]", dir)
 			continue
 		}
 
@@ -111,21 +111,21 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 			buckets = append(buckets, b)
 		} else {
 			if !stat.IsDir() {
-				eosLogger.Debug(ctx, "ListBuckets", "Bucket: %s not a directory", dir)
+				eosLogger.Debug(ctx, "Bucket: %s not a directory", dir)
 			}
 			if !e.IsValidBucketName(strings.TrimRight(dir, "/")) {
-				eosLogger.Debug(ctx, "ListBuckets", "Bucket: %s not a valid name", dir)
+				eosLogger.Debug(ctx, "Bucket: %s not a valid name", dir)
 			}
 		}
 	}
 
-	eosLogger.Debug(ctx, "ListBuckets", "Buckets found: %+v", buckets)
+	eosLogger.Debug(ctx, "Buckets found: %+v", buckets)
 	return buckets, err
 }
 
 // MakeBucketWithLocation - Create a new container.
 func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
-	eosLogger.Stat(ctx, "MakeBucketWithLocation", "S3cmd: MakeBucketWithLocation [bucket: %s, location: %s]", bucket, location)
+	eosLogger.Stat(ctx, "S3cmd: MakeBucketWithLocation [bucket: %s, location: %s]", bucket, location)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -147,7 +147,7 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, locatio
 
 // DeleteBucket - delete a container
 func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "DeleteBucket", "S3cmd: DeleteBucket [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: DeleteBucket [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -162,7 +162,7 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 
 // GetBucketLifecycle - not implemented
 func (e *eosObjects) GetBucketLifecycle(ctx context.Context, bucket string) (*lifecycle.Lifecycle, error) {
-	eosLogger.Stat(ctx, "GetBucketLfiecycle", "S3cmd: GetBucketLifecycle [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: GetBucketLifecycle [bucket: %s]", bucket)
 
 	if e.readonly {
 		return nil, minio.NotImplemented{}
@@ -173,7 +173,7 @@ func (e *eosObjects) GetBucketLifecycle(ctx context.Context, bucket string) (*li
 
 // SetBucketLifecycle - not implemented
 func (e *eosObjects) SetBucketLifecycle(ctx context.Context, bucket string, lifecycle *lifecycle.Lifecycle) error {
-	eosLogger.Stat(ctx, "SetBucketLifecycle", "S3cmd: SetBucketLifecycle [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: SetBucketLifecycle [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -184,7 +184,7 @@ func (e *eosObjects) SetBucketLifecycle(ctx context.Context, bucket string, life
 
 // DeleteBucketLifecycle - not implemented
 func (e *eosObjects) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "DeleteBucketLifecycle", "S3cmd: DeleteBucketLifecycle [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: DeleteBucketLifecycle [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -195,7 +195,7 @@ func (e *eosObjects) DeleteBucketLifecycle(ctx context.Context, bucket string) e
 
 // GetBucketPolicy - Get the container ACL
 func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
-	eosLogger.Stat(ctx, "GetBucketPolicy", "S3cmd: GetBucketPolicy [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: GetBucketPolicy [bucket: %s]", bucket)
 
 	return &policy.Policy{
 		Version: policy.DefaultVersion,
@@ -220,7 +220,7 @@ func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*polic
 
 // SetBucketPolicy
 func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketPolicy *policy.Policy) error {
-	eosLogger.Stat(ctx, "SetBucketPolicy", "S3cmd: SetBucketPolicy [bucket: %s, bucketPolicy: %s]", bucket, bucketPolicy)
+	eosLogger.Stat(ctx, "S3cmd: SetBucketPolicy [bucket: %s, bucketPolicy: %s]", bucket, bucketPolicy)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -231,7 +231,7 @@ func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketP
 
 // DeleteBucketPolicy - Set the container ACL to "private"
 func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "DeleteBucketPolicy", "S3cmd: DeleteBucketPolicy [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: DeleteBucketPolicy [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -253,7 +253,7 @@ func (e *eosObjects) IsListenBucketSupported() bool {
 func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	srcpath := srcBucket + "/" + srcObject
 	destpath := destBucket + "/" + destObject
-	eosLogger.Stat(ctx, "CopyObject", "S3cmd: CopyObject [from: %s, to: %s, srcInfo: %+v]", srcpath, destpath, srcInfo)
+	eosLogger.Stat(ctx, "S3cmd: CopyObject [from: %s, to: %s, srcInfo: %+v]", srcpath, destpath, srcInfo)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
@@ -266,19 +266,19 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 
 	err = e.FileSystem.Copy(ctx, srcpath, destpath, srcInfo.Size)
 	if err != nil {
-		eosLogger.Error(ctx, "CopyObject", err, "ERROR: COPY: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
 		return objInfo, err
 	}
 
 	err = e.FileSystem.SetETag(ctx, destpath, srcInfo.ETag)
 	if err != nil {
-		eosLogger.Error(ctx, "CopyObject", err, "ERROR: COPY: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
 		return objInfo, err
 	}
 
 	err = e.FileSystem.SetContentType(ctx, destpath, srcInfo.ContentType)
 	if err != nil {
-		eosLogger.Error(ctx, "CopyObject", err, "ERROR: COPY: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
 		return objInfo, err
 	}
 
@@ -287,7 +287,7 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 
 // CopyObjectPart creates a part in a multipart upload by copying
 func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (p minio.PartInfo, err error) {
-	eosLogger.Stat(ctx, "CopyObjectPart", "S3cmd: CopyObjectPart: [srcpath: %s/%s, destpath: %s/%s]", srcBucket, srcObject, destBucket, destObject)
+	eosLogger.Stat(ctx, "S3cmd: CopyObjectPart: [srcpath: %s/%s, destpath: %s/%s]", srcBucket, srcObject, destBucket, destObject)
 
 	if e.readonly {
 		return p, minio.NotImplemented{}
@@ -298,14 +298,14 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 
 // PutObject - Create a new blob with the incoming data
 func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	eosLogger.Stat(ctx, "PutObject", "S3cmd: PutObject: [path: %s/%s]", bucket, object)
+	eosLogger.Stat(ctx, "S3cmd: PutObject: [path: %s/%s]", bucket, object)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
 	}
 
 	for key, val := range opts.UserDefined {
-		eosLogger.Debug(ctx, "PutObject", "PutObject [path: %s/%s, key: %s, value: %s]", bucket, object, key, val)
+		eosLogger.Debug(ctx, "PutObject [path: %s/%s, key: %s, value: %s]", bucket, object, key, val)
 	}
 
 	buf, _ := ioutil.ReadAll(data)
@@ -321,17 +321,17 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 
 	err = e.FileSystem.Put(ctx, objectpath, buf)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObject", err, "ERROR: PUT: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
 		return objInfo, err
 	}
 	err = e.FileSystem.SetETag(ctx, objectpath, etag)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObject", err, "ERROR: PUT: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
 		return objInfo, err
 	}
 	err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
 	if err != nil {
-		eosLogger.Error(ctx, "PutObject", err, "ERROR: PUT: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
 		return objInfo, err
 	}
 
@@ -340,7 +340,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 
 // DeleteObject - Deletes a blob on EOS
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
-	eosLogger.Stat(ctx, "DeleteObject", "S3cmd: DeleteObject: [path: %s/%s]", bucket, object)
+	eosLogger.Stat(ctx, "S3cmd: DeleteObject: [path: %s/%s]", bucket, object)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -352,7 +352,7 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 
 // DeleteObjects - Deletes multiple blobs on EOS
 func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error) {
-	eosLogger.Stat(ctx, "DeleteObjects", "S3cmd: DeleteObjects: [bucket: %s]", bucket)
+	eosLogger.Stat(ctx, "S3cmd: DeleteObjects: [bucket: %s]", bucket)
 
 	errs := make([]error, len(objects))
 	deleted := make(map[string]bool)
@@ -369,7 +369,7 @@ func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects [
 // GetObject - reads an object from EOS
 func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, startOffset int64, length int64, writer io.Writer, etag string, opts minio.ObjectOptions) error {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
-	eosLogger.Stat(ctx, "GetObject", "S3cmd: GetObject: [path: %s, startOffset: %d, length: %d]", path, startOffset, length)
+	eosLogger.Stat(ctx, "S3cmd: GetObject: [path: %s, startOffset: %d, length: %d]", path, startOffset, length)
 
 	if etag != "" {
 		objInfo, err := e.GetObjectInfo(ctx, bucket, object, opts)
@@ -412,7 +412,7 @@ func (e *eosObjects) GetObjectInfoWithRetry(ctx context.Context, bucket, object 
 // GetObjectInfo - reads blob metadata properties and replies back minio.ObjectInfo
 func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	path := strings.Replace(bucket+"/"+object, "//", "/", -1)
-	eosLogger.Stat(ctx, "GetObjectInfo", "S3cmd: GetObjectInfo: [path: %s]", path)
+	eosLogger.Stat(ctx, "S3cmd: GetObjectInfo: [path: %s]", path)
 
 	var stat *FileStat
 	if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
@@ -421,7 +421,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		stat, err = e.FileSystem.Stat(ctx, path)
 	}
 	if err != nil {
-		eosLogger.Debug(ctx, "GetObjectInfo", "GetObjectInfo: [error: %+v]", err)
+		eosLogger.Debug(ctx, "GetObjectInfo: [error: %+v]", err)
 		err = minio.ObjectNotFound{
 			Bucket: bucket,
 			Object: object}
@@ -438,7 +438,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		ContentType: stat.ContentType,
 	}
 
-	eosLogger.Debug(ctx, "GetObjectInfo", "GetObjectInfo: [path: %s, etag: %s, content-type: %s]", path, stat.GetETag(), stat.ContentType)
+	eosLogger.Debug(ctx, "GetObjectInfo: [path: %s, etag: %s, content-type: %s]", path, stat.GetETag(), stat.ContentType)
 	return objInfo, err
 }
 
@@ -470,13 +470,13 @@ func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 
 // ListMultipartUploads - lists all multipart uploads.
 func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result minio.ListMultipartsInfo, err error) {
-	eosLogger.Stat(ctx, "ListMultipartUploads", "S3cmd: ListMultipartUploads: [bucket: %s, prefix: %s, keyMarket: %s, uploadIDMarker: %s, delimiter: %s, maxUploads: %d]", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
+	eosLogger.Stat(ctx, "S3cmd: ListMultipartUploads: [bucket: %s, prefix: %s, keyMarket: %s, uploadIDMarker: %s, delimiter: %s, maxUploads: %d]", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
 	return result, minio.NotImplemented{}
 }
 
 // NewMultipartUpload
 func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (uploadID string, err error) {
-	eosLogger.Stat(ctx, "NewMultipartUpload", "S3cmd: NewMultipartUpload: [path: %s/%s, options:  +%v]", bucket, object, opts)
+	eosLogger.Stat(ctx, "S3cmd: NewMultipartUpload: [path: %s/%s, options:  +%v]", bucket, object, opts)
 
 	if e.readonly {
 		return "", minio.NotImplemented{}
@@ -513,19 +513,19 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 
 		err = os.MkdirAll(absstagepath, 0700)
 		if err != nil {
-			eosLogger.Error(ctx, "NewMultipartUpload", err, "mkdir failed [path: %s]", absstagepath)
+			eosLogger.Error(ctx, err, "mkdir failed [path: %s]", absstagepath)
 		}
 		mp.stagepath = stagepath
 	}
 
 	e.TransferList.AddTransfer(uploadID, &mp)
-	eosLogger.Info(ctx, "NewMultipartUpload", "NewMultipartUpload: [uploadID: %s]", uploadID)
+	eosLogger.Info(ctx, "NewMultipartUpload: [uploadID: %s]", uploadID)
 	return uploadID, nil
 }
 
 // PutObjectPart
 func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
-	eosLogger.Stat(ctx, "PutObjectPart", "S3cmd: PutObjectPart: [object: %s/%s, uploadID: %s, partId: %d, size: %d]", bucket, object, uploadID, partID, data.Size())
+	eosLogger.Stat(ctx, "S3cmd: PutObjectPart: [object: %s/%s, uploadID: %s, partId: %d, size: %d]", bucket, object, uploadID, partID, data.Size())
 
 	if e.readonly {
 		return info, minio.NotImplemented{}
@@ -559,7 +559,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	for chunksize == 0 {
 		chunksize = e.TransferList.GetChunkSize(uploadID)
 		if chunksize == 0 {
-			eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart: waiting for first chunk [object: %s/%s, processing_part: %d]", bucket, object, partID)
+			eosLogger.Debug(ctx, "PutObjectPart: waiting for first chunk [object: %s/%s, processing_part: %d]", bucket, object, partID)
 			Sleep()
 		}
 	}
@@ -568,7 +568,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	e.TransferList.AddToSize(uploadID, info.Size)
 
 	offset := chunksize * int64(partID-1)
-	eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart staging transfer [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
+	eosLogger.Debug(ctx, "PutObjectPart staging transfer [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
 	stagepath := e.TransferList.GetStagePath(uploadID)
 	absstagepath := e.stage + "/" + stagepath
 
@@ -577,17 +577,17 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	}
 	f, err := os.OpenFile(absstagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	_, err = f.Seek(offset, 0)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	_, err = io.Copy(f, data.Reader)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	f.Close()
@@ -595,7 +595,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	transfer := e.TransferList.GetTransfer(uploadID)
 	for {
 		if transfer == nil {
-			eosLogger.Error(ctx, "PutObjectPartStaging", nil, "PutObjectPart: Invalid transfer [uploadID: %s]", uploadID)
+			eosLogger.Error(ctx, nil, "PutObjectPart: Invalid transfer [uploadID: %s]", uploadID)
 			break
 		} else {
 			transfer.RLock()
@@ -604,19 +604,19 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 			if md5PartID == partID {
 				break
 			}
-			eosLogger.Debug(ctx, "PutObjectPartStaging", "PutObjectPart: waiting for part [uploadID: %s, md5PartID: %d, currentPart: %d]", uploadID, md5PartID, partID)
+			eosLogger.Debug(ctx, "PutObjectPart: waiting for part [uploadID: %s, md5PartID: %d, currentPart: %d]", uploadID, md5PartID, partID)
 		}
 		Sleep()
 	}
 
 	f, err = os.OpenFile(absstagepath+"/file", os.O_RDONLY, 0600)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	_, err = f.Seek(offset, 0)
 	if err != nil {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	transfer.Lock()
@@ -624,7 +624,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	transfer.md5PartID++
 	transfer.Unlock()
 	if err != nil && err != io.EOF {
-		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	f.Close()
@@ -648,7 +648,7 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 
 	if partID == 1 {
 		if info.Size < 1 {
-			eosLogger.Error(ctx, "PutObjectPartXrootd", err, "PutObjectPart received 0 bytes in the buffer. [object: %s/%s, uploadID: %d]", bucket, object, partID)
+			eosLogger.Error(ctx, err, "PutObjectPart received 0 bytes in the buffer. [object: %s/%s, uploadID: %d]", bucket, object, partID)
 			e.TransferList.SetFirstByte(uploadID, 0)
 		} else {
 			e.TransferList.SetFirstByte(uploadID, buf[0])
@@ -660,7 +660,7 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 			if chunksize != 0 {
 				break
 			}
-			eosLogger.Debug(ctx, "PutObjectPartXrootd", "PutObjectPart: waiting for first chunk [object: %s/%s, processing_part: %d]", bucket, object, partID)
+			eosLogger.Debug(ctx, "PutObjectPart: waiting for first chunk [object: %s/%s, processing_part: %d]", bucket, object, partID)
 			Sleep()
 		}
 	}
@@ -670,7 +670,7 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 	chunksize := e.TransferList.GetChunkSize(uploadID)
 
 	offset := chunksize * int64(partID-1)
-	eosLogger.Debug(ctx, "PutObjectPartXrootd", "PutObjectPart offset [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
+	eosLogger.Debug(ctx, "PutObjectPart offset [object: %s/%s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
 
 	go func() {
 		err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, offset, offset+info.Size, "0", buf)
@@ -679,7 +679,7 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 	transfer := e.TransferList.GetTransfer(uploadID)
 	for {
 		if transfer == nil {
-			eosLogger.Error(ctx, "PutObjectPartXrootd", nil, "PutObjectPart: Invalid transfer [uploadID: %s]", uploadID)
+			eosLogger.Error(ctx, nil, "PutObjectPart: Invalid transfer [uploadID: %s]", uploadID)
 			break
 		} else {
 			transfer.RLock()
@@ -688,7 +688,7 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 			if md5PartID == partID {
 				break
 			}
-			eosLogger.Debug(ctx, "PutObjectPartXrootd", "PutObjectPart: waiting for part [uploadID: %s, md5PartID: %d, currentPart: %d]", uploadID, md5PartID, partID)
+			eosLogger.Debug(ctx, "PutObjectPart: waiting for part [uploadID: %s, md5PartID: %d, currentPart: %d]", uploadID, md5PartID, partID)
 		}
 		Sleep()
 	}
@@ -716,7 +716,7 @@ func (e *eosObjects) CompleteMultipartUpload(ctx context.Context, bucket, object
 // CompleteMultipartUploadStaging
 func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket, object, uploadID string, uploadedParts []minio.CompletePart, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	size := e.TransferList.GetSize(uploadID)
-	eosLogger.Stat(ctx, "CompleteMultipartUpload", "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d]", uploadID, size)
+	eosLogger.Stat(ctx, "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d]", uploadID, size)
 
 	for {
 		transfer := e.TransferList.GetTransfer(uploadID)
@@ -725,7 +725,7 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 			if transfer.md5PartID == transfer.partsCount+1 {
 				break
 			}
-			eosLogger.Debug(ctx, "CompleteMultipartUploadStaging", "CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
+			eosLogger.Debug(ctx, "CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
 			transfer.RUnlock()
 		}
 		Sleep()
@@ -736,7 +736,7 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 	contenttype := e.TransferList.GetContentType(uploadID)
 	stagepath := e.TransferList.GetStagePath(uploadID)
 
-	eosLogger.Debug(ctx, "CompleteMultipartUploadStaging", "CompleteMultipartUpload: [uploadID: %s, etag: %s]", uploadID, etag)
+	eosLogger.Debug(ctx, "CompleteMultipartUpload: [uploadID: %s, etag: %s]", uploadID, etag)
 
 	objInfo = minio.ObjectInfo{
 		Bucket:      bucket,
@@ -750,7 +750,7 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 
 	err = e.FileSystem.Touch(ctx, uploadID, size)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
 		return objInfo, err
 	}
 
@@ -766,12 +766,12 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 
 	err = e.FileSystem.SetETag(ctx, uploadID, etag)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, contenttype)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadStaging", err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 
@@ -786,7 +786,7 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 	size := transfer.size
 	firstByte := transfer.firstByte
 	transfer.RUnlock()
-	eosLogger.Stat(ctx, "CompleteMultipartUpload", "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d, firstByte: %d, useragent: %s]", uploadID, size, firstByte, reqInfo.UserAgent)
+	eosLogger.Stat(ctx, "S3cmd: CompleteMultipartUpload: [uploadID: %s, size: %d, firstByte: %d, useragent: %s]", uploadID, size, firstByte, reqInfo.UserAgent)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
@@ -797,7 +797,7 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 		if transfer.md5PartID == transfer.partsCount+1 {
 			break
 		}
-		eosLogger.Debug(ctx, "CompleteMultipartUploadXrootd", "CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
+		eosLogger.Debug(ctx, "CompleteMultipartUpload: waiting for all md5Parts [uploadID: %s, total_parts: %d, remaining: %d]", uploadID, transfer.partsCount, transfer.partsCount+1-transfer.md5PartID)
 		transfer.RUnlock()
 		Sleep()
 	}
@@ -805,7 +805,7 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 	etag := transfer.GetETag()
 	contenttype := transfer.GetContentType()
 
-	eosLogger.Debug(ctx, "CompleteMultipartUploadXrootd", "CompleteMultipartUpload: [uploadID: %s, etag: %s]", uploadID, etag)
+	eosLogger.Debug(ctx, "CompleteMultipartUpload: [uploadID: %s, etag: %s]", uploadID, etag)
 
 	objInfo = minio.ObjectInfo{
 		Bucket:      bucket,
@@ -822,7 +822,7 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 	transfer.RUnlock()
 	err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, 0, size, "1", firstbyte)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadXrootd", err, "ERROR: CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 
@@ -830,12 +830,12 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 
 	err = e.FileSystem.SetETag(ctx, uploadID, etag)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadXrootd", err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, contenttype)
 	if err != nil {
-		eosLogger.Error(ctx, "CompleteMultipartUploadXrootd", err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 
@@ -846,25 +846,25 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, uploadID string, objInfo minio.ObjectInfo) error {
 	reqInfo := logger.GetReqInfo(ctx)
 	fullstagepath := e.stage + "/" + stagepath + "/file"
-	eosLogger.Debug(ctx, "TransferFromStaging", "CompleteMultipartUpload: xrdcp: [stagepath: %s, uploadIDpath: %s, size: %d, useragent: %s]", fullstagepath, uploadID+".minio.sys", objInfo.Size, reqInfo.UserAgent)
+	eosLogger.Debug(ctx, "CompleteMultipartUpload: xrdcp: [stagepath: %s, uploadIDpath: %s, size: %d, useragent: %s]", fullstagepath, uploadID+".minio.sys", objInfo.Size, reqInfo.UserAgent)
 	err := e.FileSystem.Xrdcp.Put(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
 	if err != nil {
-		eosLogger.Error(ctx, "TransferFromStaging", err, "ERROR: CompleteMultipartUpload: xrdcp: [uploadID: %s, UserAgent: %s, error: %+v]", uploadID, reqInfo.UserAgent, err)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: xrdcp: [uploadID: %s, UserAgent: %s, error: %+v]", uploadID, reqInfo.UserAgent, err)
 		return err
 	}
 	err = e.FileSystem.Rename(ctx, uploadID+".minio.sys", uploadID)
 	if err != nil {
-		eosLogger.Error(ctx, "TransferFromStaging", err, "ERROR: CompleteMultipartUpload: EOSrename: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSrename: [uploadID: %s, error: %+v]", uploadID, err)
 		return err
 	}
 	err = e.FileSystem.SetETag(ctx, uploadID, objInfo.ETag)
 	if err != nil {
-		eosLogger.Error(ctx, "TransferFromStaging", err, "ERROR: CompleteMultipartUpload: EOSsetETag: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSsetETag: [uploadID: %s, error: %+v]", uploadID, err)
 		return err
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, objInfo.ContentType)
 	if err != nil {
-		eosLogger.Error(ctx, "TransferFromStaging", err, "ERROR: CompleteMultipartUpload: EOSsetContentType: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSsetContentType: [uploadID: %s, error: %+v]", uploadID, err)
 		return err
 	}
 
@@ -878,7 +878,7 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 
 //AbortMultipartUpload
 func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, uploadID string) (err error) {
-	eosLogger.Stat(ctx, "AbortMultipartUpload", "S3cmd: AbortMultipartUpload: [object: %s/%s, uploadID: %s]", bucket, object, uploadID)
+	eosLogger.Stat(ctx, "S3cmd: AbortMultipartUpload: [object: %s/%s, uploadID: %s]", bucket, object, uploadID)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -898,7 +898,7 @@ func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, u
 
 // ListObjectParts
 func (e *eosObjects) ListObjectParts(ctx context.Context, bucket, object, uploadID string, partNumberMarker, maxParts int, options minio.ObjectOptions) (result minio.ListPartsInfo, err error) {
-	eosLogger.Stat(ctx, "ListObjectParts", "S3cmd: ListObjectParts: [uploadID: %s, part: %d, maxParts: %d]", uploadID, partNumberMarker, maxParts)
+	eosLogger.Stat(ctx, "S3cmd: ListObjectParts: [uploadID: %s, part: %d, maxParts: %d]", uploadID, partNumberMarker, maxParts)
 
 	result.Bucket = bucket
 	result.Object = object
@@ -941,7 +941,7 @@ func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) m
 
 // ListObjects - lists all blobs in a container filtered by prefix and marker
 func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
-	eosLogger.Stat(ctx, "ListObjects", "S3cmd: ListObjects: [bucket: %s, prefix: %s, marker: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, marker, delimiter, maxKeys)
+	eosLogger.Stat(ctx, "S3cmd: ListObjects: [bucket: %s, prefix: %s, marker: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, marker, delimiter, maxKeys)
 
 	result, err = e.ListObjectsRecurse(ctx, bucket, prefix, marker, delimiter, -1)
 
@@ -963,19 +963,19 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	//sort.SliceStable(result.Objects, func(i, j int) bool { return result.Objects[i].Name < result.Objects[j].Name })
 	//sort.SliceStable(result.Prefixes, func(i, j int) bool { return result.Prefixes[i] < result.Prefixes[j] })
 
-	eosLogger.Debug(ctx, "ListObjects", "ListObjects: Result: %+v", result)
+	eosLogger.Debug(ctx, "ListObjects: Result: %+v", result)
 	return result, err
 }
 
 // ListObjectsRecurse - Recursive function for interating through a directory tree
 func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
-	eosLogger.Debug(ctx, "ListObjectsRecurse", "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %d", bucket, prefix, delimiter, maxKeys)
+	eosLogger.Debug(ctx, "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %d", bucket, prefix, delimiter, maxKeys)
 	isRecursive := (len(delimiter) == 0)
 	prefixIsDir := strings.HasSuffix(prefix, "/")
 
 	// Don't do anything if delimiter and prefix are both slashes
 	if delimiter == "/" && prefix == "/" {
-		eosLogger.Debug(ctx, "ListObjectsRecurse", "Delimiter and prefix are both slash, returning blank result.")
+		eosLogger.Debug(ctx, "Delimiter and prefix are both slash, returning blank result.")
 		return result, nil
 	}
 
@@ -986,14 +986,14 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		path = path + "/"
 	}
 
-	eosLogger.Debug(ctx, "ListObjectsRecurse", "Path after cleaning: path: %s", path)
+	eosLogger.Debug(ctx, "Path after cleaning: path: %s", path)
 
 	// We only want to list the directory and not it's contents if it doesn't end with /
 	if prefix != "" && !isRecursive && !prefixIsDir {
 		if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
 			stat, err := e.FileSystem.DirStat(ctx, path)
 			if err != nil {
-				eosLogger.Error(ctx, "ListObjects", err, "ListObjects: Unable to stat directory [path: %s]", path)
+				eosLogger.Error(ctx, err, "ListObjects: Unable to stat directory [path: %s]", path)
 				return result, err
 			}
 			if stat != nil {
@@ -1031,10 +1031,10 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		// We need to call DirStat() so we don't recurse directories when we don't have to
 		var stat *FileStat
 		if objIsDir {
-			eosLogger.Debug(ctx, "ListObjectsRecurse", "e.FileSystem.DirStat(ctx, %s)", objpath)
+			eosLogger.Debug(ctx, "e.FileSystem.DirStat(ctx, %s)", objpath)
 			stat, err = e.FileSystem.DirStat(ctx, objpath)
 		} else {
-			eosLogger.Debug(ctx, "ListObjectsRecurse", "e.FileSystem.Stat(ctx, %s)", objpath)
+			eosLogger.Debug(ctx, "e.FileSystem.Stat(ctx, %s)", objpath)
 			stat, err = e.FileSystem.Stat(ctx, objpath)
 		}
 
@@ -1060,7 +1060,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					}
 				}
 				if objName != "." {
-					eosLogger.Debug(ctx, "ListObjectsRecurse", "Stat: NewObjectInfo(%s, %s)", bucket, objName)
+					eosLogger.Debug(ctx, "Stat: NewObjectInfo(%s, %s)", bucket, objName)
 					o := e.NewObjectInfo(bucket, objName, stat)
 					result.Objects = append(result.Objects, o)
 				}
@@ -1068,7 +1068,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 			// If there's no delimiter, we need to get information from subdirectories too
 			if isRecursive && stat.IsDir() {
-				eosLogger.Debug(ctx, "ListObjects", "ListObjects: Recursing through %s%s", prefix, obj)
+				eosLogger.Debug(ctx, "ListObjects: Recursing through %s%s", prefix, obj)
 				subdir, err := e.ListObjectsRecurse(ctx, bucket, prefix+obj, marker, delimiter, -1)
 				if err != nil {
 					return result, err
@@ -1078,7 +1078,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 				result.Objects = append(result.Objects, subdir.Objects...)
 			}
 		} else {
-			eosLogger.Error(ctx, "ListObjects", err, "ERROR: ListObjects: unable to stat [objpath: %s]", objpath)
+			eosLogger.Error(ctx, err, "ERROR: ListObjects: unable to stat [objpath: %s]", objpath)
 		}
 	}
 
@@ -1087,7 +1087,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 // ListObjectsV2 - list all blobs in a container filtered by prefix
 func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continuationToken, delimiter string, maxKeys int, fetchOwner bool, startAfter string) (result minio.ListObjectsV2Info, err error) {
-	eosLogger.Stat(ctx, "ListObjectsV2", "S3cmd: ListObjectsV2: [bucket: %s, prefix: %s, continuationToken: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, continuationToken, delimiter, maxKeys)
+	eosLogger.Stat(ctx, "S3cmd: ListObjectsV2: [bucket: %s, prefix: %s, continuationToken: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, continuationToken, delimiter, maxKeys)
 
 	marker := continuationToken
 	if marker == "" {
@@ -1114,43 +1114,43 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 
 // HealFormat - no-op for fs
 func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
-	eosLogger.Stat(ctx, "HealFormat", "S3cmd: HealFormat:")
+	eosLogger.Stat(ctx, "S3cmd: HealFormat:")
 	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
 
 // ReloadFormat - no-op for fs
 func (e *eosObjects) ReloadFormat(ctx context.Context, dryRun bool) error {
-	eosLogger.Stat(ctx, "ReloadFormat", "S3cmd: ReloadFormat:")
+	eosLogger.Stat(ctx, "S3cmd: ReloadFormat:")
 	return minio.NotImplemented{}
 }
 
 // ListObjectsHeal - list all objects to be healed.
 func (e *eosObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi minio.ListObjectsInfo, err error) {
-	eosLogger.Stat(ctx, "ListObjectsHeal", "S3cmd: ListObjectsHeal:")
+	eosLogger.Stat(ctx, "S3cmd: ListObjectsHeal:")
 	return loi, minio.NotImplemented{}
 }
 
 // HealObject - no-op for fs.
 func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool, remove bool, scanMode madmin.HealScanMode) (results madmin.HealResultItem, err error) {
-	eosLogger.Stat(ctx, "HealObject", "S3cmd: HealObject:")
+	eosLogger.Stat(ctx, "S3cmd: HealObject:")
 	return results, minio.NotImplemented{}
 }
 
 // HealObjects - no-op for fs.
 func (e *eosObjects) HealObjects(ctx context.Context, bucket, prefix string, fn func(string, string) error) (err error) {
-	eosLogger.Stat(ctx, "HealObjects", "S3cmd: HealObjects:")
+	eosLogger.Stat(ctx, "S3cmd: HealObjects:")
 	return minio.NotImplemented{}
 }
 
 // ListBucketsHeal - list all buckets to be healed
 func (e *eosObjects) ListBucketsHeal(ctx context.Context) ([]minio.BucketInfo, error) {
-	eosLogger.Stat(ctx, "ListBucketsHeal", "S3cmd: ListBucketsHeal:")
+	eosLogger.Stat(ctx, "S3cmd: ListBucketsHeal:")
 	return []minio.BucketInfo{}, minio.NotImplemented{}
 }
 
 // HealBucket - heals inconsistent buckets and bucket metadata on all sets.
 func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool, remove bool) (results madmin.HealResultItem, err error) {
-	eosLogger.Stat(ctx, "HealBucket", "S3cmd: HealBucket:")
+	eosLogger.Stat(ctx, "S3cmd: HealBucket:")
 	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
 
