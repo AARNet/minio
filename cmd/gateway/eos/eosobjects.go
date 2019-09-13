@@ -1056,7 +1056,6 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					// Add the object's directory to prefixes
 					objdir := PathDir(objprefix)
 					if objdir != "" && objdir != "." && objdir != "/" && !isRecursive && objdir != prefix {
-						eosLogger.Info(ctx, "Adding prefix [objdir: %s, prefix: %s]", objdir, prefix)
 						result.Prefixes = append(result.Prefixes, objdir)
 					}
 				}
