@@ -623,7 +623,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	_, err = io.CopyN(transfer.md5, f, chunksize)
 	transfer.md5PartID++
 	transfer.Unlock()
-	if err != nil {
+	if err != nil && err != io.EOF {
 		eosLogger.Error(ctx, "PutObjectPartStaging", err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
 		return info, err
 	}
@@ -982,6 +982,10 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	// Get a list of objects in the directory
 	// or the single object if it's not a directory
 	path := PathJoin(bucket, prefix)
+	if prefix == "" {
+		path = path + "/"
+	}
+
 	eosLogger.Debug(ctx, "ListObjectsRecurse", "Path after cleaning: path: %s", path)
 
 	// We only want to list the directory and not it's contents if it doesn't end with /
