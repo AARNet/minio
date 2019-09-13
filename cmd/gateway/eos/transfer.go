@@ -112,3 +112,17 @@ func (mp *Transfer) IncrementPartsCount() {
 	mp.partsCount++
 	mp.Unlock()
 }
+
+// GetMD5PartID -
+func (mp *Transfer) GetMD5PartID() (size int) {
+	mp.RLock()
+	defer mp.RUnlock()
+	return mp.md5PartID
+}
+
+// IncrementMD5PartID -
+func (mp *Transfer) IncrementMD5PartID() {
+	mp.Lock()
+	mp.md5PartID++
+	mp.Unlock()
+}
