@@ -628,7 +628,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		return info, err
 	}
 	transfer.Lock()
-	bytesMD5, err := io.CopyN(transfer.md5, f, bytesWritten)
+	_, err = io.CopyN(transfer.md5, f, bytesWritten)
 	transfer.Unlock()
 	if err != nil && err != io.EOF {
 		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
