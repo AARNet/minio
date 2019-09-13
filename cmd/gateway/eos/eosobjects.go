@@ -585,7 +585,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
-	_, err = io.Copy(f, data.Reader)
+	bytesWritten, err := io.Copy(f, data.Reader)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
 		return info, err
@@ -620,7 +620,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		return info, err
 	}
 	transfer.Lock()
-	_, err = io.CopyN(transfer.md5, f, chunksize)
+	_, err = io.CopyN(transfer.md5, f, bytesWritten)
 	transfer.md5PartID++
 	transfer.Unlock()
 	if err != nil && err != io.EOF {
@@ -1041,7 +1041,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		if stat != nil {
 			objName := PathJoin(objprefix, obj)
 			// Directories get added to prefixes, files to objects.
-			if stat.IsDir() {
+			if stat.IsDir() && objName != prefix {
 				if !isRecursive {
 					result.Prefixes = append(result.Prefixes, objName)
 				}
@@ -1055,7 +1055,8 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					// Don't add prefix since it'll be in the prefix list
 					// Add the object's directory to prefixes
 					objdir := PathDir(objprefix)
-					if objdir != "" && objdir != "." && objdir != "/" && !isRecursive {
+					if objdir != "" && objdir != "." && objdir != "/" && !isRecursive && objdir != prefix {
+						eosLogger.Info(ctx, "Adding prefix [objdir: %s, prefix: %s]", objdir, prefix)
 						result.Prefixes = append(result.Prefixes, objdir)
 					}
 				}
