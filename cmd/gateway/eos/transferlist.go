@@ -138,6 +138,23 @@ func (p *TransferList) IncrementPartsCount(id string) {
 	}
 }
 
+// GetMD5PartID -
+func (p *TransferList) GetMD5PartID(id string) int {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		return transfer.GetMD5PartID()
+	}
+	return 0
+}
+
+// IncrementMD5PartID -
+func (p *TransferList) IncrementMD5PartID(id string) {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		transfer.IncrementMD5PartID()
+	}
+}
+
 // AddToSize -
 func (p *TransferList) AddToSize(id string, size int64) {
 	transfer := p.GetTransfer(id)
