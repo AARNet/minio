@@ -583,12 +583,12 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	if _, err := os.Stat(absstagepath); os.IsNotExist(err) {
 		_ = os.MkdirAll(absstagepath, 0700)
 	}
-	f, err := os.OpenFile(absstagepath+"/file", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(absstagepath+"/file", os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
-	_, err = f.Seek(offset+1, 0)
+	_, err = f.Seek(offset, 0)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
@@ -617,7 +617,8 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		Sleep()
 	}
 
-	f, err = os.OpenFile(absstagepath+"/file", os.O_RDONLY, 0600)
+	// Open the file so we can read the same bytes into the md5 buffer
+	f, err = os.Open(absstagepath + "/file")
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
