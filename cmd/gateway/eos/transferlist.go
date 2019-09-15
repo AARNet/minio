@@ -76,6 +76,24 @@ func (p *TransferList) SetChunkSize(id string, size int64) {
 	}
 }
 
+// GetEtag -
+func (p *TransferList) GetEtag(id string) (etag string) {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		etag = transfer.GetETag()
+	}
+	return etag
+}
+
+// GetContentType -
+func (p *TransferList) GetContentType(id string) (etag string) {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		etag = transfer.GetContentType()
+	}
+	return etag
+}
+
 // GetChunkSize -
 func (p *TransferList) GetChunkSize(id string) (size int64) {
 	transfer := p.GetTransfer(id)
@@ -94,11 +112,20 @@ func (p *TransferList) GetStagePath(id string) (stage string) {
 	return stage
 }
 
+// GetParts -
+func (p *TransferList) GetParts(id string) map[int]minio.PartInfo {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		return transfer.GetParts()
+	}
+	return nil
+}
+
 // GetPartsCount -
 func (p *TransferList) GetPartsCount(id string) int {
 	transfer := p.GetTransfer(id)
 	if transfer != nil {
-		transfer.GetPartsCount()
+		return transfer.GetPartsCount()
 	}
 	return 0
 }
@@ -111,12 +138,38 @@ func (p *TransferList) IncrementPartsCount(id string) {
 	}
 }
 
+// GetMD5PartID -
+func (p *TransferList) GetMD5PartID(id string) int {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		return transfer.GetMD5PartID()
+	}
+	return 0
+}
+
+// IncrementMD5PartID -
+func (p *TransferList) IncrementMD5PartID(id string) {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		transfer.IncrementMD5PartID()
+	}
+}
+
 // AddToSize -
 func (p *TransferList) AddToSize(id string, size int64) {
 	transfer := p.GetTransfer(id)
 	if transfer != nil {
 		transfer.AddToSize(size)
 	}
+}
+
+// GetSize -
+func (p *TransferList) GetSize(id string) int64 {
+	transfer := p.GetTransfer(id)
+	if transfer != nil {
+		return transfer.GetSize()
+	}
+	return 0
 }
 
 // TransferExists checks to see if the transfer exists in the list
@@ -127,4 +180,15 @@ func (p *TransferList) TransferExists(id string) bool {
 		return true
 	}
 	return false
+}
+
+// WaitForTransfer ...
+func (p *TransferList) WaitForTransfer(uploadID string) {
+	for { // TODO: Fix this infinite loop.
+		parts := p.GetParts(uploadID)
+		if parts != nil {
+			break
+		}
+		Sleep()
+	}
 }

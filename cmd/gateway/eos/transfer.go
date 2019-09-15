@@ -57,6 +57,13 @@ func (mp *Transfer) GetContentType() string {
 	return mp.contenttype
 }
 
+// GetSize ...
+func (mp *Transfer) GetSize() int64 {
+	mp.RLock()
+	defer mp.RUnlock()
+	return mp.size
+}
+
 // GetETag returns the ETag for the transfer
 func (mp *Transfer) GetETag() string {
 	mp.RLock()
@@ -103,5 +110,19 @@ func (mp *Transfer) GetChunkSize() (size int64) {
 func (mp *Transfer) IncrementPartsCount() {
 	mp.Lock()
 	mp.partsCount++
+	mp.Unlock()
+}
+
+// GetMD5PartID -
+func (mp *Transfer) GetMD5PartID() (size int) {
+	mp.RLock()
+	defer mp.RUnlock()
+	return mp.md5PartID
+}
+
+// IncrementMD5PartID -
+func (mp *Transfer) IncrementMD5PartID() {
+	mp.Lock()
+	mp.md5PartID++
 	mp.Unlock()
 }

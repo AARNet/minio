@@ -39,31 +39,45 @@ type LogEntry struct {
 var eosLogger eosLog
 
 // Debug -
-func (e *eosLog) Debug(ctx context.Context, method string, messagefmt string, args ...interface{}) {
+func (e *eosLog) Debug(ctx context.Context, messagefmt string, args ...interface{}) {
 	if LogLevelDebug >= MaxLogLevel {
-		e.Log(ctx, LogLevelDebug, method, fmt.Sprintf(messagefmt, args...), nil)
+		methodName := e.GetFunctionName()
+		e.Log(ctx, LogLevelDebug, methodName, fmt.Sprintf(messagefmt, args...), nil)
 	}
 }
 
 // Error -
-func (e *eosLog) Error(ctx context.Context, method string, err error, messagefmt string, args ...interface{}) {
+func (e *eosLog) Error(ctx context.Context, err error, messagefmt string, args ...interface{}) {
 	if LogLevelError >= MaxLogLevel {
-		e.Log(ctx, LogLevelError, method, fmt.Sprintf(messagefmt, args...), err)
+		methodName := e.GetFunctionName()
+		e.Log(ctx, LogLevelError, methodName, fmt.Sprintf(messagefmt, args...), err)
 	}
 }
 
 // Info -
-func (e *eosLog) Info(ctx context.Context, method string, messagefmt string, args ...interface{}) {
+func (e *eosLog) Info(ctx context.Context, messagefmt string, args ...interface{}) {
 	if LogLevelInfo >= MaxLogLevel {
-		e.Log(ctx, LogLevelInfo, method, fmt.Sprintf(messagefmt, args...), nil)
+		methodName := e.GetFunctionName()
+		e.Log(ctx, LogLevelInfo, methodName, fmt.Sprintf(messagefmt, args...), nil)
 	}
 }
 
 // Stat -
-func (e *eosLog) Stat(ctx context.Context, method string, messagefmt string, args ...interface{}) {
+func (e *eosLog) Stat(ctx context.Context, messagefmt string, args ...interface{}) {
 	if LogLevelStat >= MaxLogLevel {
-		e.Log(ctx, LogLevelStat, method, fmt.Sprintf(messagefmt, args...), nil)
+		methodName := e.GetFunctionName()
+		e.Log(ctx, LogLevelStat, methodName, fmt.Sprintf(messagefmt, args...), nil)
 	}
+}
+
+// GetFunctionName gets the name of the function that called Debug/Error/Info/Stat
+func (e *eosLog) GetFunctionName() string {
+	pc := make([]uintptr, 15)
+	n := runtime.Callers(3, pc)
+	frames := runtime.CallersFrames(pc[:n])
+	frame, _ := frames.Next()
+	frame, _ = frames.Next() // Since this is called by a log function, it's 2 frames up from where we are
+	return filepath.Base(frame.Function)
 }
 
 // Startup -
@@ -73,6 +87,7 @@ func (e *eosLog) Startup(messagefmt string, args ...interface{}) {
 
 // Log actually logs the message
 func (e *eosLog) Log(ctx context.Context, level int, method string, message string, err error) {
+
 	var levelString string
 	switch level {
 	case LogLevelError:
@@ -83,11 +98,13 @@ func (e *eosLog) Log(ctx context.Context, level int, method string, message stri
 		levelString = "INFO"
 	}
 
+	format := "2006-01-02 15:04:05.00"
 	if level <= MaxLogLevel || level == LogLevelStat {
 		req := logger.GetReqInfo(ctx)
 		entry := &LogEntry{
-			Level:      levelString,
-			Time:       time.Now().UTC().Format(time.RFC3339Nano),
+			Level: levelString,
+			Time:  time.Now().UTC().Format(format),
+			//Time:       time.Now().UTC().Format(time.RFC3339Nano),
 			Method:     method,
 			Message:    message,
 			RequestID:  req.RequestID,
