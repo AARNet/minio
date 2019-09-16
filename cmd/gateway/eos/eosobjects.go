@@ -31,13 +31,14 @@ import (
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
-	path         string
-	hookurl      string
-	stage        string
-	readonly     bool
-	validbuckets bool
-	TransferList *TransferList
-	FileSystem   *eosFS
+	path              string
+	hookurl           string
+	stage             string
+	foregroundStaging bool
+	readonly          bool
+	validbuckets      bool
+	TransferList      *TransferList
+	FileSystem        *eosFS
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -773,7 +774,7 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 
 	// Upload the transfer to EOS in the background
 	reqInfo := logger.GetReqInfo(ctx)
-	if strings.HasPrefix(reqInfo.UserAgent, "rclone") {
+	if strings.HasPrefix(reqInfo.UserAgent, "rclone") || e.foregroundStaging {
 		_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
 		e.TransferList.DeleteTransfer(uploadID)
 	} else {

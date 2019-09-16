@@ -89,6 +89,11 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		httphost = os.Getenv("EOS") + ":8000"
 	}
 
+	foregroundStaging := false
+	if os.Getenv("FOREGROUND_STAGING_TRANSFER") == "true" {
+		foregroundStaging = true
+	}
+
 	eosLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
 	eosLogger.Startup("EOS HTTP URL: %s", httphost)
 	eosLogger.Startup("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
@@ -97,6 +102,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	eosLogger.Startup("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
 	eosLogger.Startup("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
 	eosLogger.Startup("EOS READ METHOD: %s", readmethod)
+	eosLogger.Startup("EOS FOREGROUND TRANSFER FROM STAGING: %t", foregroundStaging)
 	eosLogger.Startup("EOS LOG LEVEL: %d", loglevel)
 
 	// Init filesystem
@@ -124,13 +130,14 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	// and go
 	return &eosObjects{
-		path:         os.Getenv("VOLUME_PATH"),
-		hookurl:      os.Getenv("HOOKSURL"),
-		stage:        stage,
-		validbuckets: validbuckets,
-		TransferList: NewTransferList(),
-		FileSystem:   filesystem,
-		readonly:     readonly,
+		path:              os.Getenv("VOLUME_PATH"),
+		hookurl:           os.Getenv("HOOKSURL"),
+		stage:             stage,
+		validbuckets:      validbuckets,
+		TransferList:      NewTransferList(),
+		FileSystem:        filesystem,
+		readonly:          readonly,
+		foregroundStaging: foregroundStaging,
 	}, nil
 }
 
