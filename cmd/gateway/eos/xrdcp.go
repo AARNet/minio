@@ -133,16 +133,13 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 
 	parsedobjects := make([]*FileStat, 0)
 	var object string
-	reader := bufio.NewReader(pipe)
-	for err == nil {
-		object, err = reader.ReadString('\n')
-		// First result is prefixed with &mgm.proc.stdout=, so strip it
-		if strings.Index(object, "&mgm.proc.stdout=") == 0 {
-			object = object[len("&mgm.proc.stdout="):]
-		}
+	reader := bufio.NewScanner(pipe)
+	for reader.Scan() {
+		object = reader.Text()
+		object = strings.TrimPrefix(object, "&mgm.proc.stdout=")
 
 		// Once you get &mgm.proc.stderr=, you have hit the end
-		if strings.Index(object, "&mgm.proc.stderr=") == 0 {
+		if strings.HasPrefix(object, "&mgm.proc.stderr=") {
 			errormsg := strings.TrimSpace(object[len("&mgm.proc.stderr="):])
 			if errormsg != "" && errormsg != "&mgm.proc.retc=0" {
 				return nil, errors.New(errormsg)
