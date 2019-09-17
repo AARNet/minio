@@ -872,7 +872,6 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 		return err
 	}
 	err = e.FileSystem.SetETag(ctx, uploadID, objInfo.ETag)
-	eosLogger.Info(ctx, "Setting Etag [etag: %s]", objInfo.ETag)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSsetETag: [uploadID: %s]", uploadID)
 		return err
