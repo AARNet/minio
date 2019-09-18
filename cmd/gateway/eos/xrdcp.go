@@ -122,7 +122,7 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 	}
 	eosLogger.Stat(ctx, "EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
 
 	if err := cmd.Start(); err != nil {
