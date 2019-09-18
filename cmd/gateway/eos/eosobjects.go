@@ -957,9 +957,9 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	eosLogger.Stat(ctx, "S3cmd: ListObjects: [bucket: %s, prefix: %s, marker: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, marker, delimiter, maxKeys)
 
 	result, err = e.ListObjectsRecurse(ctx, bucket, prefix, marker, delimiter, -1)
-
-	// It's never truncated.
-	result.IsTruncated = false
+	if err != nil {
+		return result, err
+	}
 
 	// Need unique prefixes
 	trackUniq := make(map[string]bool)
@@ -988,9 +988,14 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 		return result, nil
 	}
 
+	// It's never truncated.
+	result.IsTruncated = false
+
 	// Get a list of objects in the directory
 	// or the single object if it's not a directory
 	path := PathJoin(bucket, prefix)
+
+	// If the prefix is empty, set it to slash so we can list a directory.
 	if prefix == "" {
 		path = path + "/"
 	}
@@ -1019,6 +1024,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	if err != nil {
 		// In case it's trying to list a prefix and it doesn't exist, return an empty result
 		if isRecursive && prefixIsDir && err == errFileNotFound {
+			eosLogger.Error(ctx, err, "File not found when listing directory recursively [path: %s]", path)
 			return result, nil
 		}
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
