@@ -159,6 +159,7 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 
 	eospath, err := e.AbsoluteEOSPath(dirPath)
 	if err != nil {
+		eosLogger.Debug(ctx, "ERROR: Unable to determine absolute path [dirPath: %s]", dirPath)
 		return nil, err
 	}
 
@@ -175,32 +176,32 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, errFileNotFound
 	}
 
-	if len(objects) > 0 {
-		for _, object := range objects {
-			if e.isEOSSysFile(object.Name) {
-				continue
-			}
-			// Skip minio parts
-			if strings.HasSuffix(object.Name, ".minio.sys") {
-				continue
-			}
-			reqStatCache.Write(object.FullPath, object)
+	for _, object := range objects {
+		if e.isEOSSysFile(object.Name) {
+			eosLogger.Debug(ctx, "Skipping EOS System file: %s", object.Name)
+			continue
+		}
+		// Skip minio parts
+		if strings.HasSuffix(object.Name, ".minio.sys") {
+			eosLogger.Debug(ctx, "Skipping MinIO part file: %s", object.Name)
+			continue
+		}
+		reqStatCache.Write(object.FullPath, object)
 
-			// If we find an entry matching the eospath and is a directory, skip it.
-			if !object.File && object.FullPath == strings.TrimSuffix(eospath, "/")+"/" {
-				continue
-			}
+		if object.File {
 			// If we find an entry matching the eospath and it's a file, return it.
-			if object.File && object.FullPath == strings.TrimSuffix(eospath, "/") {
+			if object.FullPath == strings.TrimSuffix(eospath, "/") {
 				eosLogger.Debug(ctx, "Object matches requested path, returning it [object: %s, path: %s]", object.FullPath, eospath)
 				return []string{object.Name}, nil
 			}
-			// Add a slash if it's a directory
-			if object.File {
-				entries = append(entries, object.Name)
-			} else {
-				entries = append(entries, object.Name+"/")
+			entries = append(entries, object.Name)
+		} else {
+			// If we find an entry matching the eospath and is a directory, skip it.
+			if object.FullPath == strings.TrimSuffix(eospath, "/")+"/" {
+				continue
 			}
+			// Add a slash if it's a directory
+			entries = append(entries, object.Name+"/")
 		}
 	}
 
@@ -229,9 +230,11 @@ func (e *eosFS) GetObjectStat(ctx context.Context, eospath string) (stats []*Fil
 
 	// Find is faster for directories
 	if isdir {
+		eosLogger.Debug(ctx, "eosfs.GetObjectStat(%s) -> Find", eospath)
 		return e.Xrdcp.Find(ctx, eospath)
 	}
 
+	eosLogger.Debug(ctx, "eosfs.GetObjectStat(%s) -> FileInfo", eospath)
 	return e.Xrdcp.Fileinfo(ctx, eospath)
 }
 
