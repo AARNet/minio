@@ -120,7 +120,10 @@ func (e *eosLog) Log(ctx context.Context, level int, method string, message stri
 		if err != nil {
 			panic(err)
 		}
-		fmt.Println(string(jsonEntry))
+		// Don't log the LivenessChecks unless we're in Debugging
+		if !(method == "cmd.LivenessCheckHandler" && MaxLogLevel < LogLevelDebug) {
+			fmt.Println(string(jsonEntry))
+		}
 	}
 }
 
