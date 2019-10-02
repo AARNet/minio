@@ -535,28 +535,34 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 }
 
 // PutObjectPart
-func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, data *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
-	eosLogger.Stat(ctx, "S3cmd: PutObjectPart: [bucket: %s//, object: %s, uploadID: %s, partId: %d, size: %d]", bucket, object, uploadID, partID, data.Size())
+func (e *eosObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID string, partID int, r *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
+	eosLogger.Stat(ctx, "S3cmd: PutObjectPart: [bucket: %s//, object: %s, uploadID: %s, partId: %d, size: %d]", bucket, object, uploadID, partID, r.Size())
 
 	if e.readonly {
 		return info, minio.NotImplemented{}
 	}
 
 	if e.stage != "" {
-		return e.PutObjectPartStaging(ctx, bucket, object, uploadID, partID, data, opts)
+		return e.PutObjectPartStaging(ctx, bucket, object, uploadID, partID, r, opts)
 	}
 
-	return e.PutObjectPartXrootd(ctx, bucket, object, uploadID, partID, data, opts)
+	return e.PutObjectPartXrootd(ctx, bucket, object, uploadID, partID, r, opts)
 }
 
 // PutObjectPartStaging stages the part to e.stage before transferring to final location
-func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, uploadID string, partID int, data *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
+func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, uploadID string, partID int, r *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
 	e.TransferList.WaitForTransfer(uploadID)
+	var data = r.Reader
+
+	buf, _ := ioutil.ReadAll(r) // This is a memory hog because it reads the entire chunk into memory
+	hasher := md5.New()
+	hasher.Write([]byte(buf))
+	etag := hex.EncodeToString(hasher.Sum(nil))
 
 	info.PartNumber = partID
 	info.LastModified = minio.UTCNow()
-	info.Size = data.Reader.Size()
-	info.ETag = data.MD5CurrentHexString()
+	info.Size = data.Size()
+	info.ETag = etag
 
 	e.TransferList.AddPartToTransfer(uploadID, partID, info)
 
@@ -568,7 +574,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	for chunksize == 0 {
 		chunksize = e.TransferList.GetChunkSize(uploadID)
 		if chunksize == 0 {
-			eosLogger.Debug(ctx, "PutObjectPart: waiting for first chunk [bucket: %s//, object: %s, processing_part: %d]", bucket, object, partID)
+			eosLogger.Debug(ctx, "PutObjectPart: waiting for first chunk [bucket: %s//, object: %s, processing_part: %d, etag: %s]", bucket, object, partID, info.ETag)
 			Sleep()
 		}
 	}
@@ -577,7 +583,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	e.TransferList.AddToSize(uploadID, info.Size)
 
 	offset := chunksize * int64(partID-1)
-	eosLogger.Debug(ctx, "PutObjectPart staging transfer [bucket: %s//, object: %s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
+	eosLogger.Debug(ctx, "PutObjectPart staging transfer [bucket: %s//, object: %s, partID: %d, offset: %d, etag: %s]", bucket, object, (partID - 1), offset, info.ETag)
 	stagepath := e.TransferList.GetStagePath(uploadID)
 	absstagepath := e.stage + "/" + stagepath
 
@@ -594,7 +600,8 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
-	bytesWritten, err := io.Copy(f, data.Reader)
+	//bytesWritten, err := io.Copy(f, data)
+	bytesWritten, err := f.Write(buf)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
 		return info, err
@@ -630,7 +637,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		return info, err
 	}
 	transfer.Lock()
-	_, err = io.CopyN(transfer.md5, f, bytesWritten)
+	_, err = io.CopyN(transfer.md5, f, int64(bytesWritten))
 	transfer.Unlock()
 	if err != nil && err != io.EOF {
 		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
@@ -644,16 +651,20 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 }
 
 // PutObjectPartXrootd ... uses xrootd
-func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, uploadID string, partID int, data *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
+func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, uploadID string, partID int, r *minio.PutObjReader, opts minio.ObjectOptions) (info minio.PartInfo, err error) {
 	// Wait for transfer to be added to list
 	e.TransferList.WaitForTransfer(uploadID)
+	var data = r.Reader
+
+	buf, _ := ioutil.ReadAll(r) // This is a memory hog because it reads the entire chunk into memory
+	hasher := md5.New()
+	hasher.Write([]byte(buf))
+	etag := hex.EncodeToString(hasher.Sum(nil))
 
 	info.PartNumber = partID
 	info.LastModified = minio.UTCNow()
-	info.Size = data.Reader.Size()
-	info.ETag = data.MD5CurrentHexString()
-
-	buf, _ := ioutil.ReadAll(data) // This is a memory hog because it reads the entire chunk into memory
+	info.Size = data.Size()
+	info.ETag = etag
 
 	e.TransferList.AddPartToTransfer(uploadID, partID, info)
 
@@ -681,7 +692,7 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 	chunksize := e.TransferList.GetChunkSize(uploadID)
 
 	offset := chunksize * int64(partID-1)
-	eosLogger.Debug(ctx, "PutObjectPart offset [bucket: %s//, object: %s, partID: %d, offset: %d]", bucket, object, (partID - 1), offset)
+	eosLogger.Debug(ctx, "PutObjectPart offset [bucket: %s//, object: %s, partID: %d, offset: %d, etag: %s]", bucket, object, (partID - 1), offset, info.ETag)
 
 	go func() {
 		err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, offset, offset+info.Size, "0", buf)
