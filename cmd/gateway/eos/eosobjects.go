@@ -600,7 +600,6 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
-	//bytesWritten, err := io.Copy(f, data)
 	bytesWritten, err := f.Write(buf)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
