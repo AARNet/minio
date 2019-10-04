@@ -559,6 +559,9 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	hasher.Write([]byte(buf))
 	etag := hex.EncodeToString(hasher.Sum(nil))
 
+	//force free hasher
+	hasher = nil
+
 	info.PartNumber = partID
 	info.LastModified = minio.UTCNow()
 	info.Size = data.Size()
@@ -606,6 +609,9 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 		return info, err
 	}
 	f.Close()
+
+	//force free buf
+	buf = nil
 
 	transfer := e.TransferList.GetTransfer(uploadID)
 	for {
@@ -659,6 +665,9 @@ func (e *eosObjects) PutObjectPartXrootd(ctx context.Context, bucket, object, up
 	hasher := md5.New()
 	hasher.Write([]byte(buf))
 	etag := hex.EncodeToString(hasher.Sum(nil))
+
+	//force free hasher
+	hasher = nil
 
 	info.PartNumber = partID
 	info.LastModified = minio.UTCNow()
