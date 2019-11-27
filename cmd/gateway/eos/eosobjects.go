@@ -1103,7 +1103,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 			// If there's no delimiter, we need to get information from subdirectories too
 			if isRecursive && stat.IsDir() {
 				eosLogger.Debug(ctx, "ListObjects: Recursing through %s%s", prefix, obj)
-				subdir, err := e.ListObjectsRecurse(ctx, bucket, prefix+obj, marker, delimiter, -1)
+				subdir, err := e.ListObjectsRecurse(ctx, bucket, PathJoin(prefix, obj), marker, delimiter, -1)
 				if err != nil {
 					return result, err
 				}
