@@ -78,7 +78,7 @@ func (c *StatCache) DeletePath(path string) {
 
 // DeleteObject deletes an object from the StatCache
 func (c *StatCache) DeleteObject(bucket, object string) {
-	path, err := c.AbsoluteEOSPath(bucket + "/" + object)
+	path, err := c.AbsoluteEOSPath(PathJoin(bucket, object))
 	if err == nil {
 		c.DeletePath(path)
 	}
@@ -92,7 +92,7 @@ func (c *StatCache) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	}
 
 	path = strings.Replace(path, "//", "/", -1)
-	eosPath = strings.TrimSuffix(c.path+"/"+path, ".")
+	eosPath = strings.TrimSuffix(PathJoin(c.path, path), ".")
 	eosPath = filepath.Clean(eosPath)
 	return eosPath, nil
 }
