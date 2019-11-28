@@ -1089,9 +1089,9 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 			objName := PathJoin(objprefix, obj)
 			// Directories get added to prefixes, files to objects.
 			if stat.IsDir() && objName != prefix {
-				//				if !isRecursive {
-				result.Prefixes = append(result.Prefixes, objName)
-				//				}
+				if !isRecursive {
+					result.Prefixes = append(result.Prefixes, objName)
+				}
 			} else {
 				if objCount == 1 {
 					// Don't add the object if there is one object and the prefix ends with / (ie. is a dir)
