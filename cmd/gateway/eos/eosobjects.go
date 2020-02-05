@@ -421,7 +421,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		if transfer == nil {
 			break
 		}
-		eosLogger.Info(ctx, "Waiting for upload to complete [uploadID: %s]", path)
+		eosLogger.Debug(ctx, "Waiting for upload to complete [uploadID: %s]", path)
 		Sleep()
 	}
 
