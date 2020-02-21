@@ -460,7 +460,7 @@ func (e *eosObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 		ContentType: stat.ContentType,
 	}
 
-	eosLogger.Debug(ctx, "GetObjectInfo: [path: %s, object: %s, isdir: %s, etag: %s, content-type: %s, err: %s]", path, object, stat.IsDir(), stat.GetETag(), stat.ContentType, err)
+	eosLogger.Debug(ctx, "GetObjectInfo: [path: %s, object: %s, isdir: %t, etag: %s, content-type: %s, err: %s]", path, object, stat.IsDir(), stat.GetETag(), stat.ContentType, err)
 	return objInfo, err
 }
 
@@ -1054,9 +1054,9 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	defer e.FileSystem.DeleteCache(ctx)
 
 	if err != nil {
-		// In case it's trying to list a prefix and it doesn't exist, return an empty result
-		if isRecursive && prefixIsDir && err == errFileNotFound {
-			eosLogger.Error(ctx, err, "File not found when listing directory recursively [path: %s]", path)
+		// We want to return nil error if the file is not found. So we don't break restic and others that expect a certain response
+		if err == errFileNotFound {
+			eosLogger.Error(ctx, err, "File not found [path: %s]", path)
 			return result, nil
 		}
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
