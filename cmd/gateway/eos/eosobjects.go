@@ -260,27 +260,29 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 		return objInfo, minio.NotImplemented{}
 	}
 
-	dir := destBucket + "/" + filepath.Dir(destObject)
-	if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
-		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
-	}
+	if srcpath != destpath {
+		dir := destBucket + "/" + filepath.Dir(destObject)
+		if exists, err := e.FileSystem.FileExists(ctx, dir); !exists && err != nil {
+			e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
+		}
 
-	err = e.FileSystem.Copy(ctx, srcpath, destpath, srcInfo.Size)
-	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
-		return objInfo, err
-	}
+		err = e.FileSystem.Copy(ctx, srcpath, destpath, srcInfo.Size)
+		if err != nil {
+			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
+			return objInfo, err
+		}
 
-	err = e.FileSystem.SetETag(ctx, destpath, srcInfo.ETag)
-	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
-		return objInfo, err
-	}
+		err = e.FileSystem.SetETag(ctx, destpath, srcInfo.ETag)
+		if err != nil {
+			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
+			return objInfo, err
+		}
 
-	err = e.FileSystem.SetContentType(ctx, destpath, srcInfo.ContentType)
-	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
-		return objInfo, err
+		err = e.FileSystem.SetContentType(ctx, destpath, srcInfo.ContentType)
+		if err != nil {
+			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
+			return objInfo, err
+		}
 	}
 
 	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts, 20)
