@@ -283,6 +283,8 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
 			return objInfo, err
 		}
+	} else {
+		eosLogger.Debug(ctx, "CopyObject srcpath==destpath")
 	}
 
 	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts, 20)
