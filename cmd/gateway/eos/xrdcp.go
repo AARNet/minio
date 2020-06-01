@@ -74,7 +74,7 @@ func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, in
 		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
 		return "", 1, err
 	}
-	eosLogger.Stat(ctx, "EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl)
+	eosLogger.Debug(ctx, "EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
@@ -120,7 +120,7 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
 		return nil, err
 	}
-	eosLogger.Stat(ctx, "EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl)
+	eosLogger.Debug(ctx, "EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
@@ -168,7 +168,7 @@ func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) 
 		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
 		return nil, err
 	}
-	eosLogger.Stat(ctx, "EOScmd: xrdcp.FILEINFO: [path: %s, rooturl: %s]", path, rooturl)
+	eosLogger.Debug(ctx, "EOScmd: xrdcp.FILEINFO: [path: %s, rooturl: %s]", path, rooturl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
@@ -287,7 +287,7 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 		return err
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
+	eosLogger.Debug(ctx, "EOScmd: xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
@@ -316,7 +316,7 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 		return err
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: xrdcp.GET: [eosurl: %s]", eosurl)
+	eosLogger.Debug(ctx, "EOScmd: xrdcp.GET: [eosurl: %s]", eosurl)
 
 	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-N", eosurl, "-")
 	var stdout bytes.Buffer

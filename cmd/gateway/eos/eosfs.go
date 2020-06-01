@@ -313,7 +313,7 @@ func (e *eosFS) mkdirWithOption(ctx context.Context, p, option string) error {
 		return err
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: procuser.mkdir [eospath: %s]", eospath)
+	eosLogger.Debug(ctx, "EOScmd: procuser.mkdir [eospath: %s]", eospath)
 	_, m, err := e.MGMcurlWithRetry(ctx, fmt.Sprintf("mgm.cmd=mkdir%s&mgm.path=%s%s", option, url.QueryEscape(eospath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: EOSmkdirWithOption curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
@@ -348,7 +348,7 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 		return err
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: procuser.rm [eospath: "+eospath+"]", nil)
+	eosLogger.Debug(ctx, "EOScmd: procuser.rm [eospath: "+eospath+"]", nil)
 	url := "mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=" + url.QueryEscape(eospath) + e.URLExtras()
 	_, m, err := e.MGMcurlWithRetry(ctx, url)
 	if err != nil {
@@ -378,7 +378,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 	//need to wait for file, it is possible it is uploaded via a background job
 	fileinfourl := "mgm.cmd=fileinfo&mgm.path=" + url.QueryEscape(eossrcpath) + e.URLExtras()
 	for {
-		eosLogger.Stat(ctx, "EOScmd: procuser.fileinfo [eospath: %s]", eossrcpath)
+		eosLogger.Debug(ctx, "EOScmd: procuser.fileinfo [eospath: %s]", eossrcpath)
 		_, m, err := e.MGMcurlWithRetry(ctx, fileinfourl)
 		if err == nil && interfaceToInt64(m["size"]) >= size {
 			break
@@ -387,7 +387,7 @@ func (e *eosFS) Copy(ctx context.Context, src, dst string, size int64) error {
 		SleepMs(SleepLong)
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: procuser.file.copy [src: "+eossrcpath+", dst: "+eosdstpath+"]", nil)
+	eosLogger.Debug(ctx, "EOScmd: procuser.file.copy [src: "+eossrcpath+", dst: "+eosdstpath+"]", nil)
 	_, m, err := e.MGMcurlWithRetry(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=copy&mgm.file.option=f&mgm.path=%s&mgm.file.target=%s%s", url.QueryEscape(eossrcpath), url.QueryEscape(eosdstpath), e.URLExtras()))
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: EOScopy curl to MGM failed [src: %s, dst: %s, error: %+v]", eossrcpath, eosdstpath, err)
@@ -412,7 +412,7 @@ func (e *eosFS) Touch(ctx context.Context, p string, size int64) error {
 		return err
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: procuser.file.touch [eospath: %s]", eospath)
+	eosLogger.Debug(ctx, "EOScmd: procuser.file.touch [eospath: %s]", eospath)
 	_, m, err := e.MGMcurlWithRetry(ctx, fmt.Sprintf("mgm.cmd=file&mgm.subcmd=touch&mgm.path=%s%s&eos.bookingsize=%d", url.QueryEscape(eospath), e.URLExtras(), size))
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: EOStouch curl to MGM failed [eospath: %s, error: %+v]", eospath, err)
@@ -437,7 +437,7 @@ func (e *eosFS) Rename(ctx context.Context, from, to string) error {
 		return err
 	}
 
-	eosLogger.Stat(ctx, "EOScmd: procuser.file.rename [src: "+eosfrompath+", dst: "+eostopath+"]", nil)
+	eosLogger.Debug(ctx, "EOScmd: procuser.file.rename [src: "+eosfrompath+", dst: "+eostopath+"]", nil)
 	renameurl := "mgm.cmd=file&mgm.subcmd=rename&mgm.path=" + url.QueryEscape(eosfrompath) + "&mgm.file.target=" + url.QueryEscape(eostopath) + e.URLExtras()
 	_, m, err := e.MGMcurlWithRetry(ctx, renameurl)
 	if err != nil {
@@ -462,7 +462,7 @@ func (e *eosFS) SetMeta(ctx context.Context, p, key, value string) error {
 	if err != nil {
 		return err
 	}
-	eosLogger.Stat(ctx, "EOScmd: procuser.attr.set [path: "+eospath+", key: "+key+", value: "+value+"]", nil)
+	eosLogger.Debug(ctx, "EOScmd: procuser.attr.set [path: "+eospath+", key: "+key+", value: "+value+"]", nil)
 	cmd := "mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio_" + url.QueryEscape(key) + "&mgm.attr.value=" + url.QueryEscape(value) + "&mgm.path=" + url.QueryEscape(eospath) + e.URLExtras()
 	_, m, err := e.MGMcurlWithRetry(ctx, cmd)
 	if err != nil {
@@ -494,14 +494,14 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 	}
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl := "http://" + e.HTTPHost + eospath
-	eosLogger.Stat(ctx, "EOScmd: webdav.PUT [eosurl: "+eosurl+"]", nil)
+	eosLogger.Debug(ctx, "EOScmd: webdav.PUT [eosurl: "+eosurl+"]", nil)
 
 	maxRetry := 10
 	for retry := 1; retry <= maxRetry; retry++ {
 
 		// SPECIAL CASE = contains a %
 		if strings.IndexByte(p, '%') >= 0 {
-			eosLogger.Stat(ctx, "EOScmd: webdav.PUT : SPECIAL CASE using curl [eosurl: "+eosurl+"]", nil)
+			eosLogger.Debug(ctx, "EOScmd: webdav.PUT : SPECIAL CASE using curl [eosurl: "+eosurl+"]", nil)
 			cmd := exec.Command("curl", "-L", "-X", "PUT", "--data-binary", "@-", "-H", "Remote-User: minio", "-sw", "'%{http_code}'", eosurl)
 			cmd.Stdin = bytes.NewReader(data)
 			stdoutStderr, err := cmd.CombinedOutput()
@@ -566,7 +566,7 @@ func (e *eosFS) xrootdWriteChunk(ctx context.Context, p string, offset, size int
 		return err
 	}
 	eosurl := fmt.Sprintf("root://%s@%s/%s", e.User, e.MGMHost, eospath)
-	eosLogger.Stat(ctx, "EOScmd: xrootd.PUT: [eosurl: %s, offset: %d, size: %d, checksum: %s]", eosurl, offset, size, checksum)
+	eosLogger.Debug(ctx, "EOScmd: xrootd.PUT: [eosurl: %s, offset: %d, size: %d, checksum: %s]", eosurl, offset, size, checksum)
 
 	cmd := exec.CommandContext(ctx, e.Scripts+"/writeChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(size, 10), checksum, e.UID, e.GID)
 	cmd.Stdin = bytes.NewReader(data)
@@ -587,7 +587,7 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	switch e.ReadMethod {
 	case "xrootd":
 		eosurl := fmt.Sprintf("root://%s@%s/%s", e.User, e.MGMHost, eospath)
-		eosLogger.Stat(ctx, "EOScmd: xrootd.GET: [eospath: %s, eosurl: %s]", eospath, eosurl)
+		eosLogger.Debug(ctx, "EOScmd: xrootd.GET: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 		cmd := exec.Command(e.Scripts+"/readChunk.py", eosurl, strconv.FormatInt(offset, 10), strconv.FormatInt(length, 10), e.UID, e.GID)
 		var stderr bytes.Buffer
@@ -608,7 +608,7 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 
 		eospath = strings.Replace(eospath, "%", "%25", -1)
 		eosurl := fmt.Sprintf("http://%s%s", e.HTTPHost, eospath)
-		eosLogger.Stat(ctx, "EOScmd: webdav.GET: [eosurl: %s]", eosurl)
+		eosLogger.Debug(ctx, "EOScmd: webdav.GET: [eosurl: %s]", eosurl)
 
 		client, req, err := e.NewRequest("GET", eosurl, nil)
 		if err != nil {
