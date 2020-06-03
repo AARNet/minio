@@ -1103,13 +1103,6 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					if strings.HasSuffix(prefix, "/") && !strings.HasSuffix(objName, "/") && strings.HasSuffix(prefix, objName) {
 						return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 					}
-
-					// Don't add prefix since it'll be in the prefix list
-					// Add the object's directory to prefixes
-					// objdir := PathDir(objprefix)
-					// if objdir != "" && objdir != "." && objdir != "/" && !isRecursive && objdir != prefix {
-						// result.Prefixes = append(result.Prefixes, objdir)
-					// }
 				}
 				if objName != "." {
 					eosLogger.Debug(ctx, "Stat: NewObjectInfo(%s, %s)", bucket, objName)
