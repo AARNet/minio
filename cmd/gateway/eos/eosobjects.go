@@ -1068,6 +1068,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 
 	for _, obj := range objects {
 		objIsDir := strings.HasSuffix(obj, "/")
+		// path, _ = filepath.Split(path)
 		objpath := PathJoin(path, obj)
 		objprefix := prefix
 		objCount := len(objects)
@@ -1101,13 +1102,6 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 					// Don't add the object if there is one object and the prefix ends with / (ie. is a dir)
 					if strings.HasSuffix(prefix, "/") && !strings.HasSuffix(objName, "/") && strings.HasSuffix(prefix, objName) {
 						return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
-					}
-
-					// Don't add prefix since it'll be in the prefix list
-					// Add the object's directory to prefixes
-					objdir := PathDir(objprefix)
-					if objdir != "" && objdir != "." && objdir != "/" && !isRecursive && objdir != prefix {
-						result.Prefixes = append(result.Prefixes, objdir)
 					}
 				}
 				if objName != "." {
