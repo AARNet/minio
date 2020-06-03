@@ -43,6 +43,7 @@ var (
 	errDiskAccessDenied = errors.New("EOS: Disk Access Denied")
 	errFilePathBad      = errors.New("EOS: Bad File Path")
 	errResponseIsNil    = errors.New("EOS: Response body is nil")
+	errIncorrectPutStatusCode  = errors.New("EOS: Statuscode for PUT response was not 201")
 )
 
 // HTTPClient sets up and returns a http.Client
@@ -550,6 +551,9 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 
 		if res.StatusCode != 201 {
 			eosLogger.Debug(ctx, "EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res)
+			if err == nil {
+				err = errIncorrectPutStatusCode
+			}
 			SleepMs(SleepShort)
 			continue
 		}
