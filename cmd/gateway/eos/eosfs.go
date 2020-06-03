@@ -43,6 +43,7 @@ var (
 	errDiskAccessDenied = errors.New("EOS: Disk Access Denied")
 	errFilePathBad      = errors.New("EOS: Bad File Path")
 	errResponseIsNil    = errors.New("EOS: Response body is nil")
+	errIncorrectPutStatusCode  = errors.New("EOS: Statuscode for PUT response was not 201")
 )
 
 // HTTPClient sets up and returns a http.Client
@@ -485,7 +486,7 @@ func (e *eosFS) SetETag(ctx context.Context, p, etag string) error {
 	return e.SetMeta(ctx, p, "etag", etag)
 }
 
-func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
+func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	//curl -L -X PUT -T somefile -H 'Remote-User: minio' -sw '%{http_code}' http://eos:8000/eos-path/somefile
 
 	eospath, err := e.AbsoluteEOSPath(p)
@@ -513,17 +514,18 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 				continue
 			}
 			if strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)) != "'201'" {
+				err = errIncorrectPutStatusCode
 				eosLogger.Error(ctx, nil, "ERROR: incorrect response from curl [eosurl: %s]", eosurl)
 				eosLogger.Debug(ctx, "DEBUG: [eosurl: %s, stderr: %s]", eosurl, strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
 				Sleep()
 				continue
 			}
-			return err
+			break
 		}
 
 		client, req, err := e.NewRequest("PUT", eosurl, bytes.NewReader(data))
 		if err != nil {
-			return err
+			break
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = int64(len(data))
@@ -550,11 +552,10 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) error {
 
 		if res.StatusCode != 201 {
 			eosLogger.Debug(ctx, "EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res)
+			err = errIncorrectPutStatusCode
 			SleepMs(SleepShort)
 			continue
 		}
-
-		return err
 	}
 	eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
 	return err
