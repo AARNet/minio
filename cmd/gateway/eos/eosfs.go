@@ -499,7 +499,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 
 	maxRetry := 10
 	for retry := 1; retry <= maxRetry; retry++ {
-
+        err = nil
 		// SPECIAL CASE = contains a %
 		if strings.IndexByte(p, '%') >= 0 {
 			eosLogger.Debug(ctx, "EOScmd: webdav.PUT : SPECIAL CASE using curl [eosurl: "+eosurl+"]", nil)
@@ -557,7 +557,9 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 			continue
 		}
 	}
-	eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
+	if err != nil {
+	    eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
+	}
 	return err
 }
 
