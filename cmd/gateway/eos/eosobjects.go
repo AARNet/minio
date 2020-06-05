@@ -327,16 +327,18 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	err = e.FileSystem.Put(ctx, objectpath, buf)
 	if err != nil {
 		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
+		objInfo.ETag = defaultETag
 		return objInfo, err
 	}
 	err = e.FileSystem.SetETag(ctx, objectpath, etag)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: PUT.SetETag: %+v", err)
+		objInfo.ETag = defaultETag
 		return objInfo, err
 	}
 	err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
+		eosLogger.Error(ctx, err, "ERROR: PUT.SetContentType: %+v", err)
 		return objInfo, err
 	}
 
