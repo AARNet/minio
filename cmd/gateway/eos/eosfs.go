@@ -559,6 +559,8 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	}
 	if err != nil {
 	    eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
+	    // remove the 0 byte file
+            _ = e.rm(ctx, p)
 	}
 	return err
 }
