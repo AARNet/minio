@@ -493,14 +493,15 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	if err != nil {
 		return err
 	}
+
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl := "http://" + e.HTTPHost + eospath
 	eosLogger.Debug(ctx, "EOScmd: webdav.PUT [eosurl: "+eosurl+"]", nil)
 
 	maxRetry := 10
 	for retry := 1; retry <= maxRetry; retry++ {
-        err = nil
-		// SPECIAL CASE = contains a %
+		err = nil
+		// If it contains %, use curl (apparently the go http client doesn't do this well)
 		if strings.IndexByte(p, '%') >= 0 {
 			eosLogger.Debug(ctx, "EOScmd: webdav.PUT : SPECIAL CASE using curl [eosurl: "+eosurl+"]", nil)
 			cmd := exec.Command("curl", "-L", "-X", "PUT", "--data-binary", "@-", "-H", "Remote-User: minio", "-sw", "'%{http_code}'", eosurl)
@@ -519,47 +520,55 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 				eosLogger.Debug(ctx, "DEBUG: [eosurl: %s, stderr: %s]", eosurl, strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr)))
 				Sleep()
 				continue
+			} else {
+				// This should mean success, so exit the loop
+				break
 			}
-			break
-		}
-
-		client, req, err := e.NewRequest("PUT", eosurl, bytes.NewReader(data))
-		if err != nil {
-			break
-		}
-		req.Header.Set("Content-Type", "application/octet-stream")
-		req.ContentLength = int64(len(data))
-		req.Close = true
-		res, err := client.Do(req)
-
-		if err != nil {
-			if res != nil {
-				eosLogger.Debug(ctx, "EOSput: http ERROR response: [eosurl: %s, response: %+v]", eosurl, res)
-			}
-
-			Sleep()
-			continue
-		}
-
-		if res != nil {
-			defer res.Body.Close()
+		// Otherwise, use the go HTTP client
 		} else {
-			eosLogger.Error(ctx, nil, "ERROR: EOSput: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
-			if err == nil {
-				err = errResponseIsNil
+			client, req, err := e.NewRequest("PUT", eosurl, bytes.NewReader(data))
+			if err != nil {
+				break
 			}
-		}
+			req.Header.Set("Content-Type", "application/octet-stream")
+			req.ContentLength = int64(len(data))
+			req.Close = true
+			res, err := client.Do(req)
 
-		if res.StatusCode != 201 {
-			eosLogger.Debug(ctx, "EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res)
-			err = errIncorrectPutStatusCode
-			SleepMs(SleepShort)
-			continue
+			if err != nil {
+				if res != nil {
+					eosLogger.Debug(ctx, "EOSput: http ERROR response: [eosurl: %s, response: %+v]", eosurl, res)
+				}
+
+				Sleep()
+				continue
+			}
+
+			if res != nil {
+				defer res.Body.Close()
+			} else {
+				eosLogger.Error(ctx, nil, "ERROR: EOSput: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+				if err == nil {
+					err = errResponseIsNil
+				}
+				continue
+			}
+
+			if res.StatusCode != 201 {
+				eosLogger.Debug(ctx, "EOSput: http StatusCode != 201: [eosurl: %s, result: %+v]", eosurl, res)
+				err = errIncorrectPutStatusCode
+				SleepMs(SleepShort)
+				continue
+			} else {
+				// Exit loop if we get a 201
+				break
+			}
 		}
 	}
+
 	if err != nil {
 	    eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
-	    // remove the 0 byte file
+	    // remove the file on failure so we don't end up with left over 0 byte files
             _ = e.rm(ctx, p)
 	}
 	return err
