@@ -17,9 +17,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	//	"sort"
 	"strings"
 	"time"
+	"bufio"
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
@@ -100,7 +100,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		stat, err := e.FileSystem.DirStat(ctx, dir)
 
 		if stat == nil {
-			eosLogger.Error(ctx, err, "ERROR: ListBuckets: unable to stat [dir: %s]", dir)
+			eosLogger.Error(ctx, err, "ListBuckets: unable to stat [dir: %s]", dir)
 			continue
 		}
 
@@ -268,19 +268,19 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 
 		err = e.FileSystem.Copy(ctx, srcpath, destpath, srcInfo.Size)
 		if err != nil {
-			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
+			eosLogger.Error(ctx, err, "CopyObject: %+v", err)
 			return objInfo, err
 		}
 
 		err = e.FileSystem.SetETag(ctx, destpath, srcInfo.ETag)
 		if err != nil {
-			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
+			eosLogger.Error(ctx, err, "CopyObject: %+v", err)
 			return objInfo, err
 		}
 
 		err = e.FileSystem.SetContentType(ctx, destpath, srcInfo.ContentType)
 		if err != nil {
-			eosLogger.Error(ctx, err, "ERROR: COPY: %+v", err)
+			eosLogger.Error(ctx, err, "CopyObject: %+v", err)
 			return objInfo, err
 		}
 	} else {
@@ -303,46 +303,58 @@ func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, d
 
 // PutObject - Create a new blob with the incoming data
 func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
-	eosLogger.Stat(ctx, "S3cmd: PutObject: [path: %s%s]", bucket, object)
+	eosLogger.Stat(ctx, "S3cmd: PutObject: [bucket: %s, object: %s]", bucket, object)
 
 	if e.readonly {
 		return objInfo, minio.NotImplemented{}
 	}
 
-	for key, val := range opts.UserDefined {
-		eosLogger.Debug(ctx, "PutObject [path: %s%s, key: %s, value: %s]", bucket, object, key, val)
-	}
+	// This just prints out user defined headers on the object, we're not doing anything with it
+	//for key, val := range opts.UserDefined {
+	//	eosLogger.Debug(ctx, "PutObject [path: %s%s, key: %s, value: %s]", bucket, object, key, val)
+	//}
 
-	buf, _ := ioutil.ReadAll(data)
-	hasher := md5.New()
-	hasher.Write([]byte(buf))
-	etag := hex.EncodeToString(hasher.Sum(nil))
+	buf := bufio.NewReader(data)
 	dir := bucket + "/" + filepath.Dir(object)
 	objectpath := bucket + "/" + object
 
+	// Create the parent directory if it doesn't exist
 	if exists, _ := e.FileSystem.FileExists(ctx, dir); !exists {
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
 
-	err = e.FileSystem.Put(ctx, objectpath, buf)
+	// Send the file
+	response, err := e.FileSystem.PutBuffer(ctx, e.stage, objectpath, buf)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: PUT: %+v", err)
+		eosLogger.Error(ctx, err, "PUT: %+v", err)
 		objInfo.ETag = defaultETag
-		return objInfo, err
+		return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
 	}
+	eosLogger.Debug(ctx, "Put response: %#v", response)
+
+	etag := response.Checksum
 	err = e.FileSystem.SetETag(ctx, objectpath, etag)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: PUT.SetETag: %+v", err)
+		eosLogger.Error(ctx, err, "PUT.SetETag: %+v", err)
 		objInfo.ETag = defaultETag
-		return objInfo, err
+		return objInfo, minio.InvalidETag{}
 	}
+
 	err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: PUT.SetContentType: %+v", err)
+		eosLogger.Error(ctx, err, "PUT.SetContentType: %+v", err)
 		return objInfo, err
 	}
 
-	return e.GetObjectInfoWithRetry(ctx, bucket, object, opts, 20)
+	objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts, 20)
+	if err == nil && objInfo.Size != data.Size() {
+		eosLogger.Error(ctx, err, "PUT: File on disk is not the correct size [disk: %d, expected: %d]", objInfo.Size, data.Size())
+		// Remove the file
+		_ = e.FileSystem.rm(ctx, objectpath)
+		return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
+	}
+
+	return objInfo, err
 }
 
 // DeleteObject - Deletes a blob on EOS
@@ -412,6 +424,10 @@ func (e *eosObjects) GetObjectInfoWithRetry(ctx context.Context, bucket, object 
 		if sleepTime < sleepMax {
 			sleepTime = sleepTime + sleepInc
 		}
+	}
+	if err != nil {
+		eosLogger.Error(ctx, err, "Unable to retrieve object info. [bucket: %s, object: %s]", bucket, object)
+		objInfo = minio.ObjectInfo{}
 	}
 	return objInfo, err
 }
@@ -532,6 +548,7 @@ func (e *eosObjects) NewMultipartUpload(ctx context.Context, bucket, object stri
 	}
 
 	if e.stage != "" {
+		// Create staging area
 		hasher := md5.New()
 		hasher.Write([]byte(uploadID))
 		stagepath := hex.EncodeToString(hasher.Sum(nil))
@@ -604,7 +621,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	e.TransferList.AddToSize(uploadID, info.Size)
 
 	offset := chunksize * int64(partID-1)
-	eosLogger.Debug(ctx, "PutObjectPart staging transfer [bucket: %s, object: %s, partID: %d, offset: %d, etag: %s]", bucket, object, (partID - 1), offset, info.ETag)
+	eosLogger.Debug(ctx, "PutObjectPart: staging transfer [bucket: %s, object: %s, partID: %d, offset: %d, etag: %s]", bucket, object, (partID - 1), offset, info.ETag)
 	stagepath := e.TransferList.GetStagePath(uploadID)
 	absstagepath := e.stage + "/" + stagepath
 
@@ -613,17 +630,17 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	}
 	f, err := os.OpenFile(absstagepath+"/file", os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "PutObjectPart: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	_, err = f.Seek(offset, 0)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "PutObjectPart: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	bytesWritten, err := f.Write(buf)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "PutObjectPart: Unable to copy buffer into stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	f.Close()
@@ -651,19 +668,19 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	// Open the file so we can read the same bytes into the md5 buffer
 	f, err = os.Open(absstagepath + "/file")
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: Unable to open stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "PutObjectPart: Unable to open stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	_, err = f.Seek(offset, 0)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "PutObjectPart: Unable to seek to correct position in stage file [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	transfer.Lock()
 	_, err = io.CopyN(transfer.md5, f, int64(bytesWritten))
 	transfer.Unlock()
 	if err != nil && err != io.EOF {
-		eosLogger.Error(ctx, err, "ERROR: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
+		eosLogger.Error(ctx, err, "PutObjectPart: Unable to copy buffer for hashing [stagepath: %s]", absstagepath)
 		return info, err
 	}
 	f.Close()
@@ -778,6 +795,10 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 	}
 
 	etag := e.TransferList.GetEtag(uploadID)
+	if size == 0 && etag != zerobyteETag {
+		etag = zerobyteETag
+	}
+
 	contenttype := e.TransferList.GetContentType(uploadID)
 	stagepath := e.TransferList.GetStagePath(uploadID)
 
@@ -793,19 +814,21 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 		ContentType: contenttype,
 	}
 
+	// Create an empty file
 	err = e.FileSystem.Touch(ctx, uploadID, size)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
 		return objInfo, err
 	}
+
 	err = e.FileSystem.SetETag(ctx, uploadID, etag)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, contenttype)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 
@@ -865,22 +888,26 @@ func (e *eosObjects) CompleteMultipartUploadXrootd(ctx context.Context, bucket, 
 	transfer.RLock()
 	firstbyte := []byte{transfer.firstByte}
 	transfer.RUnlock()
+
+	// Write the first byte - I don't recall why we do this, I think it force updates the file metadata or something
 	err = e.FileSystem.xrootdWriteChunk(ctx, uploadID, 0, size, "1", firstbyte)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s]", uploadID)
-		return objInfo, err
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSwriteChunk: [uploadID: %s]", uploadID)
+		objInfo.ETag = zerobyteETag
+		return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
 	}
 
 	e.TransferList.DeleteTransfer(uploadID)
 
 	err = e.FileSystem.SetETag(ctx, uploadID, etag)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
-		return objInfo, err
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		objInfo.ETag = zerobyteETag
+		return objInfo, minio.InvalidETag{}
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, contenttype)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
 		return objInfo, err
 	}
 
@@ -894,28 +921,28 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 
 	f, err := os.Open(fullstagepath)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: failed open  [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Failed to open chunk [uploadID: %s]", uploadID)
 	}
 	defer f.Close()
 
 	err = e.FileSystem.Xrdcp.Put(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: xrdcp: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: xrdcp: [uploadID: %s]", uploadID)
 		return err
 	}
 	err = e.FileSystem.Rename(ctx, uploadID+".minio.sys", uploadID)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSrename: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSrename: [uploadID: %s]", uploadID)
 		return err
 	}
 	err = e.FileSystem.SetETag(ctx, uploadID, objInfo.ETag)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSsetETag: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSsetETag: [uploadID: %s]", uploadID)
 		return err
 	}
 	err = e.FileSystem.SetContentType(ctx, uploadID, objInfo.ContentType)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: CompleteMultipartUpload: EOSsetContentType: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSsetContentType: [uploadID: %s]", uploadID)
 		return err
 	}
 
@@ -1062,7 +1089,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 	if err != nil {
 		// We want to return nil error if the file is not found. So we don't break restic and others that expect a certain response
 		if err == errFileNotFound {
-			eosLogger.Error(ctx, err, "File not found [path: %s]", path)
+			eosLogger.Debug(ctx, "File not found [path: %s]", path)
 			return result, nil
 		}
 		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
@@ -1125,7 +1152,7 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 				result.Objects = append(result.Objects, subdir.Objects...)
 			}
 		} else {
-			eosLogger.Error(ctx, err, "ERROR: ListObjects: unable to stat [objpath: %s]", objpath)
+			eosLogger.Error(ctx, err, "ListObjects: unable to stat [objpath: %s]", objpath)
 		}
 	}
 

@@ -27,6 +27,7 @@ type FileStat struct {
 
 const (
 	defaultETag string = "00000000000000000000000000000000"
+	zerobyteETag string = "d41d8cd98f00b204e9800998ecf8427e"
 )
 
 // NewFileStat creates a new *FileStat
@@ -34,9 +35,13 @@ func NewFileStat(file string, size int64, isFile bool, modTime int64, eTag strin
 	if eTag == "" {
 		eTag = defaultETag
 	}
+	if size == 0 && eTag != zerobyteETag {
+		eTag = zerobyteETag
+	}
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+
 	f := new(FileStat)
 	f.Name = strings.TrimSuffix(filepath.Base(file), "/")
 	f.FullPath = file
