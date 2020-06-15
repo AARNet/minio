@@ -9,6 +9,7 @@
 package eos
 
 import (
+	"bufio"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -19,14 +20,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"bufio"
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/lifecycle"
 	"github.com/minio/minio/pkg/madmin"
 	"github.com/minio/minio/pkg/policy"
-	"github.com/minio/minio/pkg/policy/condition"
 )
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
@@ -197,26 +196,7 @@ func (e *eosObjects) DeleteBucketLifecycle(ctx context.Context, bucket string) e
 // GetBucketPolicy - Get the container ACL
 func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
 	eosLogger.Stat(ctx, "S3cmd: GetBucketPolicy [bucket: %s]", bucket)
-
-	return &policy.Policy{
-		Version: policy.DefaultVersion,
-		Statements: []policy.Statement{
-			policy.NewStatement(
-				policy.Allow,
-				policy.NewPrincipal("*"),
-				policy.NewActionSet(
-					policy.GetBucketLocationAction,
-					policy.ListBucketAction,
-					policy.GetObjectAction,
-				),
-				policy.NewResourceSet(
-					policy.NewResource(bucket, ""),
-					policy.NewResource(bucket, "*"),
-				),
-				condition.NewFunctions(),
-			),
-		},
-	}, nil
+	return nil, minio.NotImplemented{}
 }
 
 // SetBucketPolicy
