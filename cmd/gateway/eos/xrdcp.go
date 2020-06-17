@@ -95,7 +95,7 @@ func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, in
 	}
 	eosLogger.Debug(ctx, "xrdcp.LS: [rooturl: %s]", rooturl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -182,14 +182,14 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 
 // Fileinfo use fileinfo -m to get file info
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) {
-        rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path={{filepath}}", path)
+	rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path={{filepath}}", path)
 	if err != nil {
 		eosLogger.Error(ctx, err, "xrdcp.Fileinfo: Failed to unescape URI [path: %s]", path)
 		return nil, err
 	}
 	eosLogger.Debug(ctx, "xrdcp.FILEINFO: [rooturl: %s]", rooturl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
@@ -264,9 +264,9 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 		isfile      = true
 		etag        string
 		contenttype string
-		eosETagType    string
-		eosETag    string
-		minioETag    string
+		eosETagType string
+		eosETag     string
+		minioETag   string
 	)
 	kvpairs := strings.Split(object, " ")
 	for idx, pair := range kvpairs {
@@ -316,11 +316,10 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 //  PutFileResponse - Holds the information returned by --cksum md5:print
 type PutFileResponse struct {
 	ChecksumType string
-	Checksum string
-	URI string
-	Size string
+	Checksum     string
+	URI          string
+	Size         string
 }
-
 
 // PutBuffer - non-multipart put a file
 func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath string, dst string) (*PutFileResponse, error) {
@@ -351,7 +350,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 	}
 
 	// Execute command and collect buffers
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
+	cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
 	errBuf := &bytes.Buffer{}
 	cmd.Stderr = errBuf
 
@@ -440,7 +439,7 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 
 	eosLogger.Debug(ctx, "xrdcp.GET: [eosurl: %s]", eosurl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-N", eosurl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
