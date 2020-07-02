@@ -308,7 +308,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	if err != nil {
 		eosLogger.Error(ctx, err, "PUT: %+v", err)
 		objInfo.ETag = defaultETag
-		return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
+                return objInfo, minio.Busy{Bucket: bucket, Object: objec}
 	}
 	eosLogger.Debug(ctx, "Put response: %#v", response)
 
