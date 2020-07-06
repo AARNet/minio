@@ -304,15 +304,37 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	}
 
 	// Send the file
-	response, err := e.FileSystem.PutBuffer(ctx, e.stage, objectpath, buf)
-	if err != nil {
-		eosLogger.Error(ctx, err, "PUT: %+v", err)
-		objInfo.ETag = defaultETag
-                return objInfo, minio.SlowDown{}
-	}
-	eosLogger.Debug(ctx, "Put response: %#v", response)
+//	response, err := e.FileSystem.PutBuffer(ctx, e.stage, objectpath, buf)
+//	if err != nil {
+//		eosLogger.Error(ctx, err, "PUT: %+v", err)
+//		objInfo.ETag = defaultETag
+//              return objInfo, minio.SlowDown{}
+//	}
 
-	etag := response.Checksum
+
+	var responseglob *PutFileResponse 
+	maxRetry := 11
+	for retry := 1; retry <= maxRetry; retry++ {
+		response, err := e.FileSystem.PutBuffer(ctx, e.stage, objectpath, buf)
+		responseglob = response
+		if err == nil {
+			eosLogger.Debug(ctx, "Put success, response: %#v", response)
+			break
+		}  else {
+			eosLogger.Error(ctx, err, "PUT: %+v, attempt %d", err, retry)
+			eosLogger.Debug(ctx, "Put attempt fail, response: %#v", response)
+			if retry == (maxRetry - 1) {
+				eosLogger.Error(ctx, err, "PUT failed after %d attempts: %+v", (maxRetry - 1), err)
+				objInfo.ETag = defaultETag
+				return objInfo, minio.SlowDown{}
+			}
+		}
+	}
+
+
+//	eosLogger.Debug(ctx, "Put response: %#v", response)
+
+	etag := responseglob.Checksum
 	err = e.FileSystem.SetETag(ctx, objectpath, etag)
 	if err != nil {
 		eosLogger.Error(ctx, err, "PUT.SetETag: %+v", err)
