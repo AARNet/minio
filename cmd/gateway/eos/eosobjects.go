@@ -308,7 +308,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	if err != nil {
 		eosLogger.Error(ctx, err, "PUT: %+v", err)
 		objInfo.ETag = defaultETag
-		if strings.Contains(err.Error(), "attempts") == true{
+		if strings.Contains(err.Error(), "attempts") == true {
 			return objInfo, minio.SlowDown{}
 		} else {
 			return objInfo, minio.OperationTimedOut{}
