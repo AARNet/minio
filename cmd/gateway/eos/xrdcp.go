@@ -349,14 +349,14 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		return nil, err
 	}
 
-        // Execute command and collect buffers
-        cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
-        errBuf := &bytes.Buffer{}
-        cmd.Stderr = errBuf
-
 	var responseGlob *PutFileResponse
 	maxRetry := 10
         for retry := 1; retry <= maxRetry; retry++ {
+
+                // Execute command and collect buffers
+                cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
+                errBuf := &bytes.Buffer{}
+                cmd.Stderr = errBuf
 
 	        err = cmd.Run()
 
@@ -390,7 +390,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		}
 		// If theres an error and it's not "file not found", return it
 	        if err != nil && exitStatus != 2 {
-	                return nil, fmt.Errorf("Write failed [tmp: %s, xrdURI: %s, error: %s]", fd.Name(), xrdURI, err)
+			return nil, fmt.Errorf("Write failed [tmp: %s, xrdURI: %s, error: %s, stderr: %v]", fd.Name(), xrdURI, err, errBuf.String())
 	        }
 
 	        // Pull the checksum and file information from stderr (xrdcp outputs it to stderr)
