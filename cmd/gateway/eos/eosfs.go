@@ -535,7 +535,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 				err = nil
 				break
 			}
-		// Otherwise, use the go HTTP client
+			// Otherwise, use the go HTTP client
 		} else {
 			var doErr error
 			client, req, doErr := e.NewRequest("PUT", eosurl, bytes.NewReader(data))
@@ -583,13 +583,13 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 		}
 
 		// If we reach here and there is no error and the retry is the maximum, lets set an error
-		if err == nil && retry == maxRetry {
+		if err == nil && retry == e.maxRetry {
 			err = fmt.Errorf("Exceeded retries")
 		}
 	}
 
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s]", e.maxRetry, eosurl)
+		eosLogger.Error(ctx, err, "eosfs.Put: EOSput failed %d times. [eosurl %s]", e.maxRetry, eosurl)
 		// remove the file on failure so we don't end up with left over 0 byte files
 		_ = e.rm(ctx, p)
 	}
@@ -660,7 +660,7 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 			req.Close = true
 			res, err := client.Do(req)
 
-            if err != nil {
+			if err != nil {
 				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET [eosurl: %s]", eosurl)
 				Sleep()
 				continue
@@ -695,6 +695,9 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 				continue
 			}
 			break
+		}
+		if err != nil {
+			eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed %d times. [eosurl %s]", e.maxRetry, eosurl)
 		}
 	}
 	return err
