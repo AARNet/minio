@@ -25,6 +25,7 @@ import (
 )
 
 type eosFS struct {
+	maxRetry   int
 	MGMHost    string
 	HTTPHost   string
 	Proxy      string
@@ -39,11 +40,11 @@ type eosFS struct {
 }
 
 var (
-	errFileNotFound     = errors.New("EOS: File Not Found")
-	errDiskAccessDenied = errors.New("EOS: Disk Access Denied")
-	errFilePathBad      = errors.New("EOS: Bad File Path")
-	errResponseIsNil    = errors.New("EOS: Response body is nil")
-	errIncorrectPutStatusCode  = errors.New("EOS: Statuscode for PUT response was not 201")
+	errFileNotFound           = errors.New("EOS: File Not Found")
+	errDiskAccessDenied       = errors.New("EOS: Disk Access Denied")
+	errFilePathBad            = errors.New("EOS: Bad File Path")
+	errResponseIsNil          = errors.New("EOS: Response body is nil")
+	errIncorrectPutStatusCode = errors.New("EOS: Statuscode for PUT response was not 201")
 )
 
 // HTTPClient sets up and returns a http.Client
@@ -497,8 +498,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	eosurl := "http://" + e.HTTPHost + eospath
 	eosLogger.Debug(ctx, "EOScmd: webdav.PUT [eosurl: "+eosurl+"]", nil)
 
-	maxRetry := 10
-	for retry := 1; retry <= maxRetry; retry++ {
+	for retry := 1; retry <= e.maxRetry; retry++ {
 
 		// SPECIAL CASE = contains a %
 		if strings.IndexByte(p, '%') >= 0 {
@@ -557,7 +557,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 			continue
 		}
 	}
-	eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", maxRetry, eosurl, err)
+	eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s, error: %+v]", e.maxRetry, eosurl, err)
 	return err
 }
 
@@ -611,29 +611,50 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 		eosurl := fmt.Sprintf("http://%s%s", e.HTTPHost, eospath)
 		eosLogger.Debug(ctx, "EOScmd: webdav.GET: [eosurl: %s]", eosurl)
 
-		client, req, err := e.NewRequest("GET", eosurl, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
-		req.Close = true
-		res, err := client.Do(req)
+		for retry := 1; retry <= e.maxRetry; retry++ {
+			client, req, err := e.NewRequest("GET", eosurl, nil)
+			if err != nil {
+				Sleep()
+				continue
+			}
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+			req.Close = true
+			res, err := client.Do(req)
 
-		if err != nil {
-			eosLogger.Error(ctx, err, "ERROR: webdav.GET [eosurl: %s, error: %+v]", eosurl, err)
-			return err
-		}
-		// TODO: Might need to return here if res is nil
-		if res != nil {
-			defer res.Body.Close()
-		} else {
-			eosLogger.Error(ctx, nil, "ERROR: webdav.GET: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
-		}
+			if err != nil {
+				eosLogger.Error(ctx, err, "ERROR: webdav.GET [eosurl: %s, error: %+v]", eosurl, err)
+				Sleep()
+				continue
+			}
+			// TODO: Might need to return here if res is nil
+			if res != nil {
+				defer res.Body.Close()
+			} else {
+				eosLogger.Error(ctx, nil, "ERROR: webdav.GET: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+			}
 
-		_, err = io.CopyN(data, res.Body, length)
-		if err != nil {
-			eosLogger.Error(ctx, nil, "ERROR: webdav.GET: Failed to copy data to writer [eosurl: %s, error: %+v]", eosurl, err)
-			return err
+			//did we get the right length?
+			buf := &bytes.Buffer{}
+			bRead, err := io.Copy(buf, res.Body)
+			if err != nil {
+				eosLogger.Error(ctx, nil, "ERROR: webdav.GET: Failed to copy curl data to buffer [eosurl: %s, error: %+v, bRead: %d, length: %d]", eosurl, err, bRead, length)
+				Sleep()
+				continue
+			}
+			if bRead != length {
+				eosLogger.Error(ctx, nil, "ERROR: webdav.GET: Failed to copy curl data to buffer with correct length [eosurl: %s, error: %+v, bRead: %d, length: %d]", eosurl, err, bRead, length)
+				Sleep()
+				continue
+			}
+
+			//write buffer to data writer
+			written, err := io.Copy(data, buf)
+			if err != nil {
+				eosLogger.Error(ctx, nil, "ERROR: webdav.GET: Failed to copy buffer data to data writer [eosurl: %s, error: %+v, written: %d]", eosurl, err, written)
+				Sleep()
+				continue
+			}
+			break
 		}
 	}
 	return err
