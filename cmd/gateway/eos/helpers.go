@@ -7,10 +7,10 @@
 package eos
 
 import (
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
-	"net/url"
 	"time"
 )
 
@@ -113,7 +113,7 @@ func PathDir(elem string) string {
 }
 
 // UnescapePath - unescape each segment of a path individually
-func UnescapePath(str string) (string) {
+func UnescapePath(str string) string {
 	// Then replace percentages
 	str = strings.Replace(str, "%", "%25", -1)
 	unescaped := ""
