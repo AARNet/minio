@@ -339,7 +339,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 
 // DeleteObject - Deletes a blob on EOS
 func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
-	eosLogger.Stat(ctx, "S3cmd: DeleteObject: [path: %s%s]", bucket, object)
+	eosLogger.Stat(ctx, "S3cmd: DeleteObject: [bucket: %s object: %s]", bucket, object)
 
 	if e.readonly {
 		return minio.NotImplemented{}
