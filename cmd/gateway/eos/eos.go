@@ -92,6 +92,11 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		foregroundStaging = true
 	}
 
+	maxRetry, ok := strconv.Atoi(os.Getenv("MAX_RETRY"))
+	if ok != nil {
+		maxRetry = 10
+	}
+
 	eosLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
 	eosLogger.Startup("EOS HTTP URL: %s", httphost)
 	eosLogger.Startup("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
@@ -101,6 +106,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	eosLogger.Startup("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
 	eosLogger.Startup("EOS READ METHOD: %s", readmethod)
 	eosLogger.Startup("EOS FOREGROUND TRANSFER FROM STAGING: %t", foregroundStaging)
+	eosLogger.Startup("EOS MAX RETRY: %d", maxRetry)
 	eosLogger.Startup("EOS LOG LEVEL: %d", loglevel)
 
 	// Init filesystem
@@ -113,6 +119,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	}
 
 	filesystem := &eosFS{
+		maxRetry:   maxRetry,
 		MGMHost:    os.Getenv("EOS"),
 		HTTPHost:   httphost,
 		Proxy:      os.Getenv("EOS_HTTP_PROXY"),
