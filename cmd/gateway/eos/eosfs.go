@@ -626,11 +626,12 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 				Sleep()
 				continue
 			}
-			// TODO: Might need to return here if res is nil
 			if res != nil {
 				defer res.Body.Close()
 			} else {
 				eosLogger.Error(ctx, nil, "ERROR: webdav.GET: response body is nil [eosurl: %s, error: %+v]", eosurl, err)
+				Sleep()
+				continue
 			}
 
 			//did we get the right length?
