@@ -15,10 +15,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // Xrdcp ... struct
@@ -33,6 +36,22 @@ type Xrdcp struct {
 // GetXrootBase Returns the root:// base URL
 func (x *Xrdcp) GetXrootBase() string {
 	return fmt.Sprintf("root://%s@%s/", x.User, x.MGMHost)
+}
+
+// UnescapedURI - Returns the unescaped URL for the xrd command, slap a {{filepath}} in the uripath where you want the filepath to be inserted
+// This will remove any URI escaped characters (eg. %2F) from the path and URI separately to avoid errors (URI should be fine as it's static, but the filepath changes)
+// eg x.UnescapedURI("{{filepath}}?eos.ruid=48&eos.rgid=48", "/eos/test-s3-1/%25/test/object.txt")
+// returns root://localhost//eos/test-s3-1/%/test/object.txt?eos.ruid=48&eos.rgid=48
+func (x *Xrdcp) UnescapedURI(uripath string, filepath string) (string, error) {
+	baseuri := fmt.Sprintf("%s%s", x.GetXrootBase(), uripath)
+	xrduri, err := url.QueryUnescape(baseuri)
+	if err != nil {
+		return "", err
+	}
+	unescFilepath := UnescapePath(filepath)
+	xrduri = strings.Replace(xrduri, "{{filepath}}", unescFilepath, -1)
+
+	return xrduri, nil
 }
 
 // AbsoluteEOSPath Normalise an EOS path
@@ -69,18 +88,18 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 
 // Ls Perform an "ls" using xrdcp
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
-	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=ls&mgm.option=" + lsflags + "&mgm.path=" + path)
+	rooturl, err := x.UnescapedURI(fmt.Sprintf("/proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path={{filepath}}", lsflags), path)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
+		eosLogger.Error(ctx, err, "xrdcp.Ls: Failed to unescape URI [path: %s]", path)
 		return "", 1, err
 	}
-	eosLogger.Debug(ctx, "EOScmd: xrdcp.LS: [path: %s, rooturl: %s]", path, rooturl)
+	eosLogger.Debug(ctx, "xrdcp.LS: [rooturl: %s]", rooturl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not /usr/bin/xrdcp %s", rooturl)
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s", rooturl)
 		return "", 1, err
 	}
 
@@ -115,18 +134,18 @@ func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string,
 
 // Find - use find -I to get file information
 func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
-	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path=" + path)
+	rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path={{filepath}}", path)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
+		eosLogger.Error(ctx, err, "xrdcp.Find: Failed to unescape URI [path: %s]", path)
 		return nil, err
 	}
-	eosLogger.Debug(ctx, "EOScmd: xrdcp.FIND: [path: %s, rooturl: %s]", path, rooturl)
+	eosLogger.Debug(ctx, "xrdcp.FIND: [rooturl: %s]", rooturl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
 
 	if err := cmd.Start(); err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not /usr/bin/xrdcp %s ", rooturl)
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s ", rooturl)
 		return nil, err
 	}
 	defer cmd.Wait()
@@ -163,18 +182,18 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 
 // Fileinfo use fileinfo -m to get file info
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) {
-	rooturl, err := url.QueryUnescape(x.GetXrootBase() + "/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path=" + path)
+	rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path={{filepath}}", path)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [path: %s, uri: %s]", path, rooturl)
+		eosLogger.Error(ctx, err, "xrdcp.Fileinfo: Failed to unescape URI [path: %s]", path)
 		return nil, err
 	}
-	eosLogger.Debug(ctx, "EOScmd: xrdcp.FILEINFO: [path: %s, rooturl: %s]", path, rooturl)
+	eosLogger.Debug(ctx, "xrdcp.FILEINFO: [rooturl: %s]", rooturl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-s", rooturl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not /usr/bin/xrdcp %s", rooturl)
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s", rooturl)
 		return nil, err
 	}
 
@@ -245,6 +264,9 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 		isfile      = true
 		etag        string
 		contenttype string
+		eosETagType string
+		eosETag     string
+		minioETag   string
 	)
 	kvpairs := strings.Split(object, " ")
 	for idx, pair := range kvpairs {
@@ -258,20 +280,120 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 			case "container":
 				// It's a directory
 				isfile = false
+			case "xstype":
+				eosETagType = value
+			case "etag":
+				eosETag = strings.Trim(value, "\"")
 			case "xattrn":
 				// If its an xattr, get the value from the next pair
 				key = value
 				switch key {
 				case "minio_etag":
-					_, etag = SplitKeyValuePair(kvpairs[(idx + 1)])
+					_, minioETag = SplitKeyValuePair(kvpairs[(idx + 1)])
 				case "minio_contenttype":
 					_, contenttype = SplitKeyValuePair(kvpairs[(idx + 1)])
 				}
 			}
 		}
 	}
+
+	// If EOS is set to use md5sum etags, use the one from EOS
+	if eosETagType == "md5" && eosETag != "" {
+		eosLogger.Debug(ctx, "xrdcp.ParseFileinfo: using EOS md5sum [filename: %s, etag: %s]", filename, eosETag)
+		etag = eosETag
+	} else {
+		etag = minioETag
+	}
+
+	// If the filesize is 0 and the etag is not the md5sum for a zero byte file, make it a zerobyte etag.
+	if filesize == 0 && etag != zerobyteETag {
+		etag = zerobyteETag
+	}
 	stat := NewFileStat(filename, filesize, isfile, mtime, etag, contenttype)
 	return stat
+}
+
+//  PutFileResponse - Holds the information returned by --cksum md5:print
+type PutFileResponse struct {
+	ChecksumType string
+	Checksum     string
+	URI          string
+	Size         string
+}
+
+// PutBuffer - non-multipart put a file
+func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath string, dst string) (*PutFileResponse, error) {
+	// Write stream to temp file
+	fd, err := ioutil.TempFile(stagePath, "putBuffer-")
+	if err != nil {
+		return nil, err
+	}
+	defer fd.Close()
+	defer os.RemoveAll(fd.Name())
+
+	_, err = io.Copy(fd, stream)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build the destination path
+	dstPath, err := x.AbsoluteEOSPath(dst)
+	if err != nil {
+		return nil, err
+	}
+
+	// Unescape the URI so that it removes any URI escaped characters (eg. %2F)
+	xrdURI, err := x.UnescapedURI("{{filepath}}", dstPath)
+	if err != nil {
+		eosLogger.Error(ctx, err, "Failed to unescape URI for %s", dst)
+		return nil, err
+	}
+
+	// Execute command and collect buffers
+	cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
+	errBuf := &bytes.Buffer{}
+	cmd.Stderr = errBuf
+
+	err = cmd.Run()
+
+	// Check the return code of the cmd.Run()
+	// NOTE: this is straight from the reva eosclient:
+	// https://github.com/cs3org/reva/blob/2b018b13c24dab305d92164cf0ad4da43807060c/pkg/eosclient/eosclient.go#L594-L622
+	var exitStatus int
+	if exiterr, ok := err.(*exec.ExitError); ok {
+		if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+			exitStatus = status.ExitStatus()
+			switch exitStatus {
+			case 0:
+				err = nil
+			case 2:
+				err = fmt.Errorf("Not found: %s", errBuf.String())
+			case 53:
+				err = fmt.Errorf("Invalid checksum type set on EOS (data directory needs attribute: sys.forced.checksum=\"md5\")")
+			}
+		}
+	}
+
+	// If theres an error and it's not "file not found", return it
+	if err != nil && exitStatus != 2 {
+		return nil, fmt.Errorf("Write failed [tmp: %s, xrdURI: %s, error: %s]", fd.Name(), xrdURI, err)
+	}
+
+	// Pull the checksum and file information from stderr (xrdcp outputs it to stderr)
+	errStr := errBuf.String()
+	eosLogger.Debug(ctx, "xrdcp.PutBuffer: response: %s", errStr)
+	response := &PutFileResponse{}
+	if strings.HasPrefix(errStr, "md5: ") {
+		splitStr := strings.Split(errStr, " ")
+		response.ChecksumType = strings.TrimRight(splitStr[0], ":")
+		response.Checksum = splitStr[1]
+		response.URI = splitStr[2]
+		response.Size = splitStr[3]
+	} else {
+		return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", errStr)
+	}
+
+	return response, nil
 }
 
 // Put ... puts a file
@@ -283,16 +405,15 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl)
+		eosLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
 		return err
 	}
-
-	eosLogger.Debug(ctx, "EOScmd: xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
+	eosLogger.Debug(ctx, "xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
 	stdoutStderr, err := cmd.CombinedOutput()
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath)
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath)
 	}
 	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
 	if output != "" {
@@ -312,25 +433,25 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(x.GetXrootBase() + eospath + "?eos.ruid=" + x.UID + "&eos.rgid=" + x.GID)
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: can not url.QueryUnescape() [eospath: %s, eosurl: %s]", eospath, eosurl)
+		eosLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
 		return err
 	}
 
-	eosLogger.Debug(ctx, "EOScmd: xrdcp.GET: [eosurl: %s]", eosurl)
+	eosLogger.Debug(ctx, "xrdcp.GET: [eosurl: %s]", eosurl)
 
-	cmd := exec.CommandContext(ctx, "/usr/bin/xrdcp", "-N", eosurl, "-")
+	cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err2 := cmd.Run()
 	if err2 != nil {
-		eosLogger.Info(ctx, "/usr/bin/xrdcp -N %s - %+v", eosurl, err2)
+		eosLogger.Error(ctx, err2, "Failed to run /usr/bin/xrdcp -N %s - %+v", eosurl, err2)
 	}
 
 	errStr := strings.TrimSpace(stderr.String())
 	if errStr != "" {
-		eosLogger.Error(ctx, nil, errStr)
+		eosLogger.Error(ctx, fmt.Errorf(errStr), errStr) // TODO: second argument might need to change to a generic message
 	}
 
 	if offset >= 0 {

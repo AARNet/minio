@@ -40,7 +40,7 @@ var eosLogger eosLog
 
 // Debug -
 func (e *eosLog) Debug(ctx context.Context, messagefmt string, args ...interface{}) {
-	if LogLevelDebug >= MaxLogLevel {
+	if LogLevelDebug <= MaxLogLevel {
 		methodName := e.GetFunctionName()
 		e.Log(ctx, LogLevelDebug, methodName, fmt.Sprintf(messagefmt, args...), nil)
 	}
@@ -48,7 +48,7 @@ func (e *eosLog) Debug(ctx context.Context, messagefmt string, args ...interface
 
 // Error -
 func (e *eosLog) Error(ctx context.Context, err error, messagefmt string, args ...interface{}) {
-	if LogLevelError >= MaxLogLevel {
+	if LogLevelError <= MaxLogLevel {
 		methodName := e.GetFunctionName()
 		e.Log(ctx, LogLevelError, methodName, fmt.Sprintf(messagefmt, args...), err)
 	}
@@ -56,7 +56,7 @@ func (e *eosLog) Error(ctx context.Context, err error, messagefmt string, args .
 
 // Info -
 func (e *eosLog) Info(ctx context.Context, messagefmt string, args ...interface{}) {
-	if LogLevelInfo >= MaxLogLevel {
+	if LogLevelInfo <= MaxLogLevel {
 		methodName := e.GetFunctionName()
 		e.Log(ctx, LogLevelInfo, methodName, fmt.Sprintf(messagefmt, args...), nil)
 	}
@@ -64,10 +64,9 @@ func (e *eosLog) Info(ctx context.Context, messagefmt string, args ...interface{
 
 // Stat -
 func (e *eosLog) Stat(ctx context.Context, messagefmt string, args ...interface{}) {
-	if LogLevelStat >= MaxLogLevel {
-		methodName := e.GetFunctionName()
-		e.Log(ctx, LogLevelStat, methodName, fmt.Sprintf(messagefmt, args...), nil)
-	}
+	// Always log stats.
+	methodName := e.GetFunctionName()
+	e.Log(ctx, LogLevelStat, methodName, fmt.Sprintf(messagefmt, args...), nil)
 }
 
 // GetFunctionName gets the name of the function that called Debug/Error/Info/Stat
