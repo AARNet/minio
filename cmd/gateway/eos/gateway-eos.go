@@ -51,12 +51,13 @@ ENVIRONMENT VARIABLES:
      EOSGID: eos user gid
      EOSSTAGE: local fast disk to stage multipart uploads
      EOSREADONLY: true/false
-     EOSREADMETHOD: webdav/xrootd/xrdcp (DEFAULT: webdav)
-     EOSSLEEP: int ms sleep 1000ms = 1s (default 100 ms)
+     EOSREADMETHOD: webdav/xrootd/xrdcp (default: webdav)
+     EOSSLEEP: int ms sleep 1000ms = 1s (default: 100 ms)
      VOLUME_PATH: path on eos
      HOOKSURL: url to s3 hooks (not setting this will disable hooks)
      SCRIPTS: path to xroot script
-     EOSVALIDBUCKETS: true/false (DEFAULT: true)
+     EOSVALIDBUCKETS: true/false (default: true)
+     MAX_RETRY: int, how many times to retry (default: 10)
 
   CACHE:
      MINIO_CACHE_DRIVES: List of mounted drives or directories delimited by ";".
