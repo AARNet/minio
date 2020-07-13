@@ -26,11 +26,33 @@ import (
 
 // Xrdcp ... struct
 type Xrdcp struct {
-	Path    string
-	MGMHost string
-	User    string
-	UID     string
-	GID     string
+	maxRetry int
+	Path     string
+	MGMHost  string
+	User     string
+	UID      string
+	GID      string
+}
+
+func (x *Xrdcp) XrdcpWithRetry(ctx context.Context, arg ...string) (outputStr string, err error) {
+	for retry := 1; retry <= x.maxRetry; retry++ {
+		cmd := exec.Command("/usr/bin/xrdcp", arg...)
+		output, err := cmd.CombinedOutput()
+
+		if err != nil {
+			eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s (attempt:%d)", arg, retry)
+			Sleep()
+			continue
+		} else {
+			outputStr = strings.TrimSpace(string(output))
+			break
+		}
+	}
+	if err != nil {
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s : failed %d times.", arg, x.maxRetry)
+		return "", err
+	}
+	return outputStr, nil
 }
 
 // GetXrootBase Returns the root:// base URL
@@ -95,17 +117,10 @@ func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, in
 	}
 	eosLogger.Debug(ctx, "xrdcp.LS: [rooturl: %s]", rooturl)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
-	output, err := cmd.CombinedOutput()
-
+	outputStr, err := x.XrdcpWithRetry(ctx, "-s", rooturl, "-")
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s", rooturl)
 		return "", 1, err
 	}
-
-	outputStr := string(output)
-	outputStr = strings.TrimSpace(outputStr)
-
 	stdout, stderr, retc := x.ParseOutput(ctx, outputStr)
 	if retc > 0 {
 		if stderr != "" {
@@ -189,15 +204,11 @@ func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) 
 	}
 	eosLogger.Debug(ctx, "xrdcp.FILEINFO: [rooturl: %s]", rooturl)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
-	output, err := cmd.CombinedOutput()
-
+	outputStr, err := x.XrdcpWithRetry(ctx, "-s", rooturl, "-")
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s", rooturl)
 		return nil, err
 	}
 
-	outputStr := strings.TrimSpace(string(output))
 	stdout, stderr, retc := x.ParseOutput(ctx, outputStr)
 
 	if retc != 0 {
@@ -410,14 +421,12 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 	}
 	eosLogger.Debug(ctx, "xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
-	stdoutStderr, err := cmd.CombinedOutput()
+	outputStr, err := x.XrdcpWithRetry(ctx, "-N", "-f", "-p", src, eosurl)
 	if err != nil {
 		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath)
 	}
-	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
-	if output != "" {
-		eosLogger.Info(ctx, output, nil)
+	if outputStr != "" {
+		eosLogger.Info(ctx, outputStr, nil)
 	}
 
 	return err

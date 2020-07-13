@@ -111,11 +111,12 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	// Init filesystem
 	xrdcp := &Xrdcp{
-		MGMHost: os.Getenv("EOS"),
-		Path:    os.Getenv("VOLUME_PATH"),
-		User:    os.Getenv("EOSUSER"),
-		UID:     os.Getenv("EOSUID"),
-		GID:     os.Getenv("EOSGID"),
+		maxRetry: maxRetry,
+		MGMHost:  os.Getenv("EOS"),
+		Path:     os.Getenv("VOLUME_PATH"),
+		User:     os.Getenv("EOSUSER"),
+		UID:      os.Getenv("EOSUID"),
+		GID:      os.Getenv("EOSGID"),
 	}
 
 	filesystem := &eosFS{
@@ -135,6 +136,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	// and go
 	return &eosObjects{
+		maxRetry:          maxRetry,
 		path:              os.Getenv("VOLUME_PATH"),
 		hookurl:           os.Getenv("HOOKSURL"),
 		stage:             stage,

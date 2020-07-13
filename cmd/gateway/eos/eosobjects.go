@@ -30,6 +30,7 @@ import (
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
+	maxRetry          int
 	path              string
 	hookurl           string
 	stage             string
@@ -267,7 +268,7 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 		eosLogger.Debug(ctx, "CopyObject srcpath==destpath")
 	}
 
-	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts, 20)
+	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts)
 }
 
 // CopyObjectPart creates a part in a multipart upload by copying
@@ -326,7 +327,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		return objInfo, err
 	}
 
-	objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts, 20)
+	objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts)
 	if err == nil && objInfo.Size != data.Size() {
 		eosLogger.Error(ctx, err, "PUT: File on disk is not the correct size [disk: %d, expected: %d]", objInfo.Size, data.Size())
 		// Remove the file
@@ -345,7 +346,7 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) er
 		return minio.NotImplemented{}
 	}
 
-	e.FileSystem.rm(ctx, PathJoin(bucket, object))
+	_ = e.FileSystem.rm(ctx, PathJoin(bucket, object))
 	return nil
 }
 
@@ -385,16 +386,13 @@ func (e *eosObjects) GetObject(ctx context.Context, bucket, object string, start
 }
 
 // GetObjectInfoWithRetry because sometimes we need to wait for EOS to properly register a file
-func (e *eosObjects) GetObjectInfoWithRetry(ctx context.Context, bucket, object string, opts minio.ObjectOptions, maxRetry int) (objInfo minio.ObjectInfo, err error) {
+func (e *eosObjects) GetObjectInfoWithRetry(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	// We need to try and wait for the file to register with EOS if it's new
-	if maxRetry < 1 {
-		maxRetry = 1
-	}
 	sleepMax := 1000
 	sleepTime := 100
 	sleepInc := 100
 
-	for retry := 0; retry < maxRetry; retry++ {
+	for retry := 0; retry < e.maxRetry; retry++ {
 		objInfo, err = e.GetObjectInfo(ctx, bucket, object, opts)
 		if err == nil {
 			break
