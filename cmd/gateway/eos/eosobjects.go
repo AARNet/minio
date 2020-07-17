@@ -21,6 +21,10 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+	"encoding/base64"
+	"encoding/gob"
+
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/lifecycle"
@@ -39,6 +43,11 @@ type eosObjects struct {
 	validbuckets      bool
 	TransferList      *TransferList
 	FileSystem        *eosFS
+}
+
+type ListObjectsMarker struct {
+	Prefixes []string
+	Skip     int
 }
 
 // IsNotificationSupported returns whether notifications are applicable for this layer.
@@ -97,16 +106,16 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 	}
 
 	for _, dir := range dirs {
-		stat, err := e.FileSystem.DirStat(ctx, dir)
+		stat, err := e.FileSystem.DirStat(ctx, dir.Name)
 
 		if stat == nil {
 			eosLogger.Error(ctx, err, "ListBuckets: unable to stat [dir: %s]", dir)
 			continue
 		}
 
-		if stat.IsDir() && e.IsValidBucketName(strings.TrimRight(dir, "/")) {
+		if stat.IsDir() && e.IsValidBucketName(strings.TrimRight(dir.Name, "/")) {
 			b := minio.BucketInfo{
-				Name:    strings.TrimSuffix(dir, "/"),
+				Name:    strings.TrimSuffix(dir.Name, "/"),
 				Created: stat.ModTime,
 			}
 			buckets = append(buckets, b)
@@ -114,7 +123,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 			if !stat.IsDir() {
 				eosLogger.Debug(ctx, "Bucket: %s not a directory", dir)
 			}
-			if !e.IsValidBucketName(strings.TrimRight(dir, "/")) {
+			if !e.IsValidBucketName(strings.TrimRight(dir.Name, "/")) {
 				eosLogger.Debug(ctx, "Bucket: %s not a valid name", dir)
 			}
 		}
@@ -994,14 +1003,44 @@ func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) m
 	}
 }
 
+// ListObjectsToMarker - binary encoder for when you need more than a string
+func (e *eosObjects) ListObjectsToMarker(ctx context.Context, data ListObjectsMarker) (string, error) {
+	b := bytes.Buffer{}
+	en := gob.NewEncoder(&b)
+	err := en.Encode(data)
+	if err != nil {
+		eosLogger.Error(ctx, err, "ListObjectsToMarker: failed gob Encode")
+		return "", err
+	}
+
+	return base64.StdEncoding.EncodeToString(b.Bytes()), nil
+}
+
+// MarkerToListObjects - binary decoder for when you need more than a string
+func (e *eosObjects) MarkerToListObjects(ctx context.Context, str string) (ListObjectsMarker, error) {
+	data := ListObjectsMarker{}
+	by, err := base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		eosLogger.Error(ctx, err, "MarkerToListObjects: failed base64 Decode")
+		return ListObjectsMarker{}, err
+	}
+
+	b := bytes.Buffer{}
+	b.Write(by)
+	d := gob.NewDecoder(&b)
+	err = d.Decode(&data)
+	if err != nil {
+		eosLogger.Error(ctx, err, "MarkerToListObjects: failed gob Decode")
+		return ListObjectsMarker{}, err
+	}
+	return data, nil
+}
+
 // ListObjects - lists all blobs in a container filtered by prefix and marker
 func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
 	eosLogger.Stat(ctx, "S3cmd: ListObjects: [bucket: %s, prefix: %s, marker: %s, delimiter: %s, maxKeys: %d]", bucket, prefix, marker, delimiter, maxKeys)
 
-	result, err = e.ListObjectsRecurse(ctx, bucket, prefix, marker, delimiter, -1)
-	if err != nil {
-		return result, err
-	}
+	result, err = e.ListObjectsPaging(ctx, bucket, prefix, marker, delimiter, maxKeys)
 
 	// Need unique prefixes
 	trackUniq := make(map[string]bool)
@@ -1014,43 +1053,71 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 	}
 	result.Prefixes = prefixes
 
-	eosLogger.Debug(ctx, "ListObjects: Result: %+v", result)
+	eosLogger.Debug(ctx, "ListObjectsPaging: Result: %+v", result)
 	return result, err
 }
 
-// ListObjectsRecurse - Recursive function for interating through a directory tree
-func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
-	eosLogger.Debug(ctx, "bucket: %s, prefix: %s, delimiter: %s, maxKeys: %d", bucket, prefix, delimiter, maxKeys)
+// ListObjectsPaging - Non recursive lists all blobs in a container filtered by prefix and marker
+func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result minio.ListObjectsInfo, err error) {
 	isRecursive := (len(delimiter) == 0)
-	prefixIsDir := strings.HasSuffix(prefix, "/")
+	if maxKeys < 1 {
+		maxKeys = 1
+	}
 
 	// Don't do anything if delimiter and prefix are both slashes
 	if delimiter == "/" && prefix == "/" {
-		eosLogger.Debug(ctx, "Delimiter and prefix are both slash, returning blank result.")
+		eosLogger.Debug(ctx, "ListObjectsPaging: Delimiter and prefix are both slash, returning blank result.")
 		return result, nil
 	}
 
-	// It's never truncated.
-	result.IsTruncated = false
-
-	// Get a list of objects in the directory
-	// or the single object if it's not a directory
-	path := PathJoin(bucket, prefix)
-
-	// If the prefix is empty, set it to slash so we can list a directory.
-	if prefix == "" {
-		path = path + "/"
-		prefixIsDir = true
+	prefixes := []string{}
+	skip := 0
+	if marker != "" {
+		decodedMarker, err := e.MarkerToListObjects(ctx, marker)
+		if err != nil {
+			return result, err
+		}
+		prefixes = decodedMarker.Prefixes
+		skip = decodedMarker.Skip
+	} else {
+		prefixes = append(prefixes, prefix)
 	}
 
-	eosLogger.Debug(ctx, "Path after cleaning: path: %s", path)
+	objCounter := 0
+	for len(prefixes) > 0 {
+		prefix, prefixes = prefixes[0], prefixes[1:]
 
-	// We only want to list the directory and not it's contents if it doesn't end with /
-	if prefix != "" && !isRecursive && !prefixIsDir {
-		if isdir, _ := e.FileSystem.IsDir(ctx, path); isdir {
+		path := PathJoin(bucket, prefix)
+
+		// If the prefix is empty, set it to slash so we can list a directory.
+		if prefix == "" {
+			path = path + "/"
+		}
+
+		// Are we dealing with a single file or directory?
+		isdir, err := e.FileSystem.IsDir(ctx, path)
+		if err != nil {
+			return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
+		}
+		if !isdir {
+			//dealing with just one file
+			eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: one file [path: %s]", path)
+			stat, err := e.FileSystem.Stat(ctx, path)
+			if stat != nil {
+				o := e.NewObjectInfo(bucket, prefix, stat)
+				result.Objects = append(result.Objects, o)
+			}
+			return result, err
+		}
+
+		// At this point we are dealing with a directory
+
+		// We only want to list the directory and not it's contents if it doesn't end with /
+		if prefix != "" && !isRecursive && !strings.HasSuffix(prefix, "/") {
+			eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: one directory only [path: %s]", path)
 			stat, err := e.FileSystem.DirStat(ctx, path)
 			if err != nil {
-				eosLogger.Error(ctx, err, "ListObjects: Unable to stat directory [path: %s]", path)
+				eosLogger.Error(ctx, err, "ListObjectsPaging: Unable to stat directory [path: %s]", path)
 				return result, err
 			}
 			if stat != nil {
@@ -1058,82 +1125,95 @@ func (e *eosObjects) ListObjectsRecurse(ctx context.Context, bucket, prefix, mar
 				return result, err
 			}
 		}
-	}
 
-	// Otherwise we need to do some other stuff
-	objects, err := e.FileSystem.BuildCache(ctx, path, true)
-	defer e.FileSystem.DeleteCache(ctx)
+		// Otherwise we need to do some other stuff
+		eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: full list [prefix: %s, isRecursive: %b]", prefix, isRecursive)
 
-	if err != nil {
-		// We want to return nil error if the file is not found. So we don't break restic and others that expect a certain response
-		if err == errFileNotFound {
-			eosLogger.Debug(ctx, "File not found [path: %s]", path)
-			return result, nil
-		}
-		return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
-	}
-
-	for _, obj := range objects {
-		objIsDir := strings.HasSuffix(obj, "/")
-		// path, _ = filepath.Split(path)
-		objpath := PathJoin(path, obj)
-		objprefix := prefix
-		objCount := len(objects)
-
-		if objCount == 1 && prefix != "" && !isRecursive && filepath.Base(objprefix) == obj {
-			// Jump back one directory to fix the prefixes
-			// for individual files
-			objpath = PathJoin(bucket, objprefix)
-			objprefix = PathDir(objprefix)
+		if prefix != "" && !strings.HasSuffix(prefix, "/") {
+			prefix = prefix + "/"
 		}
 
-		// We need to call DirStat() so we don't recurse directories when we don't have to
-		var stat *FileStat
-		if objIsDir {
-			eosLogger.Debug(ctx, "e.FileSystem.DirStat(ctx, %s)", objpath)
-			stat, err = e.FileSystem.DirStat(ctx, objpath)
-		} else {
-			eosLogger.Debug(ctx, "e.FileSystem.Stat(ctx, %s)", objpath)
-			stat, err = e.FileSystem.Stat(ctx, objpath)
+		eosLogger.Debug(ctx, "ListObjectsPaging: Consider [path: %s, prefix: %s, prefixes: %s]", path, prefix, prefixes)
+
+		var objects []*FileStat
+
+		objects, err = e.FileSystem.BuildCache(ctx, path, true)
+		defer e.FileSystem.DeleteCache(ctx)
+		if err != nil {
+			// We want to return nil error if the file is not found. So we don't break restic and others that expect a certain response
+			if err == errFileNotFound {
+				eosLogger.Debug(ctx, "ListObjectsPaging: File not found [path: %s]", path)
+				return result, nil
+			}
+			return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
 		}
 
-		if stat != nil {
-			objName := PathJoin(objprefix, obj)
-			// Directories get added to prefixes, files to objects.
-			if stat.IsDir() && objName != prefix {
-				if !isRecursive {
-					result.Prefixes = append(result.Prefixes, objName)
-				}
+		objprefixCounter := 0
+		for _, obj := range objects {
+			objprefixCounter++
+			if skip > 0 {
+				skip--
+				continue
+			}
+
+			//have we done enough?
+			eosLogger.Debug(ctx, "ListObjectsPaging: obj.FullPath:%s, objCounter:%d, objprefixCounter:%d", obj.FullPath, objCounter, objprefixCounter)
+			if objCounter > maxKeys {
+				//add current prefix to the list of prefixes
+				prefixes = append([]string{prefix}, prefixes...)
+				data := ListObjectsMarker{Prefixes: prefixes, Skip: objprefixCounter - 1}
+				result.IsTruncated = true
+				result.NextMarker, err = e.ListObjectsToMarker(ctx, data)
+				eosLogger.Debug(ctx, "ListObjectsPaging: NextMarker data:%+v", data)
+				//eosLogger.Debug(ctx, "ListObjectsPaging: NextMarker encoded:%s", result.NextMarker)
+				return result, err
+			}
+
+			objCounter++
+			objpath := PathJoin(path, obj.Name)
+			objprefix := prefix
+
+			// We need to call DirStat() so we don't recurse directories when we don't have to
+			var stat *FileStat
+			if obj.File {
+				eosLogger.Debug(ctx, "ListObjectsPaging: e.FileSystem.Stat(ctx, %s)", objpath)
+				stat, err = e.FileSystem.Stat(ctx, objpath)
 			} else {
-				if objCount == 1 {
-					// Don't add the object if there is one object and the prefix ends with / (ie. is a dir)
-					if strings.HasSuffix(prefix, "/") && !strings.HasSuffix(objName, "/") && strings.HasSuffix(prefix, objName) {
-						return result, minio.ObjectNotFound{Bucket: bucket, Object: prefix}
+				eosLogger.Debug(ctx, "ListObjectsPaging: e.FileSystem.DirStat(ctx, %s/)", objpath)
+				stat, err = e.FileSystem.DirStat(ctx, objpath+"/")
+			}
+
+			if stat != nil {
+				objName := PathJoin(objprefix, obj.Name)
+				if !obj.File {
+					objName = objName + "/"
+				}
+
+				eosLogger.Debug(ctx, "ListObjectsPaging: found object: %s [bucket: %s, prefix: %s, objCounter: %d]", objName, bucket, prefix, objCounter)
+				// Directories get added to prefixes, files to objects.
+				if !obj.File && objName != prefix {
+					result.Prefixes = append(result.Prefixes, objName)
+					if isRecursive {
+						// If there's no delimiter, we need to get information from subdirectories too
+						nextPrefix := PathJoin(prefix, obj.Name)
+						if !ContainsString(prefixes, nextPrefix) { //sometimes we get the same prefix twice, not sure why
+							eosLogger.Debug(ctx, "ListObjectsPaging: Adding to prefixes: %s current prefix: %s prefixes: %s", nextPrefix, prefix, prefixes)
+							prefixes = append(prefixes, nextPrefix)
+						}
+					}
+				} else {
+					if objName != "." {
+						eosLogger.Debug(ctx, "ListObjectsPaging: Stat: NewObjectInfo(%s, %s)", bucket, objName)
+						o := e.NewObjectInfo(bucket, objName, stat)
+						result.Objects = append(result.Objects, o)
 					}
 				}
-				if objName != "." {
-					eosLogger.Debug(ctx, "Stat: NewObjectInfo(%s, %s)", bucket, objName)
-					o := e.NewObjectInfo(bucket, objName, stat)
-					result.Objects = append(result.Objects, o)
-				}
+			} else {
+				eosLogger.Error(ctx, err, "ListObjectsPaging: unable to stat [objpath: %s]", objpath)
 			}
-
-			// If there's no delimiter, we need to get information from subdirectories too
-			if isRecursive && stat.IsDir() {
-				eosLogger.Debug(ctx, "ListObjects: Recursing through %s%s", prefix, obj)
-				subdir, err := e.ListObjectsRecurse(ctx, bucket, PathJoin(prefix, obj), marker, delimiter, -1)
-				if err != nil {
-					return result, err
-				}
-				// Merge objects and prefixes from the recursive call
-				// we don't need prefixes.
-				result.Objects = append(result.Objects, subdir.Objects...)
-			}
-		} else {
-			eosLogger.Error(ctx, err, "ListObjects: unable to stat [objpath: %s]", objpath)
 		}
+		skip = 0
 	}
-
 	return result, err
 }
 

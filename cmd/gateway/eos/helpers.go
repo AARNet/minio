@@ -139,3 +139,12 @@ func UnescapePath(str string) string {
 
 	return unescaped
 }
+
+func ContainsString(sl []string, v string) bool {
+	for _, vv := range sl {
+		if vv == v {
+			return true
+		}
+	}
+	return false
+}

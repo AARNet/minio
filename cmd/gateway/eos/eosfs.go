@@ -154,7 +154,7 @@ func (e *eosFS) isEOSSysFile(name string) bool {
 }
 
 // BuildCache creates a cache of file stats for the duration of the request
-func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
+func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []*FileStat, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	if cacheReset {
 		reqStatCache.Reset()
@@ -188,25 +188,14 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 			continue
 		}
 		reqStatCache.Write(object.FullPath, object)
-
-		if object.File {
-			// If we find an entry matching the eospath and it's a file, return it.
-			if object.FullPath == strings.TrimSuffix(eospath, "/") {
-				eosLogger.Debug(ctx, "Object matches requested path, returning it [object: %s, path: %s]", object.FullPath, eospath)
-				return []string{object.Name}, nil
-			}
-			entries = append(entries, object.Name)
-		} else {
-			// If we find an entry matching the eospath and is a directory, skip it.
-			if object.FullPath == strings.TrimSuffix(eospath, "/")+"/" {
-				continue
-			}
-			// Add a slash if it's a directory
-			entries = append(entries, object.Name+"/")
-		}
+		entries = append(entries, object)
+		eosLogger.Debug(ctx, "CACHE: ADD object.FullPath: %s", object.FullPath)
 	}
 
-	sort.Strings(entries)
+	//do we really need to sort it?
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].FullPath < entries[j].FullPath
+	})
 	return entries, err
 }
 
