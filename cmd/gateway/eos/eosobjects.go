@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"bytes"
+	"compress/lzw"
 	"encoding/base64"
 	"encoding/gob"
 
@@ -1005,6 +1006,7 @@ func (e *eosObjects) NewObjectInfo(bucket string, name string, stat *FileStat) m
 
 // ListObjectsToMarker - binary encoder for when you need more than a string
 func (e *eosObjects) ListObjectsToMarker(ctx context.Context, data ListObjectsMarker) (string, error) {
+	// Make data a []byte
 	b := bytes.Buffer{}
 	en := gob.NewEncoder(&b)
 	err := en.Encode(data)
@@ -1013,20 +1015,45 @@ func (e *eosObjects) ListObjectsToMarker(ctx context.Context, data ListObjectsMa
 		return "", err
 	}
 
-	return base64.StdEncoding.EncodeToString(b.Bytes()), nil
+	// Compress it
+	var wb bytes.Buffer
+	writer := lzw.NewWriter(&wb, lzw.LSB, 8)
+	_, err = writer.Write(b.Bytes())
+	if err != nil {
+		eosLogger.Error(ctx, err, "ListObjectsToMarker: failed lzw write")
+		return "", err
+	}
+	writer.Close()
+
+	// base64 it
+	return base64.RawStdEncoding.EncodeToString(wb.Bytes()), nil
 }
 
 // MarkerToListObjects - binary decoder for when you need more than a string
 func (e *eosObjects) MarkerToListObjects(ctx context.Context, str string) (ListObjectsMarker, error) {
 	data := ListObjectsMarker{}
-	by, err := base64.StdEncoding.DecodeString(str)
+
+	// Un-base64 it
+	by, err := base64.RawStdEncoding.DecodeString(str)
 	if err != nil {
 		eosLogger.Error(ctx, err, "MarkerToListObjects: failed base64 Decode")
 		return ListObjectsMarker{}, err
 	}
 
+	// Decompress it
+	var rb bytes.Buffer
+	r := lzw.NewReader(bytes.NewReader(by), lzw.LSB, 8)
+	defer r.Close()
+	rb.Reset()
+	_, err = io.Copy(&rb, r)
+	if err != nil {
+		eosLogger.Error(ctx, err, "MarkerToListObjects: failed lzw read")
+		return ListObjectsMarker{}, err
+	}
+
+	// Make []byte to data
 	b := bytes.Buffer{}
-	b.Write(by)
+	b.Write(rb.Bytes())
 	d := gob.NewDecoder(&b)
 	err = d.Decode(&data)
 	if err != nil {
@@ -1042,18 +1069,7 @@ func (e *eosObjects) ListObjects(ctx context.Context, bucket, prefix, marker, de
 
 	result, err = e.ListObjectsPaging(ctx, bucket, prefix, marker, delimiter, maxKeys)
 
-	// Need unique prefixes
-	trackUniq := make(map[string]bool)
-	prefixes := make([]string, 0)
-	for _, val := range result.Prefixes {
-		if _, ok := trackUniq[val]; !ok {
-			trackUniq[val] = true
-			prefixes = append(prefixes, val)
-		}
-	}
-	result.Prefixes = prefixes
-
-	eosLogger.Debug(ctx, "ListObjectsPaging: Result: %+v", result)
+	eosLogger.Debug(ctx, "ListObjects: Result: %+v", result)
 	return result, err
 }
 
@@ -1171,7 +1187,6 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 
 			objCounter++
 			objpath := PathJoin(path, obj.Name)
-			objprefix := prefix
 
 			// We need to call DirStat() so we don't recurse directories when we don't have to
 			var stat *FileStat
@@ -1184,22 +1199,22 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 			}
 
 			if stat != nil {
-				objName := PathJoin(objprefix, obj.Name)
-				if !obj.File {
-					objName = objName + "/"
-				}
+				objName := strings.TrimPrefix(obj.FullPath, PathJoin(e.path, bucket)+"/")
 
 				eosLogger.Debug(ctx, "ListObjectsPaging: found object: %s [bucket: %s, prefix: %s, objCounter: %d]", objName, bucket, prefix, objCounter)
 				// Directories get added to prefixes, files to objects.
-				if !obj.File && objName != prefix {
-					result.Prefixes = append(result.Prefixes, objName)
-					if isRecursive {
-						// If there's no delimiter, we need to get information from subdirectories too
-						nextPrefix := PathJoin(prefix, obj.Name)
-						if !ContainsString(prefixes, nextPrefix) { //sometimes we get the same prefix twice, not sure why
-							eosLogger.Debug(ctx, "ListObjectsPaging: Adding to prefixes: %s current prefix: %s prefixes: %s", nextPrefix, prefix, prefixes)
+				if !obj.File {
+					if objName != prefix {
+						eosLogger.Debug(ctx, "ListObjectsPaging: NOTPREFIX : %s vs %s", prefix, objName)
+						result.Prefixes = append(result.Prefixes, objName)
+						if isRecursive {
+							// We need to get information from subdirectories too
+							nextPrefix := PathJoin(prefix, obj.Name)
+							eosLogger.Debug(ctx, "ListObjectsPaging: Adding to prefixes: %s current prefix: %s prefixes: %s objName: %s", nextPrefix, prefix, prefixes, objName)
 							prefixes = append(prefixes, nextPrefix)
 						}
+					} else {
+						eosLogger.Debug(ctx, "ListObjectsPaging: Skipping prefix: %s", objName)
 					}
 				} else {
 					if objName != "." {

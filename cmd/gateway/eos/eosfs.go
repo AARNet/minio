@@ -19,7 +19,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
-	"sort"
+	//"sort"
 	"strconv"
 	"strings"
 )
@@ -193,9 +193,9 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 	}
 
 	//do we really need to sort it?
-	sort.Slice(entries, func(i, j int) bool {
+	/*sort.Slice(entries, func(i, j int) bool {
 		return entries[i].FullPath < entries[j].FullPath
-	})
+	})*/
 	return entries, err
 }
 
