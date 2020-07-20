@@ -189,7 +189,7 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		}
 		reqStatCache.Write(object.FullPath, object)
 		entries = append(entries, object)
-		eosLogger.Debug(ctx, "CACHE: ADD object.FullPath: %s", object.FullPath)
+		eosLogger.Debug(ctx, "CACHE: ADD object.FullPath: %s : %+v", object.FullPath, object)
 	}
 
 	//do we really need to sort it?
