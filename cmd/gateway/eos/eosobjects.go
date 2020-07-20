@@ -36,6 +36,7 @@ import (
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
 	maxRetry          int
+	maxKeys           int
 	path              string
 	hookurl           string
 	stage             string
@@ -1078,6 +1079,9 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 	isRecursive := (len(delimiter) == 0)
 	if maxKeys < 1 {
 		maxKeys = 1
+	}
+	if maxKeys == 1000 { //1000 is the minio default
+		maxKeys = e.maxKeys
 	}
 
 	// Don't do anything if delimiter and prefix are both slashes

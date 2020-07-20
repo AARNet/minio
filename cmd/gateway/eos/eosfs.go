@@ -19,12 +19,14 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
 
 type eosFS struct {
 	maxRetry   int
+	sort       bool
 	MGMHost    string
 	HTTPHost   string
 	Proxy      string
@@ -191,6 +193,11 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		eosLogger.Debug(ctx, "CACHE: ADD object.FullPath: %s : %+v", object.FullPath, object)
 	}
 
+	if e.sort {
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].FullPath < entries[j].FullPath
+		})
+	}
 	return entries, err
 }
 
