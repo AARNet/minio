@@ -1195,16 +1195,16 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 			}
 
 			objCounter++
-			objpath := PathJoin(path, obj.Name)
 
 			// We need to call DirStat() so we don't recurse directories when we don't have to
 			var stat *FileStat
+			objpath := strings.TrimPrefix(obj.FullPath, e.path)
 			if obj.File {
 				eosLogger.Debug(ctx, "ListObjectsPaging: e.FileSystem.Stat(ctx, %s)", objpath)
 				stat, err = e.FileSystem.Stat(ctx, objpath)
 			} else {
 				eosLogger.Debug(ctx, "ListObjectsPaging: e.FileSystem.DirStat(ctx, %s/)", objpath)
-				stat, err = e.FileSystem.DirStat(ctx, objpath+"/")
+				stat, err = e.FileSystem.DirStat(ctx, objpath)
 			}
 
 			if stat != nil {
@@ -1233,7 +1233,7 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 					}
 				}
 			} else {
-				eosLogger.Error(ctx, err, "ListObjectsPaging: unable to stat [objpath: %s]", objpath)
+				eosLogger.Error(ctx, err, "ListObjectsPaging: unable to stat [obj: %+v e.path: %s]", obj, e.path)
 			}
 		}
 		skip = 0
