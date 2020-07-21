@@ -105,7 +105,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	sort, ok := strconv.Atoi(os.Getenv("SORT"))
 	if ok != nil {
-		sort = 1
+		sort = 0
 	}
 
 	eosLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
