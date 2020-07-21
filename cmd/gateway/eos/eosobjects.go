@@ -108,7 +108,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 	}
 
 	for _, dir := range dirs {
-		if dir.FullPath == e.path {
+		if dir.FullPath == e.path+"/" {
 			continue
 		}
 
