@@ -108,6 +108,11 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 	}
 
 	for _, dir := range dirs {
+		if dir.FullPath == e.path {
+			continue
+		}
+
+		eosLogger.Debug(ctx, "Consider Bucket: %s (%s)", dir.Name, dir.FullPath)
 		stat, err := e.FileSystem.DirStat(ctx, dir.Name)
 
 		if stat == nil {
@@ -123,10 +128,10 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 			buckets = append(buckets, b)
 		} else {
 			if !stat.IsDir() {
-				eosLogger.Debug(ctx, "Bucket: %s not a directory", dir)
+				eosLogger.Debug(ctx, "Bucket: %s not a directory", dir.Name)
 			}
 			if !e.IsValidBucketName(strings.TrimRight(dir.Name, "/")) {
-				eosLogger.Debug(ctx, "Bucket: %s not a valid name", dir)
+				eosLogger.Debug(ctx, "Bucket: %s not a valid name", dir.Name)
 			}
 		}
 	}
