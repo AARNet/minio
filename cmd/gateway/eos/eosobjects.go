@@ -1126,7 +1126,7 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 		}
 		if !isdir {
 			//dealing with just one file
-			eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: one file [path: %s]", path)
+			eosLogger.Debug(ctx, "ListObjectsPaging: MODE: one file [path: %s]", path)
 			stat, err := e.FileSystem.Stat(ctx, path)
 			if stat != nil {
 				o := e.NewObjectInfo(bucket, prefix, stat)
@@ -1139,7 +1139,7 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 
 		// We only want to list the directory and not it's contents if it doesn't end with /
 		if prefix != "" && !isRecursive && !strings.HasSuffix(prefix, "/") {
-			eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: one directory only [path: %s]", path)
+			eosLogger.Debug(ctx, "ListObjectsPaging: MODE: one directory only [path: %s]", path)
 			stat, err := e.FileSystem.DirStat(ctx, path)
 			if err != nil {
 				eosLogger.Error(ctx, err, "ListObjectsPaging: Unable to stat directory [path: %s]", path)
@@ -1152,7 +1152,7 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 		}
 
 		// Otherwise we need to do some other stuff
-		eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: full list [prefix: %s, isRecursive: %t]", prefix, isRecursive)
+		eosLogger.Debug(ctx, "ListObjectsPaging: MODE: full list [prefix: %s, isRecursive: %t]", prefix, isRecursive)
 
 		if prefix != "" && !strings.HasSuffix(prefix, "/") {
 			prefix = prefix + "/"
