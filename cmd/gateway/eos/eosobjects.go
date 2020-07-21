@@ -1152,7 +1152,7 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 		}
 
 		// Otherwise we need to do some other stuff
-		eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: full list [prefix: %s, isRecursive: %b]", prefix, isRecursive)
+		eosLogger.Error(ctx, err, "ListObjectsPaging: MODE: full list [prefix: %s, isRecursive: %t]", prefix, isRecursive)
 
 		if prefix != "" && !strings.HasSuffix(prefix, "/") {
 			prefix = prefix + "/"
