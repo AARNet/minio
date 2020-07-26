@@ -526,8 +526,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 				err = nil
 				break
 			}
-			// Otherwise, use the go HTTP client
-		} else {
+		} else { // Otherwise, use the go HTTP client
 			var doErr error
 			client, req, doErr := e.NewRequest("PUT", eosurl, bytes.NewReader(data))
 			if doErr != nil {
@@ -571,11 +570,6 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 				err = nil
 				break
 			}
-		}
-
-		// If we reach here and there is no error and the retry is the maximum, lets set an error
-		if err == nil && retry == e.maxRetry {
-			err = fmt.Errorf("Exceeded retries")
 		}
 	}
 
@@ -668,12 +662,12 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 			buf := &bytes.Buffer{}
 			bRead, err := io.Copy(buf, res.Body)
 			if err != nil {
-				eosLogger.Error(ctx, nil, "eosfs.ReadChunk: webdav.GET: Failed to copy curl data to buffer [eosurl: %s, error: %+v, bRead: %d, length: %d]", eosurl, err, bRead, length)
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy curl data to buffer [eosurl: %s, bRead: %d, length: %d]", eosurl, bRead, length)
 				Sleep()
 				continue
 			}
 			if bRead != length {
-				eosLogger.Error(ctx, nil, "eosfs.ReadChunk: webdav.GET: Failed to copy curl data to buffer with correct length [eosurl: %s, error: %+v, bRead: %d, length: %d]", eosurl, err, bRead, length)
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy curl data to buffer with correct length [eosurl: %s, bRead: %d, length: %d]", eosurl, bRead, length)
 				Sleep()
 				continue
 			}
@@ -681,7 +675,7 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 			//write buffer to data writer
 			written, err := io.Copy(data, buf)
 			if err != nil {
-				eosLogger.Error(ctx, nil, "eosfs.ReadChunk: webdav.GET: Failed to copy buffer data to data writer [eosurl: %s, error: %+v, written: %d]", eosurl, err, written)
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy buffer data to data writer [eosurl: %s, written: %d]", eosurl, written)
 				Sleep()
 				continue
 			}

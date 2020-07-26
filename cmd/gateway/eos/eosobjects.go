@@ -10,8 +10,12 @@ package eos
 
 import (
 	"bufio"
+	"bytes"
+	"compress/lzw"
 	"context"
 	"crypto/md5"
+	"encoding/base64"
+	"encoding/gob"
 	"encoding/hex"
 	"io"
 	"io/ioutil"
@@ -20,11 +24,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"bytes"
-	"compress/lzw"
-	"encoding/base64"
-	"encoding/gob"
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
@@ -1050,7 +1049,6 @@ func (e *eosObjects) MarkerToListObjects(ctx context.Context, str string) (ListO
 	var rb bytes.Buffer
 	r := lzw.NewReader(bytes.NewReader(by), lzw.LSB, 8)
 	defer r.Close()
-	rb.Reset()
 	_, err = io.Copy(&rb, r)
 	if err != nil {
 		eosLogger.Error(ctx, err, "MarkerToListObjects: failed lzw read")
@@ -1058,9 +1056,7 @@ func (e *eosObjects) MarkerToListObjects(ctx context.Context, str string) (ListO
 	}
 
 	// Make []byte to data
-	b := bytes.Buffer{}
-	b.Write(rb.Bytes())
-	d := gob.NewDecoder(&b)
+	d := gob.NewDecoder(&rb)
 	err = d.Decode(&data)
 	if err != nil {
 		eosLogger.Error(ctx, err, "MarkerToListObjects: failed gob Decode")

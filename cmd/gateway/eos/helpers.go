@@ -140,6 +140,7 @@ func UnescapePath(str string) string {
 	return unescaped
 }
 
+// ContainsString - returns true when string v is in a slice sl
 func ContainsString(sl []string, v string) bool {
 	for _, vv := range sl {
 		if vv == v {

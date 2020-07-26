@@ -45,7 +45,6 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	} else {
 		MaxLogLevel = loglevel
 	}
-	//MaxLogLevel = 3 // Force debug for dev
 
 	stage := os.Getenv("EOSSTAGE")
 	if stage != "" {
@@ -103,7 +102,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		maxKeys = 1000
 	}
 
-	sort, ok := strconv.Atoi(os.Getenv("SORT"))
+	sort, ok := strconv.Atoi(os.Getenv("EOSSORTFILELISTING"))
 	if ok != nil {
 		sort = 0
 	}
@@ -119,7 +118,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	eosLogger.Startup("EOS FOREGROUND TRANSFER FROM STAGING: %t", foregroundStaging)
 	eosLogger.Startup("EOS MAX RETRY: %d", maxRetry)
 	eosLogger.Startup("EOS MAX KEYS: %d", maxKeys)
-	eosLogger.Startup("EOS SORT: %d", sort)
+	eosLogger.Startup("EOS SORT FILE LISTING: %d", sort)
 	eosLogger.Startup("EOS LOG LEVEL: %d", loglevel)
 
 	// Init filesystem
