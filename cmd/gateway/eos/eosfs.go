@@ -25,6 +25,8 @@ import (
 )
 
 type eosFS struct {
+	maxRetry   int
+	sort       bool
 	MGMHost    string
 	HTTPHost   string
 	Proxy      string
@@ -39,11 +41,11 @@ type eosFS struct {
 }
 
 var (
-	errFileNotFound     = errors.New("EOS: File Not Found")
-	errDiskAccessDenied = errors.New("EOS: Disk Access Denied")
-	errFilePathBad      = errors.New("EOS: Bad File Path")
-	errResponseIsNil    = errors.New("EOS: Response body is nil")
-	errIncorrectPutStatusCode  = errors.New("EOS: Statuscode for PUT response was not 201")
+	errFileNotFound           = errors.New("EOS: File Not Found")
+	errDiskAccessDenied       = errors.New("EOS: Disk Access Denied")
+	errFilePathBad            = errors.New("EOS: Bad File Path")
+	errResponseIsNil          = errors.New("EOS: Response body is nil")
+	errIncorrectPutStatusCode = errors.New("EOS: Statuscode for PUT response was not 201")
 )
 
 // HTTPClient sets up and returns a http.Client
@@ -153,7 +155,7 @@ func (e *eosFS) isEOSSysFile(name string) bool {
 }
 
 // BuildCache creates a cache of file stats for the duration of the request
-func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []string, err error) {
+func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []*FileStat, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	if cacheReset {
 		reqStatCache.Reset()
@@ -187,25 +189,15 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 			continue
 		}
 		reqStatCache.Write(object.FullPath, object)
-
-		if object.File {
-			// If we find an entry matching the eospath and it's a file, return it.
-			if object.FullPath == strings.TrimSuffix(eospath, "/") {
-				eosLogger.Debug(ctx, "Object matches requested path, returning it [object: %s, path: %s]", object.FullPath, eospath)
-				return []string{object.Name}, nil
-			}
-			entries = append(entries, object.Name)
-		} else {
-			// If we find an entry matching the eospath and is a directory, skip it.
-			if object.FullPath == strings.TrimSuffix(eospath, "/")+"/" {
-				continue
-			}
-			// Add a slash if it's a directory
-			entries = append(entries, object.Name+"/")
-		}
+		entries = append(entries, object)
+		eosLogger.Debug(ctx, "CACHE: ADD object.FullPath: %s : %+v", object.FullPath, object)
 	}
 
-	sort.Strings(entries)
+	if e.sort {
+		sort.Slice(entries, func(i, j int) bool {
+			return entries[i].FullPath < entries[j].FullPath
+		})
+	}
 	return entries, err
 }
 
@@ -506,8 +498,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	eosurl := "http://" + e.HTTPHost + eospath
 	eosLogger.Debug(ctx, "EOScmd: webdav.PUT [eosurl: "+eosurl+"]", nil)
 
-	maxRetry := 10
-	for retry := 1; retry <= maxRetry; retry++ {
+	for retry := 1; retry <= e.maxRetry; retry++ {
 		// If it contains %, use curl (apparently the go http client doesn't do this well)
 		if strings.IndexByte(p, '%') >= 0 {
 			var doErr error
@@ -535,8 +526,7 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 				err = nil
 				break
 			}
-		// Otherwise, use the go HTTP client
-		} else {
+		} else { // Otherwise, use the go HTTP client
 			var doErr error
 			client, req, doErr := e.NewRequest("PUT", eosurl, bytes.NewReader(data))
 			if doErr != nil {
@@ -581,16 +571,10 @@ func (e *eosFS) Put(ctx context.Context, p string, data []byte) (err error) {
 				break
 			}
 		}
-
-		// If we reach here and there is no error and the retry is the maximum, lets set an error
-		if err == nil && retry == maxRetry {
-			err = fmt.Errorf("Exceeded retries")
-		}
 	}
 
-
 	if err != nil {
-		eosLogger.Error(ctx, err, "ERROR: EOSput failed %d times. [eosurl %s]", maxRetry, eosurl)
+		eosLogger.Error(ctx, err, "eosfs.Put: EOSput failed %d times. [eosurl %s]", e.maxRetry, eosurl)
 		// remove the file on failure so we don't end up with left over 0 byte files
 		_ = e.rm(ctx, p)
 	}
@@ -651,29 +635,54 @@ func (e *eosFS) ReadChunk(ctx context.Context, p string, offset, length int64, d
 		eosurl := fmt.Sprintf("http://%s%s", e.HTTPHost, eospath)
 		eosLogger.Debug(ctx, "EOScmd: webdav.GET: [eosurl: %s]", eosurl)
 
-		client, req, err := e.NewRequest("GET", eosurl, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
-		req.Close = true
-		res, err := client.Do(req)
+		for retry := 1; retry <= e.maxRetry; retry++ {
+			client, req, err := e.NewRequest("GET", eosurl, nil)
+			if err != nil {
+				Sleep()
+				continue
+			}
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
+			req.Close = true
+			res, err := client.Do(req)
 
-		if err != nil {
-			eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET [eosurl: %s]", eosurl)
-			return err
-		}
-		// TODO: Might need to return here if res is nil
-		if res != nil {
-			defer res.Body.Close()
-		} else {
-			eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: response body is nil [eosurl: %s]", eosurl)
-		}
+			if err != nil {
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET [eosurl: %s]", eosurl)
+				Sleep()
+				continue
+			}
+			if res != nil {
+				defer res.Body.Close()
+			} else {
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: response body is nil [eosurl: %s]", eosurl)
+				Sleep()
+				continue
+			}
 
-		_, err = io.CopyN(data, res.Body, length)
+			//did we get the right length?
+			buf := &bytes.Buffer{}
+			bRead, err := io.Copy(buf, res.Body)
+			if err != nil {
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy curl data to buffer [eosurl: %s, bRead: %d, length: %d]", eosurl, bRead, length)
+				Sleep()
+				continue
+			}
+			if bRead != length {
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy curl data to buffer with correct length [eosurl: %s, bRead: %d, length: %d]", eosurl, bRead, length)
+				Sleep()
+				continue
+			}
+
+			//write buffer to data writer
+			written, err := io.Copy(data, buf)
+			if err != nil {
+				eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy buffer data to data writer [eosurl: %s, written: %d]", eosurl, written)
+				Sleep()
+				continue
+			}
+			break
+		}
 		if err != nil {
-			eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed to copy data to writer [eosurl: %s]", eosurl)
-			return err
+			eosLogger.Error(ctx, err, "eosfs.ReadChunk: webdav.GET: Failed %d times. [eosurl %s]", e.maxRetry, eosurl)
 		}
 	}
 	return err

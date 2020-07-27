@@ -26,14 +26,37 @@ import (
 
 // Xrdcp ... struct
 type Xrdcp struct {
-	Path    string
-	MGMHost string
-	User    string
-	UID     string
-	GID     string
+	maxRetry int
+	Path     string
+	MGMHost  string
+	User     string
+	UID      string
+	GID      string
 }
 
-// GetXrootBase Returns the root:// base URL
+// XrdcpWithRetry - Run xrdcp in a retry loop
+func (x *Xrdcp) XrdcpWithRetry(ctx context.Context, arg ...string) (outputStr string, err error) {
+	for retry := 1; retry <= x.maxRetry; retry++ {
+		cmd := exec.Command("/usr/bin/xrdcp", arg...)
+		output, err := cmd.CombinedOutput()
+
+		if err != nil {
+			eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s (attempt:%d)", arg, retry)
+			Sleep()
+			continue
+		} else {
+			outputStr = strings.TrimSpace(string(output))
+			break
+		}
+	}
+	if err != nil {
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s : failed %d times.", arg, x.maxRetry)
+		return "", err
+	}
+	return outputStr, nil
+}
+
+// GetXrootBase - Returns the root:// base URL
 func (x *Xrdcp) GetXrootBase() string {
 	return fmt.Sprintf("root://%s@%s/", x.User, x.MGMHost)
 }
@@ -54,7 +77,7 @@ func (x *Xrdcp) UnescapedURI(uripath string, filepath string) (string, error) {
 	return xrduri, nil
 }
 
-// AbsoluteEOSPath Normalise an EOS path
+// AbsoluteEOSPath - Normalise an EOS path
 func (x *Xrdcp) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	if strings.Contains(path, "..") {
 		return "", errFilePathBad
@@ -63,7 +86,7 @@ func (x *Xrdcp) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	return eosPath, nil
 }
 
-// FileExists Check if a file or directory exists (returns true on error or file existence, otherwise false)
+// FileExists - Check if a file or directory exists (returns true on error or file existence, otherwise false)
 func (x *Xrdcp) FileExists(ctx context.Context, path string) (bool, error) {
 	_, retc, err := x.Ls(ctx, "sdF", path)
 	if retc == 0 {
@@ -77,7 +100,7 @@ func (x *Xrdcp) FileExists(ctx context.Context, path string) (bool, error) {
 	return false, nil
 }
 
-// IsDir Check if a path is a file or directory
+// IsDir - Check if a path is a file or directory
 func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 	result, _, err := x.Ls(ctx, "dF", path)
 	if err == nil && strings.HasSuffix(result, "/") {
@@ -86,7 +109,7 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 	return false, err
 }
 
-// Ls Perform an "ls" using xrdcp
+// Ls - Perform an "ls" using xrdcp
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
 	rooturl, err := x.UnescapedURI(fmt.Sprintf("/proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path={{filepath}}", lsflags), path)
 	if err != nil {
@@ -95,17 +118,10 @@ func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, in
 	}
 	eosLogger.Debug(ctx, "xrdcp.LS: [rooturl: %s]", rooturl)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
-	output, err := cmd.CombinedOutput()
-
+	outputStr, err := x.XrdcpWithRetry(ctx, "-s", rooturl, "-")
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s", rooturl)
 		return "", 1, err
 	}
-
-	outputStr := string(output)
-	outputStr = strings.TrimSpace(outputStr)
-
 	stdout, stderr, retc := x.ParseOutput(ctx, outputStr)
 	if retc > 0 {
 		if stderr != "" {
@@ -117,7 +133,7 @@ func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, in
 	return stdout, retc, err
 }
 
-// ParseOutput Helper method to parse xrdcp result format
+// ParseOutput - Helper method to parse xrdcp result format
 func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string, int64) {
 
 	stdoutidx := strings.Index(result, "mgm.proc.stdout=")
@@ -180,7 +196,7 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 	return parsedobjects, nil
 }
 
-// Fileinfo use fileinfo -m to get file info
+// Fileinfo - use fileinfo -m to get file info
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) {
 	rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path={{filepath}}", path)
 	if err != nil {
@@ -189,15 +205,11 @@ func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) 
 	}
 	eosLogger.Debug(ctx, "xrdcp.FILEINFO: [rooturl: %s]", rooturl)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
-	output, err := cmd.CombinedOutput()
-
+	outputStr, err := x.XrdcpWithRetry(ctx, "-s", rooturl, "-")
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s", rooturl)
 		return nil, err
 	}
 
-	outputStr := strings.TrimSpace(string(output))
 	stdout, stderr, retc := x.ParseOutput(ctx, outputStr)
 
 	if retc != 0 {
@@ -213,7 +225,7 @@ func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) 
 	return parsedobjects, nil
 }
 
-// GetFilenameFromObject finds the filename, removes it from the object and returns it
+// GetFilenameFromObject - finds the filename, removes it from the object and returns it
 func (x *Xrdcp) GetFilenameFromObject(ctx context.Context, object string) (string, string) {
 	// First pair should be keylength.file, which contains the filename length
 	// so split the string on space once to get that value
@@ -244,7 +256,7 @@ func (x *Xrdcp) GetFilenameFromObject(ctx context.Context, object string) (strin
 	return filename, object
 }
 
-// ParseFileInfo parses the xrdcp formatted result into a named array
+// ParseFileInfo - parses the xrdcp formatted result into a named array
 func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 	object = strings.TrimSpace(object)
 	if object == "" {
@@ -413,7 +425,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 	return responseGlob, nil
 }
 
-// Put ... puts a file
+// Put - puts a file
 func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 	eospath, err := x.AbsoluteEOSPath(dst)
 	if err != nil {
@@ -427,20 +439,18 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
 	}
 	eosLogger.Debug(ctx, "xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
-	cmd := exec.Command("/usr/bin/xrdcp", "-N", "-f", "-p", src, eosurl)
-	stdoutStderr, err := cmd.CombinedOutput()
+	outputStr, err := x.XrdcpWithRetry(ctx, "-N", "-f", "-p", src, eosurl)
 	if err != nil {
 		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath)
 	}
-	output := strings.TrimSpace(fmt.Sprintf("%s", stdoutStderr))
-	if output != "" {
-		eosLogger.Info(ctx, output, nil)
+	if outputStr != "" {
+		eosLogger.Info(ctx, outputStr, nil)
 	}
 
 	return err
 }
 
-// ReadChunk ... reads a chunk
+// ReadChunk - reads a chunk
 func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, data io.Writer) (err error) {
 	eospath, err := x.AbsoluteEOSPath(p)
 	if err != nil {

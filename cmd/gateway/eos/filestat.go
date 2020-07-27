@@ -26,7 +26,7 @@ type FileStat struct {
 }
 
 const (
-	defaultETag string = "00000000000000000000000000000000"
+	defaultETag  string = "00000000000000000000000000000000"
 	zerobyteETag string = "d41d8cd98f00b204e9800998ecf8427e"
 )
 
