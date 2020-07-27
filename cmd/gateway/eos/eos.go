@@ -97,9 +97,9 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 		maxRetry = 10
 	}
 
-	maxKeys, ok := strconv.Atoi(os.Getenv("MAX_KEYS"))
+	maxKeys, ok := strconv.Atoi(os.Getenv("OVERWRITEMAXKEYS"))
 	if ok != nil {
-		maxKeys = 1000
+		maxKeys = 0
 	}
 
 	sort, ok := strconv.Atoi(os.Getenv("EOSSORTFILELISTING"))
@@ -117,7 +117,7 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	eosLogger.Startup("EOS READ METHOD: %s", readmethod)
 	eosLogger.Startup("EOS FOREGROUND TRANSFER FROM STAGING: %t", foregroundStaging)
 	eosLogger.Startup("EOS MAX RETRY: %d", maxRetry)
-	eosLogger.Startup("EOS MAX KEYS: %d", maxKeys)
+	eosLogger.Startup("EOS OVERWRITE MAX KEYS: %d", maxKeys)
 	eosLogger.Startup("EOS SORT FILE LISTING: %d", sort)
 	eosLogger.Startup("EOS LOG LEVEL: %d", loglevel)
 

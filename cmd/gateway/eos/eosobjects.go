@@ -1081,7 +1081,7 @@ func (e *eosObjects) ListObjectsPaging(ctx context.Context, bucket, prefix, mark
 	if maxKeys < 1 {
 		maxKeys = 1
 	}
-	if maxKeys == 1000 { //1000 is the minio default
+	if e.maxKeys > 0 { //overwrite minio's default as well as client requests, usually client/minio will ask for 1000
 		maxKeys = e.maxKeys
 	}
 

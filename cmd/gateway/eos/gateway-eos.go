@@ -59,6 +59,7 @@ ENVIRONMENT VARIABLES:
      SCRIPTS: path to xroot script
      EOSVALIDBUCKETS: true/false (default: true)
      MAX_RETRY: int, how many times to retry (default: 10)
+     OVERWRITEMAXKEYS: int, overwrite client requests on maxkeys set to 0 to disable (default:0)
 
   CACHE:
      MINIO_CACHE_DRIVES: List of mounted drives or directories delimited by ";".
