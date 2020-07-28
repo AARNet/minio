@@ -362,7 +362,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 	}
 
 	var responseGlob *PutFileResponse
-	for retry := 1; retry <= e.maxRetry; retry++ {
+	for retry := 1; retry <= x.maxRetry; retry++ {
 
 		// Execute command and collect buffers
 		cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
@@ -389,8 +389,8 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 					//Clear buffers
 					errBuf.Reset()
 					//Last attempt failed, lets return
-					if retry == maxRetry {
-						return nil, fmt.Errorf("Write failed after %d attempts [tmp: %s, xrdURI: %s, error: %s]", maxRetry, fd.Name(), xrdURI, err)
+					if retry == x.maxRetry {
+						return nil, fmt.Errorf("Write failed after %d attempts [tmp: %s, xrdURI: %s, error: %s]", x.maxRetry, fd.Name(), xrdURI, err)
 					}
 					SleepMs(1000)
 					continue
