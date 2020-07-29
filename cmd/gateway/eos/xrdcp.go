@@ -361,51 +361,67 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		return nil, err
 	}
 
-	// Execute command and collect buffers
-	cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
-	errBuf := &bytes.Buffer{}
-	cmd.Stderr = errBuf
+	var responseGlob *PutFileResponse
+	for retry := 1; retry <= x.maxRetry; retry++ {
 
-	err = cmd.Run()
+		// Execute command and collect buffers
+		cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
+		errBuf := &bytes.Buffer{}
+		cmd.Stderr = errBuf
 
-	// Check the return code of the cmd.Run()
-	// NOTE: this is straight from the reva eosclient:
-	// https://github.com/cs3org/reva/blob/2b018b13c24dab305d92164cf0ad4da43807060c/pkg/eosclient/eosclient.go#L594-L622
-	var exitStatus int
-	if exiterr, ok := err.(*exec.ExitError); ok {
-		if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
-			exitStatus = status.ExitStatus()
-			switch exitStatus {
-			case 0:
-				err = nil
-			case 2:
-				err = fmt.Errorf("Not found: %s", errBuf.String())
-			case 53:
-				err = fmt.Errorf("Invalid checksum type set on EOS (data directory needs attribute: sys.forced.checksum=\"md5\")")
+		err = cmd.Run()
+
+		// Check the return code of the cmd.Run()
+		// NOTE: this is straight from the reva eosclient:
+		// https://github.com/cs3org/reva/blob/2b018b13c24dab305d92164cf0ad4da43807060c/pkg/eosclient/eosclient.go#L594-L622
+		var exitStatus int
+		if exiterr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
+				exitStatus = status.ExitStatus()
+				switch exitStatus {
+				case 0:
+					err = nil
+				case 2:
+					err = fmt.Errorf("Not found: %s", errBuf.String())
+				case 51:
+					//Log something
+					eosLogger.Debug(ctx, "PUT attempt #%d failed: %+v", retry, errBuf.String())
+					//Clear buffers
+					errBuf.Reset()
+					//Last attempt failed, lets return
+					if retry == x.maxRetry {
+						return nil, fmt.Errorf("Write failed after %d attempts [tmp: %s, xrdURI: %s, error: %s]", x.maxRetry, fd.Name(), xrdURI, err)
+					}
+					SleepMs(1000)
+					continue
+				case 53:
+					err = fmt.Errorf("Invalid checksum type set on EOS (data directory needs attribute: sys.forced.checksum=\"md5\")")
+				}
 			}
 		}
-	}
+		// If theres an error and it's not "file not found", return it
+		if err != nil && exitStatus != 2 {
+			return nil, fmt.Errorf("Write failed [tmp: %s, xrdURI: %s, error: %s, stderr: %v]", fd.Name(), xrdURI, err, errBuf.String())
+		}
 
-	// If theres an error and it's not "file not found", return it
-	if err != nil && exitStatus != 2 {
-		return nil, fmt.Errorf("Write failed [tmp: %s, xrdURI: %s, error: %s]", fd.Name(), xrdURI, err)
+		// Pull the checksum and file information from stderr (xrdcp outputs it to stderr)
+		errStr := errBuf.String()
+		eosLogger.Debug(ctx, "xrdcp.PutBuffer: response: %s", errStr)
+		response := &PutFileResponse{}
+		responseGlob = response
+		if strings.HasPrefix(errStr, "md5: ") {
+			splitStr := strings.Split(errStr, " ")
+			response.ChecksumType = strings.TrimRight(splitStr[0], ":")
+			response.Checksum = splitStr[1]
+			response.URI = splitStr[2]
+			response.Size = splitStr[3]
+			responseGlob = response
+		} else {
+			return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", errStr)
+		}
+		return response, nil
 	}
-
-	// Pull the checksum and file information from stderr (xrdcp outputs it to stderr)
-	errStr := errBuf.String()
-	eosLogger.Debug(ctx, "xrdcp.PutBuffer: response: %s", errStr)
-	response := &PutFileResponse{}
-	if strings.HasPrefix(errStr, "md5: ") {
-		splitStr := strings.Split(errStr, " ")
-		response.ChecksumType = strings.TrimRight(splitStr[0], ":")
-		response.Checksum = splitStr[1]
-		response.URI = splitStr[2]
-		response.Size = splitStr[3]
-	} else {
-		return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", errStr)
-	}
-
-	return response, nil
+	return responseGlob, nil
 }
 
 // Put - puts a file
