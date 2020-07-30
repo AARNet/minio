@@ -46,6 +46,7 @@ type eosObjects struct {
 	FileSystem        *eosFS
 }
 
+// ListObjectsMarker is the marker used to continue listing objects when maxKeys is hit.
 type ListObjectsMarker struct {
 	Prefixes []string
 	Skip     int
@@ -115,7 +116,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		stat, err := e.FileSystem.DirStat(ctx, dir.Name)
 
 		if stat == nil {
-			eosLogger.Error(ctx, err, "ListBuckets: unable to stat [dir: %s]", dir)
+			eosLogger.Error(ctx, err, "ListBuckets: unable to stat [dir: %s]", dir.Name)
 			continue
 		}
 
@@ -324,11 +325,10 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	if err != nil {
 		eosLogger.Error(ctx, err, "PUT: %+v", err)
 		objInfo.ETag = defaultETag
-		if strings.Contains(err.Error(), "attempts") == true {
+		if strings.Contains(err.Error(), "attempts") {
 			return objInfo, minio.SlowDown{}
-		} else {
-			return objInfo, minio.OperationTimedOut{}
 		}
+		return objInfo, minio.OperationTimedOut{}
 	}
 	eosLogger.Debug(ctx, "Put response: %#v", response)
 
@@ -365,7 +365,6 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string, op
 		return minio.ObjectInfo{}, minio.NotImplemented{}
 	}
 
-
 	_ = e.FileSystem.rm(ctx, PathJoin(bucket, object))
 	return minio.ObjectInfo{Bucket: bucket, Name: object}, nil
 }
@@ -381,7 +380,7 @@ func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects [
 		if _, ok := deleted[object.ObjectName]; !ok {
 			_, errs[idx] = e.DeleteObject(ctx, bucket, object.ObjectName, opts)
 			deleted[object.ObjectName] = true
-			dobjects[idx] = minio.DeletedObject{ ObjectName: object.ObjectName }
+			dobjects[idx] = minio.DeletedObject{ObjectName: object.ObjectName}
 		}
 	}
 

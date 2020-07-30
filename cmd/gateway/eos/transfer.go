@@ -10,9 +10,10 @@ package eos
 
 import (
 	"encoding/hex"
-	minio "github.com/minio/minio/cmd"
 	"hash"
 	"sync"
+
+	minio "github.com/minio/minio/cmd"
 )
 
 // Transfer is information about a multipart transfer

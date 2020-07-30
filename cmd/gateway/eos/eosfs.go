@@ -347,7 +347,7 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 	}
 
 	if interfaceToString(m["errormsg"]) != "" {
-		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.rm: remove failed [eospath: %s, error: %s]", eospath)
+		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.rm: remove failed [eospath: %s]", eospath)
 		return errDiskAccessDenied
 	}
 	reqStatCache := e.StatCache.Get(ctx)
@@ -437,7 +437,7 @@ func (e *eosFS) Rename(ctx context.Context, from, to string) error {
 	}
 
 	if interfaceToString(m["errormsg"]) != "" {
-		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.Rename: rename failed [src: %s, dst: %s, error: %s]", eosfrompath, eostopath)
+		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.Rename: rename failed [src: %s, dst: %s]", eosfrompath, eostopath)
 		return errDiskAccessDenied
 	}
 
