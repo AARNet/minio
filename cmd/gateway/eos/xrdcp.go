@@ -189,9 +189,7 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 	}
 
 	// Make sure we close the pipe so the subprocess doesn't keep running
-	if closePipeErr := pipe.Close(); closePipeErr != nil && err == nil {
-		err = closePipeErr
-	}
+	_ = pipe.Close()
 
 	return parsedobjects, nil
 }
@@ -325,7 +323,7 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 	return stat
 }
 
-//  PutFileResponse - Holds the information returned by --cksum md5:print
+// PutFileResponse - Holds the information returned by --cksum md5:print
 type PutFileResponse struct {
 	ChecksumType string
 	Checksum     string
