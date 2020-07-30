@@ -173,13 +173,6 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, errFileNotFound
 	}
 
-	if err != nil {
-		// Debug level since it happens quite often
-		// when a file that doesn't exist is checked for
-		eosLogger.Debug(ctx, "Unable to read directory [eospath: %s, error: %+v]", eospath, err)
-		return nil, errFileNotFound
-	}
-
 	for _, object := range objects {
 		if e.isEOSSysFile(object.Name) {
 			continue
