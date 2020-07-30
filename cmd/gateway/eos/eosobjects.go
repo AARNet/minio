@@ -520,6 +520,7 @@ func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, k
 
 // GetMultipartInfo returns multipart info of the uploadId of the object
 func (e *eosObjects) GetMultipartInfo(ctx context.Context, bucket, object, uploadID string, opts minio.ObjectOptions) (result minio.MultipartInfo, err error) {
+	eosLogger.Stat(ctx, "S3cmd: GetMultipartInfo: [bucket: %s, object: %s, uploadID: %s]", bucket, object, uploadID)
 	if e.TransferList.GetTransfer(uploadID) == nil {
 		return result, err
 	}
