@@ -359,7 +359,6 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		return nil, err
 	}
 
-	var responseGlob *PutFileResponse
 	for retry := 1; retry <= x.maxRetry; retry++ {
 
 		// Execute command and collect buffers
@@ -405,21 +404,21 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		// Pull the checksum and file information from stderr (xrdcp outputs it to stderr)
 		errStr := errBuf.String()
 		eosLogger.Debug(ctx, "xrdcp.PutBuffer: response: %s", errStr)
-		response := &PutFileResponse{}
-		responseGlob = response
-		if strings.HasPrefix(errStr, "md5: ") {
-			splitStr := strings.Split(errStr, " ")
-			response.ChecksumType = strings.TrimRight(splitStr[0], ":")
-			response.Checksum = splitStr[1]
-			response.URI = splitStr[2]
-			response.Size = splitStr[3]
-			responseGlob = response
-		} else {
+
+		if !strings.HasPrefix(errStr, "md5: ") {
 			return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", errStr)
 		}
+
+		splitStr := strings.Split(errStr, " ")
+		response := &PutFileResponse{}
+		response.ChecksumType = strings.TrimRight(splitStr[0], ":")
+		response.Checksum = splitStr[1]
+		response.URI = splitStr[2]
+		response.Size = splitStr[3]
 		return response, nil
 	}
-	return responseGlob, nil
+
+	return nil, fmt.Errorf("Write failed: Exceeded maximum retries [maxRetry: %d]", x.maxRetry)
 }
 
 // Put - puts a file
