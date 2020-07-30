@@ -19,9 +19,12 @@ package sql
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"strings"
 
 	"github.com/bcicen/jstream"
+	"github.com/minio/simdjson-go"
 )
 
 var (
@@ -227,28 +230,75 @@ func (e *Like) evalLikeNode(r Record, arg *Value) (*Value, error) {
 	return FromBool(matchResult), nil
 }
 
-func (e *In) evalInNode(r Record, arg *Value) (*Value, error) {
-	result := false
-	for _, elt := range e.Expressions {
+func (e *ListExpr) evalNode(r Record) (*Value, error) {
+	res := make([]Value, len(e.Elements))
+	if len(e.Elements) == 1 {
+		// If length 1, treat as single value.
+		return e.Elements[0].evalNode(r)
+	}
+	for i, elt := range e.Elements {
+		v, err := elt.evalNode(r)
+		if err != nil {
+			return nil, err
+		}
+		res[i] = *v
+	}
+	return FromArray(res), nil
+}
+
+func (e *In) evalInNode(r Record, lhs *Value) (*Value, error) {
+	// Compare two values in terms of in-ness.
+	var cmp func(a, b Value) bool
+	cmp = func(a, b Value) bool {
+		// Convert if needed.
+		inferTypesForCmp(&a, &b)
+
+		if a.Equals(b) {
+			return true
+		}
+
+		// If elements, compare each.
+		aA, aOK := a.ToArray()
+		bA, bOK := b.ToArray()
+		if aOK && bOK {
+			if len(aA) != len(bA) {
+				return false
+			}
+			for i := range aA {
+				if !cmp(aA[i], bA[i]) {
+					return false
+				}
+			}
+			return true
+		}
+		// Try as numbers
+		aF, aOK := a.ToFloat()
+		bF, bOK := b.ToFloat()
+
+		return aOK && bOK && aF == bF
+	}
+
+	var rhs Value
+	if elt := e.ListExpression; elt != nil {
 		eltVal, err := elt.evalNode(r)
 		if err != nil {
 			return nil, err
 		}
-
-		// FIXME: type inference?
-
-		// Types must match.
-		if arg.vType != eltVal.vType {
-			// match failed.
-			continue
-		}
-
-		if arg.value == eltVal.value {
-			result = true
-			break
-		}
+		rhs = *eltVal
 	}
-	return FromBool(result), nil
+
+	// If RHS is array compare each element.
+	if arr, ok := rhs.ToArray(); ok {
+		for _, element := range arr {
+			// If we have an array we are on the wrong level.
+			if cmp(element, *lhs) {
+				return FromBool(true), nil
+			}
+		}
+		return FromBool(false), nil
+	}
+
+	return FromBool(cmp(rhs, *lhs)), nil
 }
 
 func (e *Operand) evalNode(r Record) (*Value, error) {
@@ -318,48 +368,80 @@ func (e *UnaryTerm) evalNode(r Record) (*Value, error) {
 func (e *JSONPath) evalNode(r Record) (*Value, error) {
 	// Strip the table name from the keypath.
 	keypath := e.String()
-	ps := strings.SplitN(keypath, ".", 2)
-	if len(ps) == 2 {
-		keypath = ps[1]
+	if strings.Contains(keypath, ".") {
+		ps := strings.SplitN(keypath, ".", 2)
+		if len(ps) == 2 {
+			keypath = ps[1]
+		}
 	}
-	objFmt, rawVal := r.Raw()
-	switch objFmt {
-	case SelectFmtJSON, SelectFmtParquet:
-		rowVal := rawVal.(jstream.KVS)
-
+	_, rawVal := r.Raw()
+	switch rowVal := rawVal.(type) {
+	case jstream.KVS, simdjson.Object:
 		pathExpr := e.PathExpr
 		if len(pathExpr) == 0 {
 			pathExpr = []*JSONPathElement{{Key: &ObjectKey{ID: e.BaseKey}}}
 		}
 
-		result, err := jsonpathEval(pathExpr, rowVal)
+		result, _, err := jsonpathEval(pathExpr, rowVal)
 		if err != nil {
 			return nil, err
 		}
 
-		switch rval := result.(type) {
-		case string:
-			return FromString(rval), nil
-		case float64:
-			return FromFloat(rval), nil
-		case int64:
-			return FromInt(rval), nil
-		case bool:
-			return FromBool(rval), nil
-		case jstream.KVS, []interface{}:
-			bs, err := json.Marshal(result)
-			if err != nil {
-				return nil, err
-			}
-			return FromBytes(bs), nil
-		case nil:
-			return FromNull(), nil
-		default:
-			return nil, errors.New("Unhandled value type")
-		}
+		return jsonToValue(result)
 	default:
 		return r.Get(keypath)
 	}
+}
+
+// jsonToValue will convert the json value to an internal value.
+func jsonToValue(result interface{}) (*Value, error) {
+	switch rval := result.(type) {
+	case string:
+		return FromString(rval), nil
+	case float64:
+		return FromFloat(rval), nil
+	case int64:
+		return FromInt(rval), nil
+	case uint64:
+		if rval <= math.MaxInt64 {
+			return FromInt(int64(rval)), nil
+		}
+		return FromFloat(float64(rval)), nil
+	case bool:
+		return FromBool(rval), nil
+	case jstream.KVS:
+		bs, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		return FromBytes(bs), nil
+	case []interface{}:
+		dst := make([]Value, len(rval))
+		for i := range rval {
+			v, err := jsonToValue(rval[i])
+			if err != nil {
+				return nil, err
+			}
+			dst[i] = *v
+		}
+		return FromArray(dst), nil
+	case simdjson.Object:
+		o := rval
+		elems, err := o.Parse(nil)
+		if err != nil {
+			return nil, err
+		}
+		bs, err := elems.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+		return FromBytes(bs), nil
+	case []Value:
+		return FromArray(rval), nil
+	case nil:
+		return FromNull(), nil
+	}
+	return nil, fmt.Errorf("Unhandled value type: %T", result)
 }
 
 func (e *PrimaryTerm) evalNode(r Record) (res *Value, err error) {
@@ -368,6 +450,8 @@ func (e *PrimaryTerm) evalNode(r Record) (res *Value, err error) {
 		return e.Value.evalNode(r)
 	case e.JPathExpr != nil:
 		return e.JPathExpr.evalNode(r)
+	case e.ListExpr != nil:
+		return e.ListExpr.evalNode(r)
 	case e.SubExpression != nil:
 		return e.SubExpression.evalNode(r)
 	case e.FuncCall != nil:

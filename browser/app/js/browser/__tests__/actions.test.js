@@ -20,12 +20,13 @@ import * as actionsCommon from "../actions"
 
 jest.mock("../../web", () => ({
   StorageInfo: jest.fn(() => {
-    return Promise.resolve({ storageInfo: { Used: 60 } })
+    return Promise.resolve({
+      used: 60
+    })
   }),
   ServerInfo: jest.fn(() => {
     return Promise.resolve({
       MinioVersion: "test",
-      MinioMemory: "test",
       MinioPlatform: "test",
       MinioRuntime: "test",
       MinioGlobalInfo: "test"
@@ -55,7 +56,6 @@ describe("Common actions", () => {
         type: "common/SET_SERVER_INFO",
         serverInfo: {
           version: "test",
-          memory: "test",
           platform: "test",
           runtime: "test",
           info: "test"

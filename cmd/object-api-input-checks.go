@@ -18,10 +18,12 @@ package cmd
 
 import (
 	"context"
+	"runtime"
+	"strings"
 
-	"github.com/minio/minio-go/v6/pkg/s3utils"
+	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/skyrings/skyring-common/tools/uuid"
 )
 
 // Checks on GetObject arguments, bucket and object.
@@ -50,11 +52,15 @@ func checkBucketAndObjectNames(ctx context.Context, bucket, object string) error
 		logger.LogIf(ctx, ObjectNameInvalid{Bucket: bucket, Object: object})
 		return ObjectNameInvalid{Bucket: bucket, Object: object}
 	}
+	if runtime.GOOS == globalWindowsOSName && strings.Contains(object, "\\") {
+		// Objects cannot be contain \ in Windows and is listed as `Characters to Avoid`.
+		return ObjectNameInvalid{Bucket: bucket, Object: object}
+	}
 	return nil
 }
 
 // Checks for all ListObjects arguments validity.
-func checkListObjsArgs(ctx context.Context, bucket, prefix, marker, delimiter string, obj ObjectLayer) error {
+func checkListObjsArgs(ctx context.Context, bucket, prefix, marker string, obj ObjectLayer) error {
 	// Verify if bucket exists before validating object name.
 	// This is done on purpose since the order of errors is
 	// important here bucket does not exist error should
@@ -74,17 +80,8 @@ func checkListObjsArgs(ctx context.Context, bucket, prefix, marker, delimiter st
 			Object: prefix,
 		}
 	}
-	// Verify if delimiter is anything other than '/', which we do not support.
-	if delimiter != "" && delimiter != SlashSeparator {
-		logger.LogIf(ctx, UnsupportedDelimiter{
-			Delimiter: delimiter,
-		})
-		return UnsupportedDelimiter{
-			Delimiter: delimiter,
-		}
-	}
 	// Verify if marker has prefix.
-	if marker != "" && !hasPrefix(marker, prefix) {
+	if marker != "" && !HasPrefix(marker, prefix) {
 		logger.LogIf(ctx, InvalidMarkerPrefixCombination{
 			Marker: marker,
 			Prefix: prefix,
@@ -99,11 +96,11 @@ func checkListObjsArgs(ctx context.Context, bucket, prefix, marker, delimiter st
 
 // Checks for all ListMultipartUploads arguments validity.
 func checkListMultipartArgs(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, obj ObjectLayer) error {
-	if err := checkListObjsArgs(ctx, bucket, prefix, keyMarker, delimiter, obj); err != nil {
+	if err := checkListObjsArgs(ctx, bucket, prefix, keyMarker, obj); err != nil {
 		return err
 	}
 	if uploadIDMarker != "" {
-		if hasSuffix(keyMarker, SlashSeparator) {
+		if HasSuffix(keyMarker, SlashSeparator) {
 
 			logger.LogIf(ctx, InvalidUploadIDKeyCombination{
 				UploadIDMarker: uploadIDMarker,
@@ -114,16 +111,8 @@ func checkListMultipartArgs(ctx context.Context, bucket, prefix, keyMarker, uplo
 				KeyMarker:      keyMarker,
 			}
 		}
-		id, err := uuid.Parse(uploadIDMarker)
-		if err != nil {
+		if _, err := uuid.Parse(uploadIDMarker); err != nil {
 			logger.LogIf(ctx, err)
-			return err
-		}
-		if id.IsZero() {
-			logger.LogIf(ctx, MalformedUploadID{
-				UploadID: uploadIDMarker,
-			})
-
 			return MalformedUploadID{
 				UploadID: uploadIDMarker,
 			}
@@ -171,6 +160,7 @@ func checkObjectArgs(ctx context.Context, bucket, object string, obj ObjectLayer
 	if err := checkObjectNameForLengthAndSlash(bucket, object); err != nil {
 		return err
 	}
+
 	// Validates object name validity after bucket exists.
 	if !IsValidObjectName(object) {
 		return ObjectNameInvalid{
@@ -197,7 +187,7 @@ func checkPutObjectArgs(ctx context.Context, bucket, object string, obj ObjectLa
 		return err
 	}
 	if len(object) == 0 ||
-		(hasSuffix(object, SlashSeparator) && size != 0) ||
+		(HasSuffix(object, SlashSeparator) && size != 0) ||
 		!IsValidObjectPrefix(object) {
 		return ObjectNameInvalid{
 			Bucket: bucket,

@@ -72,6 +72,15 @@ func (c Context) WriteTo(w io.Writer) (n int64, err error) {
 // data key generation and unsealing of KMS-generated
 // data keys.
 type KMS interface {
+	// DefaultKeyID returns the default master key ID. It should be
+	// used for SSE-S3 and whenever a S3 client requests SSE-KMS but
+	// does not specify an explicit SSE-KMS key ID.
+	DefaultKeyID() string
+
+	// CreateKey creates a new master key with the given key ID
+	// at the KMS.
+	CreateKey(keyID string) error
+
 	// GenerateKey generates a new random data key using
 	// the master key referenced by the keyID. It returns
 	// the plaintext key and the sealed plaintext key
@@ -87,29 +96,37 @@ type KMS interface {
 	// match the context used to generate the sealed key.
 	UnsealKey(keyID string, sealedKey []byte, context Context) (key [32]byte, err error)
 
-	// UpdateKey re-wraps the sealedKey if the master key, referenced by
-	// `keyID`, has changed in the meantime. This usually happens when the
-	// KMS operator performs a key-rotation operation of the master key.
-	// UpdateKey fails if the provided sealedKey cannot be decrypted using
-	// the master key referenced by keyID.
-	//
-	// UpdateKey makes no guarantees whatsoever about whether the returned
-	// rotatedKey is actually different from the sealedKey. If nothing has
-	// changed at the KMS or if the KMS does not support updating generated
-	// keys this method may behave like a NOP and just return the sealedKey
-	// itself.
-	UpdateKey(keyID string, sealedKey []byte, context Context) (rotatedKey []byte, err error)
+	// Info returns descriptive information about the KMS,
+	// like the default key ID and authentication method.
+	Info() KMSInfo
 }
 
 type masterKeyKMS struct {
+	keyID     string
 	masterKey [32]byte
 }
 
-// NewKMS returns a basic KMS implementation from a single 256 bit master key.
+// KMSInfo contains some describing information about
+// the KMS.
+type KMSInfo struct {
+	Endpoint string
+	Name     string
+	AuthType string
+}
+
+// NewMasterKey returns a basic KMS implementation from a single 256 bit master key.
 //
 // The KMS accepts any keyID but binds the keyID and context cryptographically
 // to the generated keys.
-func NewKMS(key [32]byte) KMS { return &masterKeyKMS{masterKey: key} }
+func NewMasterKey(keyID string, key [32]byte) KMS { return &masterKeyKMS{keyID: keyID, masterKey: key} }
+
+func (kms *masterKeyKMS) DefaultKeyID() string {
+	return kms.keyID
+}
+
+func (kms *masterKeyKMS) CreateKey(keyID string) error {
+	return errors.New("crypto: creating keys is not supported by a static master key")
+}
 
 func (kms *masterKeyKMS) GenerateKey(keyID string, ctx Context) (key [32]byte, sealedKey []byte, err error) {
 	if _, err = io.ReadFull(rand.Reader, key[:]); err != nil {
@@ -127,6 +144,15 @@ func (kms *masterKeyKMS) GenerateKey(keyID string, ctx Context) (key [32]byte, s
 	return key, sealedKey, nil
 }
 
+// KMS is configured directly using master key
+func (kms *masterKeyKMS) Info() (info KMSInfo) {
+	return KMSInfo{
+		Endpoint: "",
+		Name:     "",
+		AuthType: "master-key",
+	}
+}
+
 func (kms *masterKeyKMS) UnsealKey(keyID string, sealedKey []byte, ctx Context) (key [32]byte, err error) {
 	var (
 		buffer     bytes.Buffer
@@ -137,13 +163,6 @@ func (kms *masterKeyKMS) UnsealKey(keyID string, sealedKey []byte, ctx Context) 
 	}
 	copy(key[:], buffer.Bytes())
 	return key, nil
-}
-
-func (kms *masterKeyKMS) UpdateKey(keyID string, sealedKey []byte, ctx Context) ([]byte, error) {
-	if _, err := kms.UnsealKey(keyID, sealedKey, ctx); err != nil {
-		return nil, err
-	}
-	return sealedKey, nil // The master key cannot update data keys -> Do nothing.
 }
 
 func (kms *masterKeyKMS) deriveKey(keyID string, context Context) (key [32]byte) {

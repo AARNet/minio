@@ -17,12 +17,10 @@
 package iampolicy
 
 import (
-	"encoding/json"
-	"fmt"
 	"strings"
 
-	"github.com/minio/minio/pkg/policy"
-	"github.com/minio/minio/pkg/policy/condition"
+	"github.com/minio/minio/pkg/bucket/policy"
+	"github.com/minio/minio/pkg/bucket/policy/condition"
 )
 
 // Statement - iam policy statement.
@@ -30,7 +28,7 @@ type Statement struct {
 	SID        policy.ID           `json:"Sid,omitempty"`
 	Effect     policy.Effect       `json:"Effect"`
 	Actions    ActionSet           `json:"Action"`
-	Resources  ResourceSet         `json:"Resource"`
+	Resources  ResourceSet         `json:"Resource,omitempty"`
 	Conditions condition.Functions `json:"Condition,omitempty"`
 }
 
@@ -52,7 +50,8 @@ func (statement Statement) IsAllowed(args Args) bool {
 			resource += "/"
 		}
 
-		if !statement.Resources.Match(resource, args.ConditionValues) {
+		// For admin statements, resource match can be ignored.
+		if !statement.Resources.Match(resource, args.ConditionValues) && !statement.isAdmin() {
 			return false
 		}
 
@@ -61,68 +60,66 @@ func (statement Statement) IsAllowed(args Args) bool {
 
 	return statement.Effect.IsAllowed(check())
 }
+func (statement Statement) isAdmin() bool {
+	for action := range statement.Actions {
+		if AdminAction(action).IsValid() {
+			return true
+		}
+	}
+	return false
+}
 
 // isValid - checks whether statement is valid or not.
 func (statement Statement) isValid() error {
 	if !statement.Effect.IsValid() {
-		return fmt.Errorf("invalid Effect %v", statement.Effect)
+		return Errorf("invalid Effect %v", statement.Effect)
 	}
 
 	if len(statement.Actions) == 0 {
-		return fmt.Errorf("Action must not be empty")
+		return Errorf("Action must not be empty")
+	}
+
+	if statement.isAdmin() {
+		if err := statement.Actions.ValidateAdmin(); err != nil {
+			return err
+		}
+		for action := range statement.Actions {
+			keys := statement.Conditions.Keys()
+			keyDiff := keys.Difference(adminActionConditionKeyMap[action])
+			if !keyDiff.IsEmpty() {
+				return Errorf("unsupported condition keys '%v' used for action '%v'", keyDiff, action)
+			}
+		}
+		return nil
+	}
+
+	if !statement.SID.IsValid() {
+		return Errorf("invalid SID %v", statement.SID)
 	}
 
 	if len(statement.Resources) == 0 {
-		return fmt.Errorf("Resource must not be empty")
+		return Errorf("Resource must not be empty")
 	}
 
 	if err := statement.Resources.Validate(); err != nil {
 		return err
 	}
 
+	if err := statement.Actions.Validate(); err != nil {
+		return err
+	}
+
 	for action := range statement.Actions {
 		if !statement.Resources.objectResourceExists() && !statement.Resources.bucketResourceExists() {
-			return fmt.Errorf("unsupported Resource found %v for action %v", statement.Resources, action)
+			return Errorf("unsupported Resource found %v for action %v", statement.Resources, action)
 		}
 
 		keys := statement.Conditions.Keys()
 		keyDiff := keys.Difference(actionConditionKeyMap[action])
 		if !keyDiff.IsEmpty() {
-			return fmt.Errorf("unsupported condition keys '%v' used for action '%v'", keyDiff, action)
+			return Errorf("unsupported condition keys '%v' used for action '%v'", keyDiff, action)
 		}
 	}
-
-	return nil
-}
-
-// MarshalJSON - encodes JSON data to Statement.
-func (statement Statement) MarshalJSON() ([]byte, error) {
-	if err := statement.isValid(); err != nil {
-		return nil, err
-	}
-
-	// subtype to avoid recursive call to MarshalJSON()
-	type subStatement Statement
-	ss := subStatement(statement)
-	return json.Marshal(ss)
-}
-
-// UnmarshalJSON - decodes JSON data to Statement.
-func (statement *Statement) UnmarshalJSON(data []byte) error {
-	// subtype to avoid recursive call to UnmarshalJSON()
-	type subStatement Statement
-	var ss subStatement
-
-	if err := json.Unmarshal(data, &ss); err != nil {
-		return err
-	}
-
-	s := Statement(ss)
-	if err := s.isValid(); err != nil {
-		return err
-	}
-
-	*statement = s
 
 	return nil
 }

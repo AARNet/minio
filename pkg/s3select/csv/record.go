@@ -17,17 +17,17 @@
 package csv
 
 import (
-	"bytes"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/bcicen/jstream"
+	csv "github.com/minio/minio/pkg/csvparser"
 	"github.com/minio/minio/pkg/s3select/sql"
 )
 
-// Record - is CSV record.
+// Record - is a CSV record.
 type Record struct {
 	columnNames  []string
 	csvRecord    []string
@@ -55,36 +55,67 @@ func (r *Record) Get(name string) (*sql.Value, error) {
 }
 
 // Set - sets the value for a column name.
-func (r *Record) Set(name string, value *sql.Value) error {
+func (r *Record) Set(name string, value *sql.Value) (sql.Record, error) {
 	r.columnNames = append(r.columnNames, name)
 	r.csvRecord = append(r.csvRecord, value.CSVString())
-	return nil
+	return r, nil
 }
 
-// MarshalCSV - encodes to CSV data.
-func (r *Record) MarshalCSV(fieldDelimiter rune) ([]byte, error) {
-	buf := new(bytes.Buffer)
-	w := csv.NewWriter(buf)
-	w.Comma = fieldDelimiter
+// Reset data in record.
+func (r *Record) Reset() {
+	if len(r.columnNames) > 0 {
+		r.columnNames = r.columnNames[:0]
+	}
+	if len(r.csvRecord) > 0 {
+		r.csvRecord = r.csvRecord[:0]
+	}
+	for k := range r.nameIndexMap {
+		delete(r.nameIndexMap, k)
+	}
+}
+
+// Clone the record.
+func (r *Record) Clone(dst sql.Record) sql.Record {
+	other, ok := dst.(*Record)
+	if !ok {
+		other = &Record{}
+	}
+	if len(other.columnNames) > 0 {
+		other.columnNames = other.columnNames[:0]
+	}
+	if len(other.csvRecord) > 0 {
+		other.csvRecord = other.csvRecord[:0]
+	}
+	other.columnNames = append(other.columnNames, r.columnNames...)
+	other.csvRecord = append(other.csvRecord, r.csvRecord...)
+	return other
+}
+
+// WriteCSV - encodes to CSV data.
+func (r *Record) WriteCSV(writer io.Writer, opts sql.WriteCSVOpts) error {
+	w := csv.NewWriter(writer)
+	w.Comma = opts.FieldDelimiter
+	w.AlwaysQuote = opts.AlwaysQuote
+	w.Quote = opts.Quote
+	w.QuoteEscape = opts.QuoteEscape
 	if err := w.Write(r.csvRecord); err != nil {
-		return nil, err
+		return err
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
-		return nil, err
+		return err
 	}
 
-	data := buf.Bytes()
-	return data[:len(data)-1], nil
+	return nil
 }
 
-// MarshalJSON - encodes to JSON data.
-func (r *Record) MarshalJSON() ([]byte, error) {
+// WriteJSON - encodes to JSON data.
+func (r *Record) WriteJSON(writer io.Writer) error {
 	var kvs jstream.KVS = make([]jstream.KV, len(r.columnNames))
 	for i := 0; i < len(r.columnNames); i++ {
 		kvs[i] = jstream.KV{Key: r.columnNames[i], Value: r.csvRecord[i]}
 	}
-	return json.Marshal(kvs)
+	return json.NewEncoder(writer).Encode(kvs)
 }
 
 // Raw - returns the underlying data with format info.
@@ -93,7 +124,7 @@ func (r *Record) Raw() (sql.SelectObjectFormat, interface{}) {
 }
 
 // Replace - is not supported for CSV
-func (r *Record) Replace(_ jstream.KVS) error {
+func (r *Record) Replace(_ interface{}) error {
 	return errors.New("Replace is not supported for CSV")
 }
 

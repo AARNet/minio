@@ -21,10 +21,7 @@ describe("common reducer", () => {
   it("should return the initial state", () => {
     expect(reducer(undefined, {})).toEqual({
       sidebarOpen: false,
-      storageInfo: {
-        total: 0,
-        free: 0
-      },
+      storageInfo: {used: 0},
       serverInfo: {}
     })
   })
@@ -61,11 +58,11 @@ describe("common reducer", () => {
         {},
         {
           type: actionsCommon.SET_STORAGE_INFO,
-          storageInfo: { total: 100, free: 40 }
+          storageInfo: { }
         }
       )
     ).toEqual({
-      storageInfo: { total: 100, free: 40 }
+      storageInfo: { }
     })
   })
 
@@ -75,7 +72,6 @@ describe("common reducer", () => {
         type: actionsCommon.SET_SERVER_INFO,
         serverInfo: {
           version: "test",
-          memory: "test",
           platform: "test",
           runtime: "test",
           info: "test"
@@ -83,7 +79,6 @@ describe("common reducer", () => {
       }).serverInfo
     ).toEqual({
       version: "test",
-      memory: "test",
       platform: "test",
       runtime: "test",
       info: "test"

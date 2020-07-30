@@ -21,7 +21,7 @@ import (
 	"errors"
 	"fmt"
 
-	etcd "github.com/coreos/etcd/clientv3"
+	etcd "go.etcd.io/etcd/v3/clientv3"
 )
 
 var errEtcdUnreachable = errors.New("etcd is unreachable, please check your endpoints")
@@ -32,9 +32,9 @@ func etcdErrToErr(err error, etcdEndpoints []string) error {
 	}
 	switch err {
 	case context.DeadlineExceeded:
-		return fmt.Errorf("%s %s", errEtcdUnreachable, etcdEndpoints)
+		return fmt.Errorf("%w %s", errEtcdUnreachable, etcdEndpoints)
 	default:
-		return fmt.Errorf("unexpected error %s from etcd, please check your endpoints %s", err, etcdEndpoints)
+		return fmt.Errorf("unexpected error %w from etcd, please check your endpoints %s", err, etcdEndpoints)
 	}
 }
 

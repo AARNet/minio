@@ -18,31 +18,52 @@ package target
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/minio/minio/pkg/certs"
 	"github.com/minio/minio/pkg/event"
 	xnet "github.com/minio/minio/pkg/net"
 )
 
+// Webhook constants
+const (
+	WebhookEndpoint   = "endpoint"
+	WebhookAuthToken  = "auth_token"
+	WebhookQueueDir   = "queue_dir"
+	WebhookQueueLimit = "queue_limit"
+	WebhookClientCert = "client_cert"
+	WebhookClientKey  = "client_key"
+
+	EnvWebhookEnable     = "MINIO_NOTIFY_WEBHOOK_ENABLE"
+	EnvWebhookEndpoint   = "MINIO_NOTIFY_WEBHOOK_ENDPOINT"
+	EnvWebhookAuthToken  = "MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN"
+	EnvWebhookQueueDir   = "MINIO_NOTIFY_WEBHOOK_QUEUE_DIR"
+	EnvWebhookQueueLimit = "MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT"
+	EnvWebhookClientCert = "MINIO_NOTIFY_WEBHOOK_CLIENT_CERT"
+	EnvWebhookClientKey  = "MINIO_NOTIFY_WEBHOOK_CLIENT_KEY"
+)
+
 // WebhookArgs - Webhook target arguments.
 type WebhookArgs struct {
-	Enable     bool           `json:"enable"`
-	Endpoint   xnet.URL       `json:"endpoint"`
-	RootCAs    *x509.CertPool `json:"-"`
-	QueueDir   string         `json:"queueDir"`
-	QueueLimit uint64         `json:"queueLimit"`
+	Enable     bool            `json:"enable"`
+	Endpoint   xnet.URL        `json:"endpoint"`
+	AuthToken  string          `json:"authToken"`
+	Transport  *http.Transport `json:"-"`
+	QueueDir   string          `json:"queueDir"`
+	QueueLimit uint64          `json:"queueLimit"`
+	ClientCert string          `json:"clientCert"`
+	ClientKey  string          `json:"clientKey"`
 }
 
 // Validate WebhookArgs fields
@@ -58,8 +79,8 @@ func (w WebhookArgs) Validate() error {
 			return errors.New("queueDir path should be absolute")
 		}
 	}
-	if w.QueueLimit > maxLimit {
-		return errors.New("queueLimit should not exceed 10000")
+	if w.ClientCert != "" && w.ClientKey == "" || w.ClientCert == "" && w.ClientKey != "" {
+		return errors.New("cert and key must be specified as a pair")
 	}
 	return nil
 }
@@ -70,6 +91,7 @@ type WebhookTarget struct {
 	args       WebhookArgs
 	httpClient *http.Client
 	store      Store
+	loggerOnce func(ctx context.Context, err error, id interface{}, errKind ...interface{})
 }
 
 // ID - returns target ID.
@@ -77,25 +99,49 @@ func (target WebhookTarget) ID() event.TargetID {
 	return target.id
 }
 
+// HasQueueStore - Checks if the queueStore has been configured for the target
+func (target *WebhookTarget) HasQueueStore() bool {
+	return target.store != nil
+}
+
+// IsActive - Return true if target is up and active
+func (target *WebhookTarget) IsActive() (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequest(http.MethodHead, target.args.Endpoint.String(), nil)
+	if err != nil {
+		if xnet.IsNetworkOrHostDown(err) {
+			return false, errNotConnected
+		}
+		return false, err
+	}
+
+	resp, err := target.httpClient.Do(req.WithContext(ctx))
+	if err != nil {
+		if xnet.IsNetworkOrHostDown(err) || err == context.DeadlineExceeded {
+			return false, errNotConnected
+		}
+		return false, err
+	}
+	io.Copy(ioutil.Discard, resp.Body)
+	resp.Body.Close()
+	// No network failure i.e response from the target means its up
+	return true, nil
+}
+
 // Save - saves the events to the store if queuestore is configured, which will be replayed when the wenhook connection is active.
 func (target *WebhookTarget) Save(eventData event.Event) error {
 	if target.store != nil {
 		return target.store.Put(eventData)
 	}
-	u, pErr := xnet.ParseURL(target.args.Endpoint.String())
-	if pErr != nil {
-		return pErr
-	}
-	if dErr := u.DialHTTP(); dErr != nil {
-		if urlErr, ok := dErr.(*url.Error); ok {
-			// To treat "connection refused" errors as errNotConnected.
-			if IsConnRefusedErr(urlErr.Err) {
-				return errNotConnected
-			}
+	err := target.send(eventData)
+	if err != nil {
+		if xnet.IsNetworkOrHostDown(err) {
+			return errNotConnected
 		}
-		return dErr
 	}
-	return target.send(eventData)
+	return err
 }
 
 // send - sends an event to the webhook.
@@ -116,18 +162,22 @@ func (target *WebhookTarget) send(eventData event.Event) error {
 		return err
 	}
 
+	if target.args.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+target.args.AuthToken)
+	}
+
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := target.httpClient.Do(req)
 	if err != nil {
+		target.Close()
 		return err
 	}
-
-	// FIXME: log returned error. ignore time being.
+	defer resp.Body.Close()
 	io.Copy(ioutil.Discard, resp.Body)
-	_ = resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		target.Close()
 		return fmt.Errorf("sending event failed with %v", resp.Status)
 	}
 
@@ -136,21 +186,6 @@ func (target *WebhookTarget) send(eventData event.Event) error {
 
 // Send - reads an event from store and sends it to webhook.
 func (target *WebhookTarget) Send(eventKey string) error {
-
-	u, pErr := xnet.ParseURL(target.args.Endpoint.String())
-	if pErr != nil {
-		return pErr
-	}
-	if dErr := u.DialHTTP(); dErr != nil {
-		if urlErr, ok := dErr.(*url.Error); ok {
-			// To treat "connection refused" errors as errNotConnected.
-			if IsConnRefusedErr(urlErr.Err) {
-				return errNotConnected
-			}
-		}
-		return dErr
-	}
-
 	eventData, eErr := target.store.Get(eventKey)
 	if eErr != nil {
 		// The last event key in a successful batch will be sent in the channel atmost once by the replayEvents()
@@ -162,6 +197,9 @@ func (target *WebhookTarget) Send(eventKey string) error {
 	}
 
 	if err := target.send(eventData); err != nil {
+		if xnet.IsNetworkOrHostDown(err) {
+			return errNotConnected
+		}
 		return err
 	}
 
@@ -171,46 +209,55 @@ func (target *WebhookTarget) Send(eventKey string) error {
 
 // Close - does nothing and available for interface compatibility.
 func (target *WebhookTarget) Close() error {
+	// Close idle connection with "keep-alive" states
+	target.httpClient.CloseIdleConnections()
 	return nil
 }
 
 // NewWebhookTarget - creates new Webhook target.
-func NewWebhookTarget(id string, args WebhookArgs, doneCh <-chan struct{}) *WebhookTarget {
+func NewWebhookTarget(id string, args WebhookArgs, doneCh <-chan struct{}, loggerOnce func(ctx context.Context, err error, id interface{}, kind ...interface{}), transport *http.Transport, test bool) (*WebhookTarget, error) {
 
 	var store Store
+
+	target := &WebhookTarget{
+		id:         event.TargetID{ID: id, Name: "webhook"},
+		args:       args,
+		loggerOnce: loggerOnce,
+	}
+
+	if target.args.ClientCert != "" && target.args.ClientKey != "" {
+		c, err := certs.New(target.args.ClientCert, target.args.ClientKey, tls.LoadX509KeyPair)
+		if err != nil {
+			return target, err
+		}
+		transport.TLSClientConfig.GetClientCertificate = c.GetClientCertificate
+	}
+	target.httpClient = &http.Client{Transport: transport}
 
 	if args.QueueDir != "" {
 		queueDir := filepath.Join(args.QueueDir, storePrefix+"-webhook-"+id)
 		store = NewQueueStore(queueDir, args.QueueLimit)
-		if oErr := store.Open(); oErr != nil {
-			return nil
+		if err := store.Open(); err != nil {
+			target.loggerOnce(context.Background(), err, target.ID())
+			return target, err
+		}
+		target.store = store
+	}
+
+	_, err := target.IsActive()
+	if err != nil {
+		if target.store == nil || err != errNotConnected {
+			target.loggerOnce(context.Background(), err, target.ID())
+			return target, err
 		}
 	}
 
-	target := &WebhookTarget{
-		id:   event.TargetID{ID: id, Name: "webhook"},
-		args: args,
-		httpClient: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: args.RootCAs},
-				DialContext: (&net.Dialer{
-					Timeout:   5 * time.Second,
-					KeepAlive: 5 * time.Second,
-				}).DialContext,
-				TLSHandshakeTimeout:   3 * time.Second,
-				ResponseHeaderTimeout: 3 * time.Second,
-				ExpectContinueTimeout: 2 * time.Second,
-			},
-		},
-		store: store,
-	}
-
-	if target.store != nil {
+	if target.store != nil && !test {
 		// Replays the events from the store.
-		eventKeyCh := replayEvents(target.store, doneCh)
+		eventKeyCh := replayEvents(target.store, doneCh, target.loggerOnce, target.ID())
 		// Start replaying events from the store.
-		go sendEvents(target, eventKeyCh, doneCh)
+		go sendEvents(target, eventKeyCh, doneCh, target.loggerOnce)
 	}
 
-	return target
+	return target, nil
 }
