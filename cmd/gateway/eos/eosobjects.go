@@ -27,8 +27,6 @@ import (
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/lifecycle"
-	"github.com/minio/minio/pkg/bucket/policy"
 )
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
@@ -177,67 +175,6 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string, forceDelet
 	return err
 }
 
-// GetBucketLifecycle - not implemented
-func (e *eosObjects) GetBucketLifecycle(ctx context.Context, bucket string) (*lifecycle.Lifecycle, error) {
-	eosLogger.Stat(ctx, "S3cmd: GetBucketLifecycle [bucket: %s]", bucket)
-
-	if e.readonly {
-		return nil, minio.NotImplemented{}
-	}
-
-	return nil, minio.NotImplemented{}
-}
-
-// SetBucketLifecycle - not implemented
-func (e *eosObjects) SetBucketLifecycle(ctx context.Context, bucket string, lifecycle *lifecycle.Lifecycle) error {
-	eosLogger.Stat(ctx, "S3cmd: SetBucketLifecycle [bucket: %s]", bucket)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
-// DeleteBucketLifecycle - not implemented
-func (e *eosObjects) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "S3cmd: DeleteBucketLifecycle [bucket: %s]", bucket)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
-// GetBucketPolicy - Get the container ACL
-func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
-	eosLogger.Stat(ctx, "S3cmd: GetBucketPolicy [bucket: %s]", bucket)
-	return nil, minio.NotImplemented{}
-}
-
-// SetBucketPolicy
-func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketPolicy *policy.Policy) error {
-	eosLogger.Stat(ctx, "S3cmd: SetBucketPolicy [bucket: %s, bucketPolicy: %s]", bucket, bucketPolicy)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
-// DeleteBucketPolicy - Set the container ACL to "private"
-func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "S3cmd: DeleteBucketPolicy [bucket: %s]", bucket)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
 // IsListenBucketSupported returns whether listen bucket notification is applicable for this gateway.
 func (e *eosObjects) IsListenBucketSupported() bool {
 	return false
@@ -285,17 +222,6 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 	}
 
 	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts)
-}
-
-// CopyObjectPart creates a part in a multipart upload by copying
-func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (p minio.PartInfo, err error) {
-	eosLogger.Stat(ctx, "S3cmd: CopyObjectPart: [srcpath: %s/%s, destpath: %s/%s]", srcBucket, srcObject, destBucket, destObject)
-
-	if e.readonly {
-		return p, minio.NotImplemented{}
-	}
-
-	return p, minio.NotImplemented{}
 }
 
 // PutObject - Create a new blob with the incoming data
