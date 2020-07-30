@@ -50,14 +50,11 @@ type ListObjectsMarker struct {
 	Skip     int
 }
 
-// IsNotificationSupported returns whether notifications are applicable for this layer.
-func (e *eosObjects) IsNotificationSupported() bool {
-	return false
-}
-
 // IsEncryptionSupported returns whether server side encryption is applicable for this layer.
 func (e *eosObjects) IsEncryptionSupported() bool {
-	return true
+	// note(mdu): don't think should be true unless we start using SSL between traefik + minio
+	// 	      I'd remove this method but wanted to leave a note :)
+	return false
 }
 
 // Shutdown - nothing to do really...
@@ -65,14 +62,13 @@ func (e *eosObjects) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// IsCompressionSupported returns whether compression is applicable for this layer.
-func (e *eosObjects) IsCompressionSupported() bool {
-	return false
-}
-
 // StorageInfo
-func (e *eosObjects) StorageInfo(ctx context.Context, _ bool) (storageInfo minio.StorageInfo, _ []error) {
-	return storageInfo, nil
+func (e *eosObjects) StorageInfo(ctx context.Context, _ bool) (si minio.StorageInfo, _ []error) {
+	si.Backend.Type = minio.BackendGateway
+	// See if we can determine if the gateway data directory is a directory to say things are up
+	online, _ := e.FileSystem.IsDir(ctx, "/")
+	si.Backend.GatewayOnline = online
+	return si, nil
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
