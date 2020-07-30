@@ -515,7 +515,19 @@ func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 // ListMultipartUploads - lists all multipart uploads.
 func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result minio.ListMultipartsInfo, err error) {
 	eosLogger.Stat(ctx, "S3cmd: ListMultipartUploads: [bucket: %s, prefix: %s, keyMarket: %s, uploadIDMarker: %s, delimiter: %s, maxUploads: %d]", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
-	return result, minio.NotImplemented{}
+	return result, nil
+}
+
+// GetMultipartInfo returns multipart info of the uploadId of the object
+func (e *eosObjects) GetMultipartInfo(ctx context.Context, bucket, object, uploadID string, opts minio.ObjectOptions) (result minio.MultipartInfo, err error) {
+	if e.TransferList.GetTransfer(uploadID) == nil {
+		return result, err
+	}
+
+	result.Bucket = bucket
+	result.Object = object
+	result.UploadID = uploadID
+	return result, nil
 }
 
 // NewMultipartUpload
