@@ -37,7 +37,6 @@ type eosObjects struct {
 	path              string
 	hookurl           string
 	stage             string
-	foregroundStaging bool
 	readonly          bool
 	validbuckets      bool
 	TransferList      *TransferList
@@ -766,17 +765,9 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 		return objInfo, err
 	}
 
-	// Upload the transfer to EOS in the background
-	reqInfo := logger.GetReqInfo(ctx)
-	if strings.HasPrefix(reqInfo.UserAgent, "rclone") || e.foregroundStaging {
-		_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
-		e.TransferList.DeleteTransfer(uploadID)
-	} else {
-		go func() {
-			_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
-			e.TransferList.DeleteTransfer(uploadID)
-		}()
-	}
+	_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
+	e.TransferList.DeleteTransfer(uploadID)
+
 	return objInfo, nil
 }
 
