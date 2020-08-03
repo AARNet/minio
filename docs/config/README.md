@@ -1,4 +1,4 @@
-# MinIO Server Config Guide [![Slack](https://slack.min.io/slack?type=svg)](https://slack.min.io) [![Go Report Card](https://goreportcard.com/badge/minio/minio)](https://goreportcard.com/report/minio/minio) [![Docker Pulls](https://img.shields.io/docker/pulls/minio/minio.svg?maxAge=604800)](https://hub.docker.com/r/minio/minio/)
+# MinIO Server Config Guide [![Slack](https://slack.min.io/slack?type=svg)](https://slack.min.io) [![Docker Pulls](https://img.shields.io/docker/pulls/minio/minio.svg?maxAge=604800)](https://hub.docker.com/r/minio/minio/)
 
 ## Configuration Directory
 
@@ -12,6 +12,8 @@ Additionally `--config-dir` is now a legacy option which will is scheduled for r
 minio server /data
 ```
 
+MinIO also encrypts all the config, IAM and policies content with admin credentials.
+
 ### Certificate Directory
 
 TLS certificates by default are stored under ``${HOME}/.minio/certs`` directory. You need to place certificates here to enable `HTTPS` based access. Read more about [How to secure access to MinIO server with TLS](https://docs.min.io/docs/how-to-secure-access-to-minio-server-with-tls).
@@ -19,121 +21,257 @@ TLS certificates by default are stored under ``${HOME}/.minio/certs`` directory.
 Following is the directory structure for MinIO server with TLS certificates.
 
 ```sh
-$ tree ~/.minio
+$ mc tree --files ~/.minio
 /home/user1/.minio
-├── certs
-│   ├── CAs
-│   ├── private.key
-│   └── public.crt
+└─ certs
+   ├─ CAs
+   ├─ private.key
+   └─ public.crt
 ```
 
 You can provide a custom certs directory using `--certs-dir` command line option.
 
-### Accessing configuration file
+#### Credentials
+On MinIO admin credentials or root credentials are only allowed to be changed using ENVs namely `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`. Using the combination of these two values MinIO encrypts the config stored at the backend.
 
-All configuration changes can be made using [`mc admin config` get/set commands](https://github.com/minio/mc/blob/master/docs/minio-admin-complete-guide.md). Following sections provide brief explanation of fields and how to customize them. A complete example of `config.json` is available [here](https://raw.githubusercontent.com/minio/minio/master/docs/config/config.sample.json)
-
-#### Editing configuration file fields
-
-##### Get current configuration for MinIO deployment
-
-```sh
-$ mc admin config get myminio/ > /tmp/myconfig
 ```
-
-##### Set current configuration for MinIO deployment
-
-```sh
-$ mc admin config set myminio < /tmp/myconfig
-```
-
-The `mc admin` config API will evolve soon to be able to configure specific fields using get/set commands.
-
-#### Version
-
-|Field|Type|Description|
-|:---|:---|:---|
-|``version``|_string_| `version` determines the configuration file format. Any older version will automatically be migrated to the latest version upon startup. [DO NOT EDIT THIS FIELD MANUALLY]|
-
-#### Credential
-
-|Field|Type|Description|
-|:---|:---|:---|
-|``credential``| | Auth credential for object storage and web access.|
-|``credential.accessKey`` | _string_ | Access key of minimum 3 characters in length. You may override this field with `MINIO_ACCESS_KEY` environment variable.|
-|``credential.secretKey`` | _string_ | Secret key of minimum 8 characters in length. You may override this field with `MINIO_SECRET_KEY` environment variable.|
-
-> NOTE: In distributed setup it is mandatory to use environment variables `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY` for credentials.
-
-Example:
-
-```sh
-export MINIO_ACCESS_KEY=admin
-export MINIO_SECRET_KEY=password
+export MINIO_ACCESS_KEY=minio
+export MINIO_SECRET_KEY=minio13
 minio server /data
 ```
+
+##### Rotating encryption with new credentials
+
+Additionally if you wish to change the admin credentials, then MinIO will automatically detect this and re-encrypt with new credentials as shown below. For one time only special ENVs as shown below needs to be set for rotating the encryption config.
+
+> Old ENVs are never remembered in memory and are destroyed right after they are used to migrate your existing content with new credentials. You are safe to remove them after the server as successfully started, by restarting the services once again.
+
+```
+export MINIO_ACCESS_KEY=newminio
+export MINIO_SECRET_KEY=newminio123
+export MINIO_ACCESS_KEY_OLD=minio
+export MINIO_SECRET_KEY_OLD=minio123
+minio server /data
+```
+
+Once the migration is complete, server will automatically unset the `MINIO_ACCESS_KEY_OLD` and `MINIO_SECRET_KEY_OLD` with in the process namespace.
+
+> **NOTE: Make sure to remove `MINIO_ACCESS_KEY_OLD` and `MINIO_SECRET_KEY_OLD` in scripts or service files before next service restarts of the server to avoid double encryption of your existing contents.**
 
 #### Region
+```
+KEY:
+region  label the location of the server
 
-|Field|Type|Description|
-|:---|:---|:---|
-|``region``| _string_ | `region` describes the physical location of the server. By default it is blank. You may override this field with `MINIO_REGION` environment variable. If you are unsure leave it unset.|
-
-Example:
-
-```sh
-export MINIO_REGION="my_region"
-minio server /data
+ARGS:
+name     (string)    name of the location of the server e.g. "us-west-rack2"
+comment  (sentence)  optionally add a comment to this setting
 ```
 
-#### Worm
+or environment variables
+```
+KEY:
+region  label the location of the server
 
-|Field|Type|Description|
-|:---|:---|:---|
-|``worm``| _string_ | Enable this to turn on Write-Once-Read-Many. By default it is set to `off`. You may override this field with ``MINIO_WORM`` environment variable.|
+ARGS:
+MINIO_REGION_NAME     (string)    name of the location of the server e.g. "us-west-rack2"
+MINIO_REGION_COMMENT  (sentence)  optionally add a comment to this setting
+```
 
 Example:
 
 ```sh
-export MINIO_WORM=on
+export MINIO_REGION_NAME="my_region"
 minio server /data
 ```
 
 ### Storage Class
-
-|Field|Type|Description|
-|:---|:---|:---|
-|``storageclass``| | Set storage class for configurable data and parity, as per object basis.|
-|``storageclass.standard`` | _string_ | Value for standard storage class. It should be in the format `EC:Parity`, for example to set 4 disk parity for standard storage class objects, set this field to `EC:4`.|
-|``storageclass.rrs`` | _string_ |  Value for reduced redundancy storage class. It should be in the format `EC:Parity`, for example to set 3 disk parity for reduced redundancy storage class objects, set this field to `EC:3`.|
-
 By default, parity for objects with standard storage class is set to `N/2`, and parity for objects with reduced redundancy storage class objects is set to `2`. Read more about storage class support in MinIO server [here](https://github.com/minio/minio/blob/master/docs/erasure/storage-class/README.md).
 
+```
+KEY:
+storage_class  define object level redundancy
+
+ARGS:
+standard  (string)    set the parity count for default standard storage class e.g. "EC:4"
+rrs       (string)    set the parity count for reduced redundancy storage class e.g. "EC:2"
+comment   (sentence)  optionally add a comment to this setting
+```
+
+or environment variables
+```
+KEY:
+storage_class  define object level redundancy
+
+ARGS:
+MINIO_STORAGE_CLASS_STANDARD  (string)    set the parity count for default standard storage class e.g. "EC:4"
+MINIO_STORAGE_CLASS_RRS       (string)    set the parity count for reduced redundancy storage class e.g. "EC:2"
+MINIO_STORAGE_CLASS_COMMENT   (sentence)  optionally add a comment to this setting
+```
+
 ### Cache
+MinIO provides caching storage tier for primarily gateway deployments, allowing you to cache content for faster reads, cost savings on repeated downloads from the cloud.
 
-|Field|Type|Description|
-|:---|:---|:---|
-|``drives``| _[]string_ | List of mounted file system drives with [`atime`](http://kerolasa.github.io/filetimes.html) support enabled|
-|``exclude`` | _[]string_ | List of wildcard patterns for prefixes to exclude from cache |
-|``expiry`` | _int_ | Days to cache expiry |
-|``maxuse`` | _int_ | Percentage of disk available to cache |
+```
+KEY:
+cache  add caching storage tier
 
-#### Notify
+ARGS:
+drives*  (csv)       comma separated mountpoints e.g. "/optane1,/optane2"
+expiry   (number)    cache expiry duration in days e.g. "90"
+quota    (number)    limit cache drive usage in percentage e.g. "90"
+exclude  (csv)       comma separated wildcard exclusion patterns e.g. "bucket/*.tmp,*.exe"
+after    (number)    minimum number of access before caching an object
+comment  (sentence)  optionally add a comment to this setting
+```
 
-|Field|Type|Description|
-|:---|:---|:---|
-|``notify``| |Notify enables bucket notification events for lambda computing via the following targets.|
-|``notify.amqp``| |[Configure to publish MinIO events via AMQP target.](https://docs.min.io/docs/minio-bucket-notification-guide#AMQP)|
-|``notify.nats``| |[Configure to publish MinIO events via NATS target.](https://docs.min.io/docs/minio-bucket-notification-guide#NATS)|
-|``notify.elasticsearch``| |[Configure to publish MinIO events via Elasticsearch target.](https://docs.min.io/docs/minio-bucket-notification-guide#Elasticsearch)|
-|``notify.redis``| |[Configure to publish MinIO events via Redis target.](https://docs.min.io/docs/minio-bucket-notification-guide#Redis)|
-|``notify.postgresql``| |[Configure to publish MinIO events via PostgreSQL target.](https://docs.min.io/docs/minio-bucket-notification-guide#PostgreSQL)|
-|``notify.kafka``| |[Configure to publish MinIO events via Apache Kafka target.](https://docs.min.io/docs/minio-bucket-notification-guide#apache-kafka)|
-|``notify.webhook``| |[Configure to publish MinIO events via Webhooks target.](https://docs.min.io/docs/minio-bucket-notification-guide#webhooks)|
-|``notify.mysql``| |[Configure to publish MinIO events via MySql target.](https://docs.min.io/docs/minio-bucket-notification-guide#MySQL)|
-|``notify.mqtt``| |[Configure to publish MinIO events via MQTT target.](https://docs.min.io/docs/minio-bucket-notification-guide#MQTT)|
+or environment variables
+```
+KEY:
+cache  add caching storage tier
 
-## Environment only settings
+ARGS:
+MINIO_CACHE_DRIVES*  (csv)       comma separated mountpoints e.g. "/optane1,/optane2"
+MINIO_CACHE_EXPIRY   (number)    cache expiry duration in days e.g. "90"
+MINIO_CACHE_QUOTA    (number)    limit cache drive usage in percentage e.g. "90"
+MINIO_CACHE_EXCLUDE  (csv)       comma separated wildcard exclusion patterns e.g. "bucket/*.tmp,*.exe"
+MINIO_CACHE_AFTER    (number)    minimum number of access before caching an object
+MINIO_CACHE_COMMENT  (sentence)  optionally add a comment to this setting
+```
+
+#### Etcd
+MinIO supports storing encrypted IAM assets and bucket DNS records on etcd.
+
+> NOTE: if *path_prefix* is set then MinIO will not federate your buckets, namespaced IAM assets are assumed as isolated tenants, only buckets are considered globally unique but performing a lookup with a *bucket* which belongs to a different tenant will fail unlike federated setups where MinIO would port-forward and route the request to relevant cluster accordingly. This is a special feature, federated deployments should not need to set *path_prefix*.
+
+```
+KEY:
+etcd  federate multiple clusters for IAM and Bucket DNS
+
+ARGS:
+endpoints*       (csv)       comma separated list of etcd endpoints e.g. "http://localhost:2379"
+path_prefix      (path)      namespace prefix to isolate tenants e.g. "customer1/"
+coredns_path     (path)      shared bucket DNS records, default is "/skydns"
+client_cert      (path)      client cert for mTLS authentication
+client_cert_key  (path)      client cert key for mTLS authentication
+comment          (sentence)  optionally add a comment to this setting
+```
+
+or environment variables
+```
+KEY:
+etcd  federate multiple clusters for IAM and Bucket DNS
+
+ARGS:
+MINIO_ETCD_ENDPOINTS*       (csv)       comma separated list of etcd endpoints e.g. "http://localhost:2379"
+MINIO_ETCD_PATH_PREFIX      (path)      namespace prefix to isolate tenants e.g. "customer1/"
+MINIO_ETCD_COREDNS_PATH     (path)      shared bucket DNS records, default is "/skydns"
+MINIO_ETCD_CLIENT_CERT      (path)      client cert for mTLS authentication
+MINIO_ETCD_CLIENT_CERT_KEY  (path)      client cert key for mTLS authentication
+MINIO_ETCD_COMMENT          (sentence)  optionally add a comment to this setting
+```
+
+### API
+By default, there is no limitation on the number of concurrents requests that a server/cluster processes at the same time. However, it is possible to impose such limitation using the API subsystem. Read more about throttling limitation in MinIO server [here](https://github.com/minio/minio/blob/master/docs/throttle/README.md).
+
+```
+KEY:
+api  manage global HTTP API call specific features, such as throttling, authentication types, etc.
+
+ARGS:
+requests_max       (number)    set the maximum number of concurrent requests, e.g. "1600"
+requests_deadline  (duration)  set the deadline for API requests waiting to be processed e.g. "1m"
+ready_deadline     (duration)  set the deadline for health check API /minio/health/ready e.g. "1m"
+cors_allow_origin  (csv)       set comma separated list of origins allowed for CORS requests e.g. "https://example1.com,https://example2.com"
+```
+
+or environment variables
+
+```
+MINIO_API_REQUESTS_MAX       (number)    set the maximum number of concurrent requests, e.g. "1600"
+MINIO_API_REQUESTS_DEADLINE  (duration)  set the deadline for API requests waiting to be processed e.g. "1m"
+MINIO_API_CORS_ALLOW_ORIGIN  (csv)       set comma separated list of origins allowed for CORS requests e.g. "https://example1.com,https://example2.com"
+```
+
+#### Notifications
+Notification targets supported by MinIO are in the following list. To configure individual targets please refer to more detailed documentation [here](https://docs.min.io/docs/minio-bucket-notification-guide.html)
+
+```
+notify_webhook        publish bucket notifications to webhook endpoints
+notify_amqp           publish bucket notifications to AMQP endpoints
+notify_kafka          publish bucket notifications to Kafka endpoints
+notify_mqtt           publish bucket notifications to MQTT endpoints
+notify_nats           publish bucket notifications to NATS endpoints
+notify_nsq            publish bucket notifications to NSQ endpoints
+notify_mysql          publish bucket notifications to MySQL databases
+notify_postgres       publish bucket notifications to Postgres databases
+notify_elasticsearch  publish bucket notifications to Elasticsearch endpoints
+notify_redis          publish bucket notifications to Redis datastores
+```
+
+### Accessing configuration
+All configuration changes can be made using [`mc admin config` get/set/reset/export/import commands](https://github.com/minio/mc/blob/master/docs/minio-admin-complete-guide.md).
+
+#### List all config keys available
+```
+~ mc admin config set myminio/
+```
+
+#### Obtain help for each key
+```
+~ mc admin config set myminio/ <key>
+```
+
+e.g: `mc admin config set myminio/ etcd` returns available `etcd` config args
+
+```
+~ mc admin config set play/ etcd
+KEY:
+etcd  federate multiple clusters for IAM and Bucket DNS
+
+ARGS:
+endpoints*       (csv)       comma separated list of etcd endpoints e.g. "http://localhost:2379"
+path_prefix      (path)      namespace prefix to isolate tenants e.g. "customer1/"
+coredns_path     (path)      shared bucket DNS records, default is "/skydns"
+client_cert      (path)      client cert for mTLS authentication
+client_cert_key  (path)      client cert key for mTLS authentication
+comment          (sentence)  optionally add a comment to this setting
+```
+
+To get ENV equivalent for each config args use `--env` flag
+```
+~ mc admin config set play/ etcd --env
+KEY:
+etcd  federate multiple clusters for IAM and Bucket DNS
+
+ARGS:
+MINIO_ETCD_ENDPOINTS*       (csv)       comma separated list of etcd endpoints e.g. "http://localhost:2379"
+MINIO_ETCD_PATH_PREFIX      (path)      namespace prefix to isolate tenants e.g. "customer1/"
+MINIO_ETCD_COREDNS_PATH     (path)      shared bucket DNS records, default is "/skydns"
+MINIO_ETCD_CLIENT_CERT      (path)      client cert for mTLS authentication
+MINIO_ETCD_CLIENT_CERT_KEY  (path)      client cert key for mTLS authentication
+MINIO_ETCD_COMMENT          (sentence)  optionally add a comment to this setting
+```
+
+This behavior is consistent across all keys, each key self documents itself with valid examples.
+
+## Environment only settings (not in config)
+
+#### Usage crawler
+> NOTE: Data usage crawler is not supported under Gateway deployments.
+
+Data usage crawler is enabled by default, following ENVs allow for more staggered delay in terms of usage calculation.
+
+The crawler adapts to the system speed and completely pauses when the system is under load. It is possible to adjust the speed of the crawler and thereby the latency of updates being reflected. The delays between each operation of the crawl can be adjusted by the `MINIO_DISK_USAGE_CRAWL_DELAY` environment variable. By default the value is `10`. This means the crawler will sleep *10x* the time each operation takes.
+
+This will in most setups make the crawler slow enough to not impact overall system performance. Setting `MINIO_DISK_USAGE_CRAWL_DELAY` to a *lower* value will make the crawler faster and setting it to 0 will make the crawler run at full speed (not recommended). Setting it to a higher value will make the crawler slower, further consume less resources.
+
+Example: Following setting will decrease the crawler speed by a factor of 3, reducing the system resource use, but increasing the latency of updates being reflected.
+
+```sh
+export MINIO_DISK_USAGE_CRAWL_DELAY=30
+minio server /data
+```
 
 ### Browser
 
@@ -162,95 +300,6 @@ export MINIO_DOMAIN=sub1.mydomain.com,sub2.mydomain.com
 minio server /data
 ```
 
-### HTTP Trace
-HTTP tracing can be enabled by using [`mc admin trace`](https://github.com/minio/mc/blob/master/docs/minio-admin-complete-guide.md#command-trace---display-minio-server-http-trace) command.
-
-Example:
-```sh
-minio server /data
-```
-
-Default trace is succinct only to indicate the API operations being called and the HTTP response status.
-```sh
-mc admin trace myminio
-17:21:45.729309964 objectAPIHandlers.GetBucketLocation localhost:9000/vk-photos/?location= 	200 OK
-17:21:45.738167329 objectAPIHandlers.HeadBucket localhost:9000/vk-photos/ 	200 OK
-17:21:45.747676811 objectAPIHandlers.ListObjectsV1 localhost:9000/vk-photos/?delimiter=%2F&max-keys=1000&prefix= 	200 OK
-```
-
-To trace entire HTTP request
-```sh
-mc admin trace --verbose myminio
-127.0.0.1 [REQUEST objectAPIHandlers.GetBucketLocation] [17:23:21.404025835]
-127.0.0.1 GET /yyy/?location=
-127.0.0.1 Host: localhost:9000
-127.0.0.1 Content-Length: 0
-127.0.0.1 User-Agent: MinIO (linux; amd64) minio-go/v6.0.29 mc/2019-06-15T10:29:41Z
-127.0.0.1 X-Amz-Content-Sha256: UNSIGNED-PAYLOAD
-127.0.0.1 X-Amz-Date: 20190619T172321Z
-127.0.0.1 Authorization: AWS4-HMAC-SHA256 Credential=Q3AM3UQ867SPQQA43P2F/20190619/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=8e53d8574db3424aa00dd73637575512b250c923edcad3cbf58a727305205709
-127.0.0.1
-127.0.0.1 [RESPONSE] [17:23:21.404780651]
-127.0.0.1 200 OK
-127.0.0.1 X-Amz-Request-Id: 15A9A965FF7A7546
-127.0.0.1 X-Minio-Deployment-Id: 41e39f4a-3b66-415b-9ddf-025d76a58668
-127.0.0.1 X-Xss-Protection: 1; mode=block
-127.0.0.1 Accept-Ranges: bytes
-127.0.0.1 Server: MinIO/DEVELOPMENT.2019-06-18T17-17-02Z
-127.0.0.1 Content-Type: application/xml
-127.0.0.1 Vary: Origin
-127.0.0.1 X-Amz-Bucket-Region: us-east-1
-127.0.0.1 Content-Length: 137
-127.0.0.1 Content-Security-Policy: block-all-mixed-content
-127.0.0.1 <?xml version="1.0" encoding="UTF-8"?>
-<LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">us-east-1</LocationConstraint>127.0.0.1
-127.0.0.1 [REQUEST objectAPIHandlers.HeadBucket] [17:23:21.412985428]
-127.0.0.1 HEAD /yyy/
-127.0.0.1 Host: localhost:9000
-127.0.0.1 User-Agent: MinIO (linux; amd64) minio-go/v6.0.29 mc/2019-06-15T10:29:41Z
-127.0.0.1 X-Amz-Content-Sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-127.0.0.1 X-Amz-Date: 20190619T172321Z
-127.0.0.1 Authorization: AWS4-HMAC-SHA256 Credential=Q3AM3UQ867SPQQA43P2F/20190619/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=e0a02a62d39994d0206586f01dd2ab3a4aea74e60da9ff4d427629f705c62c02
-127.0.0.1 Content-Length: 0
-127.0.0.1
-127.0.0.1 [RESPONSE] [17:23:21.413457159]
-127.0.0.1 200 OK
-127.0.0.1 Vary: Origin
-127.0.0.1 Accept-Ranges: bytes
-127.0.0.1 Content-Length: 0
-127.0.0.1 X-Amz-Bucket-Region: us-east-1
-127.0.0.1 X-Amz-Request-Id: 15A9A9660005982D
-127.0.0.1 X-Minio-Deployment-Id: 41e39f4a-3b66-415b-9ddf-025d76a58668
-127.0.0.1 X-Xss-Protection: 1; mode=block
-127.0.0.1 Content-Security-Policy: block-all-mixed-content
-127.0.0.1 Server: MinIO/DEVELOPMENT.2019-06-18T17-17-02Z
-127.0.0.1
-127.0.0.1 [REQUEST objectAPIHandlers.ListObjectsV1] [17:23:21.423153668]
-127.0.0.1 GET /yyy/?delimiter=%2F&max-keys=1000&prefix=
-127.0.0.1 Host: localhost:9000
-127.0.0.1 Content-Length: 0
-127.0.0.1 User-Agent: MinIO (linux; amd64) minio-go/v6.0.29 mc/2019-06-15T10:29:41Z
-127.0.0.1 X-Amz-Content-Sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-127.0.0.1 X-Amz-Date: 20190619T172321Z
-127.0.0.1 Authorization: AWS4-HMAC-SHA256 Credential=Q3AM3UQ867SPQQA43P2F/20190619/us-east-1/s3/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature=46ee3d2fc5085432b94bc3205076abd8166ffa3e35c639f84e9684c7c6a181c9
-127.0.0.1
-127.0.0.1 [RESPONSE] [17:23:21.424260967]
-127.0.0.1 200 OK
-127.0.0.1 Content-Security-Policy: block-all-mixed-content
-127.0.0.1 Content-Type: application/xml
-127.0.0.1 Server: MinIO/DEVELOPMENT.2019-06-18T17-17-02Z
-127.0.0.1 X-Amz-Bucket-Region: us-east-1
-127.0.0.1 X-Minio-Deployment-Id: 41e39f4a-3b66-415b-9ddf-025d76a58668
-127.0.0.1 Accept-Ranges: bytes
-127.0.0.1 Content-Length: 253
-127.0.0.1 Vary: Origin
-127.0.0.1 X-Amz-Request-Id: 15A9A966009F94A6
-127.0.0.1 X-Xss-Protection: 1; mode=block
-127.0.0.1 <?xml version="1.0" encoding="UTF-8"?>
-<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>yyy</Name><Prefix></Prefix><Marker></Marker><MaxKeys>1000</MaxKeys><Delimiter>/</Delimiter><IsTruncated>false</IsTruncated></ListBucketResult>
-```
-
 ## Explore Further
-
 * [MinIO Quickstart Guide](https://docs.min.io/docs/minio-quickstart-guide)
 * [Configure MinIO Server with TLS](https://docs.min.io/docs/how-to-secure-access-to-minio-server-with-tls)

@@ -2,9 +2,10 @@ package eos
 
 import (
 	"context"
-	"github.com/minio/minio/cmd/logger"
 	"runtime"
 	"sync"
+
+	"github.com/minio/minio/cmd/logger"
 )
 
 // RequestStatCache is used for storing a cache of FileStat's per HTTP request

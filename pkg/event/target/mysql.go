@@ -54,6 +54,7 @@
 package target
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -78,6 +79,32 @@ const (
 	mysqlUpdateRow = `INSERT INTO %s (key_name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value=VALUES(value);`
 	mysqlDeleteRow = `DELETE FROM %s WHERE key_name = ?;`
 	mysqlInsertRow = `INSERT INTO %s (event_time, event_data) VALUES (?, ?);`
+)
+
+// MySQL related constants
+const (
+	MySQLFormat     = "format"
+	MySQLDSNString  = "dsn_string"
+	MySQLTable      = "table"
+	MySQLHost       = "host"
+	MySQLPort       = "port"
+	MySQLUsername   = "username"
+	MySQLPassword   = "password"
+	MySQLDatabase   = "database"
+	MySQLQueueLimit = "queue_limit"
+	MySQLQueueDir   = "queue_dir"
+
+	EnvMySQLEnable     = "MINIO_NOTIFY_MYSQL_ENABLE"
+	EnvMySQLFormat     = "MINIO_NOTIFY_MYSQL_FORMAT"
+	EnvMySQLDSNString  = "MINIO_NOTIFY_MYSQL_DSN_STRING"
+	EnvMySQLTable      = "MINIO_NOTIFY_MYSQL_TABLE"
+	EnvMySQLHost       = "MINIO_NOTIFY_MYSQL_HOST"
+	EnvMySQLPort       = "MINIO_NOTIFY_MYSQL_PORT"
+	EnvMySQLUsername   = "MINIO_NOTIFY_MYSQL_USERNAME"
+	EnvMySQLPassword   = "MINIO_NOTIFY_MYSQL_PASSWORD"
+	EnvMySQLDatabase   = "MINIO_NOTIFY_MYSQL_DATABASE"
+	EnvMySQLQueueLimit = "MINIO_NOTIFY_MYSQL_QUEUE_LIMIT"
+	EnvMySQLQueueDir   = "MINIO_NOTIFY_MYSQL_QUEUE_DIR"
 )
 
 // MySQLArgs - MySQL target arguments.
@@ -134,9 +161,6 @@ func (m MySQLArgs) Validate() error {
 			return errors.New("queueDir path should be absolute")
 		}
 	}
-	if m.QueueLimit > 10000 {
-		return errors.New("queueLimit should not exceed 10000")
-	}
 
 	return nil
 }
@@ -151,6 +175,7 @@ type MySQLTarget struct {
 	db         *sql.DB
 	store      Store
 	firstPing  bool
+	loggerOnce func(ctx context.Context, err error, id interface{}, errKind ...interface{})
 }
 
 // ID - returns target ID.
@@ -158,15 +183,36 @@ func (target *MySQLTarget) ID() event.TargetID {
 	return target.id
 }
 
+// HasQueueStore - Checks if the queueStore has been configured for the target
+func (target *MySQLTarget) HasQueueStore() bool {
+	return target.store != nil
+}
+
+// IsActive - Return true if target is up and active
+func (target *MySQLTarget) IsActive() (bool, error) {
+	if target.db == nil {
+		db, sErr := sql.Open("mysql", target.args.DSN)
+		if sErr != nil {
+			return false, sErr
+		}
+		target.db = db
+	}
+	if err := target.db.Ping(); err != nil {
+		if IsConnErr(err) {
+			return false, errNotConnected
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // Save - saves the events to the store which will be replayed when the SQL connection is active.
 func (target *MySQLTarget) Save(eventData event.Event) error {
 	if target.store != nil {
 		return target.store.Put(eventData)
 	}
-	if err := target.db.Ping(); err != nil {
-		if IsConnErr(err) {
-			return errNotConnected
-		}
+	_, err := target.IsActive()
+	if err != nil {
 		return err
 	}
 	return target.send(eventData)
@@ -217,10 +263,8 @@ func (target *MySQLTarget) send(eventData event.Event) error {
 // Send - reads an event from store and sends it to MySQL.
 func (target *MySQLTarget) Send(eventKey string) error {
 
-	if err := target.db.Ping(); err != nil {
-		if IsConnErr(err) {
-			return errNotConnected
-		}
+	_, err := target.IsActive()
+	if err != nil {
 		return err
 	}
 
@@ -311,8 +355,7 @@ func (target *MySQLTarget) executeStmts() error {
 }
 
 // NewMySQLTarget - creates new MySQL target.
-func NewMySQLTarget(id string, args MySQLArgs, doneCh <-chan struct{}) (*MySQLTarget, error) {
-	var firstPing bool
+func NewMySQLTarget(id string, args MySQLArgs, doneCh <-chan struct{}, loggerOnce func(ctx context.Context, err error, id interface{}, kind ...interface{}), test bool) (*MySQLTarget, error) {
 	if args.DSN == "" {
 		config := mysql.Config{
 			User:                 args.User,
@@ -321,15 +364,25 @@ func NewMySQLTarget(id string, args MySQLArgs, doneCh <-chan struct{}) (*MySQLTa
 			Addr:                 args.Host.String() + ":" + args.Port,
 			DBName:               args.Database,
 			AllowNativePasswords: true,
+			CheckConnLiveness:    true,
 		}
 
 		args.DSN = config.FormatDSN()
 	}
 
+	target := &MySQLTarget{
+		id:         event.TargetID{ID: id, Name: "mysql"},
+		args:       args,
+		firstPing:  false,
+		loggerOnce: loggerOnce,
+	}
+
 	db, err := sql.Open("mysql", args.DSN)
 	if err != nil {
-		return nil, err
+		target.loggerOnce(context.Background(), err, target.ID())
+		return target, err
 	}
+	target.db = db
 
 	var store Store
 
@@ -337,35 +390,31 @@ func NewMySQLTarget(id string, args MySQLArgs, doneCh <-chan struct{}) (*MySQLTa
 		queueDir := filepath.Join(args.QueueDir, storePrefix+"-mysql-"+id)
 		store = NewQueueStore(queueDir, args.QueueLimit)
 		if oErr := store.Open(); oErr != nil {
-			return nil, oErr
+			target.loggerOnce(context.Background(), oErr, target.ID())
+			return target, oErr
 		}
-	}
-
-	target := &MySQLTarget{
-		id:        event.TargetID{ID: id, Name: "mysql"},
-		args:      args,
-		db:        db,
-		store:     store,
-		firstPing: firstPing,
+		target.store = store
 	}
 
 	err = target.db.Ping()
 	if err != nil {
-		if target.store == nil || !IsConnRefusedErr(err) {
-			return nil, err
+		if target.store == nil || !(IsConnRefusedErr(err) || IsConnResetErr(err)) {
+			target.loggerOnce(context.Background(), err, target.ID())
+			return target, err
 		}
 	} else {
 		if err = target.executeStmts(); err != nil {
-			return nil, err
+			target.loggerOnce(context.Background(), err, target.ID())
+			return target, err
 		}
 		target.firstPing = true
 	}
 
-	if target.store != nil {
+	if target.store != nil && !test {
 		// Replays the events from the store.
-		eventKeyCh := replayEvents(target.store, doneCh)
+		eventKeyCh := replayEvents(target.store, doneCh, target.loggerOnce, target.ID())
 		// Start replaying events from the store.
-		go sendEvents(target, eventKeyCh, doneCh)
+		go sendEvents(target, eventKeyCh, doneCh, target.loggerOnce)
 	}
 
 	return target, nil

@@ -53,19 +53,19 @@ func main() {
 	testTLSEllipticCurves(endpoint)
 }
 
-// Tests whether the endpoint accepts SSL3.0, TLS1.0 or TLS1.1 connections - fail if so.
+// Tests whether the endpoint accepts TLS1.0 or TLS1.1 connections - fail if so.
 // Tests whether the endpoint accepts TLS1.2 connections - fail if not.
 func testTLSVersions(endpoint string) {
 	const function = "TLSVersions"
 	startTime := time.Now()
 
-	// Tests whether the endpoint accepts SSL3.0, TLS1.0 or TLS1.1 connections
+	// Tests whether the endpoint accepts TLS1.0 or TLS1.1 connections
 	args := map[string]interface{}{
-		"MinVersion": "tls.VersionSSL30",
+		"MinVersion": "tls.VersionTLS10",
 		"MaxVersion": "tls.VersionTLS11",
 	}
 	_, err := tls.Dial("tcp", endpoint, &tls.Config{
-		MinVersion: tls.VersionSSL30,
+		MinVersion: tls.VersionTLS10,
 		MaxVersion: tls.VersionTLS11,
 	})
 	if err == nil {
@@ -219,7 +219,7 @@ func (f *mintJSONFormatter) Format(entry *log.Entry) ([]byte, error) {
 
 	serialized, err := json.Marshal(data)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to marshal fields to JSON, %v", err)
+		return nil, fmt.Errorf("Failed to marshal fields to JSON, %w", err)
 	}
 	return append(serialized, '\n'), nil
 }

@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/minio/minio/cmd/logger"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/minio/minio/cmd/logger"
 )
 
 // Logging method

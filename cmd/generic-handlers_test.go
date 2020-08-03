@@ -113,7 +113,7 @@ func TestGuessIsRPC(t *testing.T) {
 
 // Tests browser request guess function.
 func TestGuessIsBrowser(t *testing.T) {
-	globalIsBrowserEnabled = true
+	globalBrowserEnabled = true
 	if guessIsBrowserReq(nil) {
 		t.Fatal("Unexpected return for nil request")
 	}
@@ -185,7 +185,7 @@ var containsReservedMetadataTests = []struct {
 		shouldFail: true,
 	},
 	{
-		header:     http.Header{crypto.SSESealAlgorithm: []string{SSESealAlgorithmDareSha256}},
+		header:     http.Header{crypto.SSESealAlgorithm: []string{crypto.InsecureSealAlgorithm}},
 		shouldFail: true,
 	},
 	{
@@ -199,12 +199,16 @@ var containsReservedMetadataTests = []struct {
 }
 
 func TestContainsReservedMetadata(t *testing.T) {
-	for i, test := range containsReservedMetadataTests {
-		if contains := containsReservedMetadata(test.header); contains && !test.shouldFail {
-			t.Errorf("Test %d: contains reserved header but should not fail", i)
-		} else if !contains && test.shouldFail {
-			t.Errorf("Test %d: does not contain reserved header but failed", i)
-		}
+	for _, test := range containsReservedMetadataTests {
+		test := test
+		t.Run("", func(t *testing.T) {
+			contains := containsReservedMetadata(test.header)
+			if contains && !test.shouldFail {
+				t.Errorf("contains reserved header but should not fail")
+			} else if !contains && test.shouldFail {
+				t.Errorf("does not contain reserved header but failed")
+			}
+		})
 	}
 }
 

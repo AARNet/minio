@@ -1,5 +1,5 @@
 /*
- * MinIO Cloud Storage, (C) 2017, 2018 MinIO, Inc.
+ * MinIO Cloud Storage, (C) 2017-2020 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import (
 const defaultAppendBufferSize = humanize.MiByte
 
 // WriteOnCloser implements io.WriteCloser and always
-// exectues at least one write operation if it is closed.
+// executes at least one write operation if it is closed.
 //
 // This can be useful within the context of HTTP. At least
 // one write operation must happen to send the HTTP headers
@@ -78,7 +78,7 @@ type LimitWriter struct {
 	wLimit    int64
 }
 
-// Implements the io.Writer interface limiting upto
+// Write implements the io.Writer interface limiting upto
 // configured length, also skips the first N bytes.
 func (w *LimitWriter) Write(p []byte) (n int, err error) {
 	n = len(p)
@@ -158,6 +158,23 @@ func (s *SkipReader) Read(p []byte) (int, error) {
 // NewSkipReader - creates a SkipReader
 func NewSkipReader(r io.Reader, n int64) io.Reader {
 	return &SkipReader{r, n}
+}
+
+// SameFile returns if the files are same.
+func SameFile(fi1, fi2 os.FileInfo) bool {
+	if !os.SameFile(fi1, fi2) {
+		return false
+	}
+	if !fi1.ModTime().Equal(fi2.ModTime()) {
+		return false
+	}
+	if fi1.Mode() != fi2.Mode() {
+		return false
+	}
+	if fi1.Size() != fi2.Size() {
+		return false
+	}
+	return true
 }
 
 // DirectIO alignment needs to be 4K. Defined here as

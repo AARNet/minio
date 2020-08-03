@@ -73,16 +73,17 @@ var exports = {
     },
     proxy: {
       '/minio/webrpc': {
-	target: 'http://localhost:9000',
-	secure: false
+        target: 'http://localhost:9000',
+        secure: false,
+        headers: {'Host': "localhost:9000"}
       },
       '/minio/upload/*': {
-	target: 'http://localhost:9000',
-	secure: false
+        target: 'http://localhost:9000',
+        secure: false
       },
       '/minio/download/*': {
-	target: 'http://localhost:9000',
-	secure: false
+        target: 'http://localhost:9000',
+        secure: false
       },
       '/minio/zip': {
         target: 'http://localhost:9000',
@@ -91,7 +92,7 @@ var exports = {
     }
   },
   plugins: [
-    new CopyWebpackPlugin([
+    new CopyWebpackPlugin({patterns: [
       {from: 'app/css/loader.css'},
       {from: 'app/img/browsers/chrome.png'},
       {from: 'app/img/browsers/firefox.png'},
@@ -101,7 +102,7 @@ var exports = {
       {from: 'app/img/favicon/favicon-32x32.png'},
       {from: 'app/img/favicon/favicon-96x96.png'},
       {from: 'app/index.html'}
-    ]),
+    ]}),
     new webpack.ContextReplacementPlugin(/moment[\\\/]locale$/, /^\.\/(en)$/),
     new PurgecssPlugin({
       paths: glob.sync([

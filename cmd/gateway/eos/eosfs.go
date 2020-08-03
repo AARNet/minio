@@ -173,13 +173,6 @@ func (e *eosFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 		return nil, errFileNotFound
 	}
 
-	if err != nil {
-		// Debug level since it happens quite often
-		// when a file that doesn't exist is checked for
-		eosLogger.Debug(ctx, "Unable to read directory [eospath: %s, error: %+v]", eospath, err)
-		return nil, errFileNotFound
-	}
-
 	for _, object := range objects {
 		if e.isEOSSysFile(object.Name) {
 			continue
@@ -347,7 +340,7 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 	}
 
 	if interfaceToString(m["errormsg"]) != "" {
-		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.rm: remove failed [eospath: %s, error: %s]", eospath)
+		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.rm: remove failed [eospath: %s]", eospath)
 		return errDiskAccessDenied
 	}
 	reqStatCache := e.StatCache.Get(ctx)
@@ -437,7 +430,7 @@ func (e *eosFS) Rename(ctx context.Context, from, to string) error {
 	}
 
 	if interfaceToString(m["errormsg"]) != "" {
-		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.Rename: rename failed [src: %s, dst: %s, error: %s]", eosfrompath, eostopath)
+		eosLogger.Error(ctx, fmt.Errorf(interfaceToString(m["errormsg"])), "eosfs.Rename: rename failed [src: %s, dst: %s]", eosfrompath, eostopath)
 		return errDiskAccessDenied
 	}
 

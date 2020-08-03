@@ -20,10 +20,10 @@ import (
 	"io"
 
 	"github.com/bcicen/jstream"
+	parquetgo "github.com/minio/minio/pkg/s3select/internal/parquet-go"
+	parquetgen "github.com/minio/minio/pkg/s3select/internal/parquet-go/gen-go/parquet"
 	jsonfmt "github.com/minio/minio/pkg/s3select/json"
 	"github.com/minio/minio/pkg/s3select/sql"
-	parquetgo "github.com/minio/parquet-go"
-	parquetgen "github.com/minio/parquet-go/gen-go/parquet"
 )
 
 // Reader - Parquet record reader for S3Select.
@@ -33,7 +33,7 @@ type Reader struct {
 }
 
 // Read - reads single record.
-func (r *Reader) Read() (rec sql.Record, rerr error) {
+func (r *Reader) Read(dst sql.Record) (rec sql.Record, rerr error) {
 	parquetRecord, err := r.reader.Read()
 	if err != nil {
 		if err != io.EOF {
@@ -73,11 +73,20 @@ func (r *Reader) Read() (rec sql.Record, rerr error) {
 		return true
 	}
 
+	// Apply our range
 	parquetRecord.Range(f)
-	return &jsonfmt.Record{KVS: kvs, SelectFormat: sql.SelectFmtParquet}, nil
+
+	// Reuse destination if we can.
+	dstRec, ok := dst.(*jsonfmt.Record)
+	if !ok {
+		dstRec = &jsonfmt.Record{}
+	}
+	dstRec.SelectFormat = sql.SelectFmtParquet
+	dstRec.KVS = kvs
+	return dstRec, nil
 }
 
-// Close - closes underlaying readers.
+// Close - closes underlying readers.
 func (r *Reader) Close() error {
 	return r.reader.Close()
 }

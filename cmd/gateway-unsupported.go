@@ -18,15 +18,33 @@ package cmd
 
 import (
 	"context"
+	"errors"
 
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/lifecycle"
+
+	"github.com/minio/minio-go/v7/pkg/tags"
+	bucketsse "github.com/minio/minio/pkg/bucket/encryption"
+	"github.com/minio/minio/pkg/bucket/lifecycle"
+	"github.com/minio/minio/pkg/bucket/policy"
+	"github.com/minio/minio/pkg/bucket/versioning"
+
 	"github.com/minio/minio/pkg/madmin"
-	"github.com/minio/minio/pkg/policy"
 )
 
 // GatewayUnsupported list of unsupported call stubs for gateway.
 type GatewayUnsupported struct{}
+
+// CrawlAndGetDataUsage - crawl is not implemented for gateway
+func (a GatewayUnsupported) CrawlAndGetDataUsage(ctx context.Context, bf *bloomFilter, updates chan<- DataUsageInfo) error {
+	logger.CriticalIf(ctx, errors.New("not implemented"))
+	return NotImplemented{}
+}
+
+// NewNSLock is a dummy stub for gateway.
+func (a GatewayUnsupported) NewNSLock(ctx context.Context, bucket string, objects ...string) RWLocker {
+	logger.CriticalIf(ctx, errors.New("not implemented"))
+	return nil
+}
 
 // ListMultipartUploads lists all multipart uploads.
 func (a GatewayUnsupported) ListMultipartUploads(ctx context.Context, bucket string, prefix string, keyMarker string, uploadIDMarker string, delimiter string, maxUploads int) (lmi ListMultipartsInfo, err error) {
@@ -47,6 +65,18 @@ func (a GatewayUnsupported) CopyObjectPart(ctx context.Context, srcBucket, srcOb
 func (a GatewayUnsupported) PutObjectPart(ctx context.Context, bucket string, object string, uploadID string, partID int, data *PutObjReader, opts ObjectOptions) (pi PartInfo, err error) {
 	logger.LogIf(ctx, NotImplemented{})
 	return pi, NotImplemented{}
+}
+
+// GetMultipartInfo returns metadata associated with the uploadId
+func (a GatewayUnsupported) GetMultipartInfo(ctx context.Context, bucket string, object string, uploadID string, opts ObjectOptions) (MultipartInfo, error) {
+	logger.LogIf(ctx, NotImplemented{})
+	return MultipartInfo{}, NotImplemented{}
+}
+
+// ListObjectVersions returns all object parts for specified object in specified bucket
+func (a GatewayUnsupported) ListObjectVersions(ctx context.Context, bucket, prefix, marker, versionMarker, delimiter string, maxKeys int) (ListObjectVersionsInfo, error) {
+	logger.LogIf(ctx, NotImplemented{})
+	return ListObjectVersionsInfo{}, NotImplemented{}
 }
 
 // ListObjectParts returns all object parts for specified object in specified bucket
@@ -82,19 +112,46 @@ func (a GatewayUnsupported) DeleteBucketPolicy(ctx context.Context, bucket strin
 	return NotImplemented{}
 }
 
-// SetBucketLifecycle sets lifecycle on bucket
+// SetBucketVersioning enables versioning on a bucket.
+func (a GatewayUnsupported) SetBucketVersioning(ctx context.Context, bucket string, v *versioning.Versioning) error {
+	logger.LogIf(ctx, NotImplemented{})
+	return NotImplemented{}
+}
+
+// GetBucketVersioning retrieves versioning configuration of a bucket.
+func (a GatewayUnsupported) GetBucketVersioning(ctx context.Context, bucket string) (*versioning.Versioning, error) {
+	logger.LogIf(ctx, NotImplemented{})
+	return nil, NotImplemented{}
+}
+
+// SetBucketLifecycle enables lifecycle policies on a bucket.
 func (a GatewayUnsupported) SetBucketLifecycle(ctx context.Context, bucket string, lifecycle *lifecycle.Lifecycle) error {
 	logger.LogIf(ctx, NotImplemented{})
 	return NotImplemented{}
 }
 
-// GetBucketLifecycle will get lifecycle on bucket
+// GetBucketLifecycle retrieves lifecycle configuration of a bucket.
 func (a GatewayUnsupported) GetBucketLifecycle(ctx context.Context, bucket string) (*lifecycle.Lifecycle, error) {
 	return nil, NotImplemented{}
 }
 
-// DeleteBucketLifecycle deletes all lifecycle on bucket
+// DeleteBucketLifecycle deletes all lifecycle policies on a bucket
 func (a GatewayUnsupported) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
+	return NotImplemented{}
+}
+
+// GetBucketSSEConfig returns bucket encryption config on a bucket
+func (a GatewayUnsupported) GetBucketSSEConfig(ctx context.Context, bucket string) (*bucketsse.BucketSSEConfig, error) {
+	return nil, NotImplemented{}
+}
+
+// SetBucketSSEConfig sets bucket encryption config on a bucket
+func (a GatewayUnsupported) SetBucketSSEConfig(ctx context.Context, bucket string, config *bucketsse.BucketSSEConfig) error {
+	return NotImplemented{}
+}
+
+// DeleteBucketSSEConfig deletes bucket encryption config on a bucket
+func (a GatewayUnsupported) DeleteBucketSSEConfig(ctx context.Context, bucket string) error {
 	return NotImplemented{}
 }
 
@@ -118,13 +175,8 @@ func (a GatewayUnsupported) ListBucketsHeal(ctx context.Context) (buckets []Buck
 	return nil, NotImplemented{}
 }
 
-// ListObjectsHeal - Not implemented stub
-func (a GatewayUnsupported) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (result ListObjectsInfo, err error) {
-	return ListObjectsInfo{}, NotImplemented{}
-}
-
 // HealObject - Not implemented stub
-func (a GatewayUnsupported) HealObject(ctx context.Context, bucket, object string, dryRun, remove bool, scanMode madmin.HealScanMode) (h madmin.HealResultItem, e error) {
+func (a GatewayUnsupported) HealObject(ctx context.Context, bucket, object, versionID string, opts madmin.HealOpts) (h madmin.HealResultItem, e error) {
 	return h, NotImplemented{}
 }
 
@@ -133,8 +185,13 @@ func (a GatewayUnsupported) ListObjectsV2(ctx context.Context, bucket, prefix, c
 	return result, NotImplemented{}
 }
 
+// Walk - Not implemented stub
+func (a GatewayUnsupported) Walk(ctx context.Context, bucket, prefix string, results chan<- ObjectInfo, opts ObjectOptions) error {
+	return NotImplemented{}
+}
+
 // HealObjects - Not implemented stub
-func (a GatewayUnsupported) HealObjects(ctx context.Context, bucket, prefix string, fn func(string, string) error) (e error) {
+func (a GatewayUnsupported) HealObjects(ctx context.Context, bucket, prefix string, opts madmin.HealOpts, fn HealObjectFn) (e error) {
 	return NotImplemented{}
 }
 
@@ -144,8 +201,27 @@ func (a GatewayUnsupported) CopyObject(ctx context.Context, srcBucket string, sr
 	return objInfo, NotImplemented{}
 }
 
-// RefreshBucketPolicy refreshes cache policy with what's on disk.
-func (a GatewayUnsupported) RefreshBucketPolicy(ctx context.Context, bucket string) error {
+// GetMetrics - no op
+func (a GatewayUnsupported) GetMetrics(ctx context.Context) (*Metrics, error) {
+	logger.LogIf(ctx, NotImplemented{})
+	return &Metrics{}, NotImplemented{}
+}
+
+// PutObjectTags - not implemented.
+func (a GatewayUnsupported) PutObjectTags(ctx context.Context, bucket, object string, tags string, opts ObjectOptions) error {
+	logger.LogIf(ctx, NotImplemented{})
+	return NotImplemented{}
+}
+
+// GetObjectTags - not implemented.
+func (a GatewayUnsupported) GetObjectTags(ctx context.Context, bucket, object string, opts ObjectOptions) (*tags.Tags, error) {
+	logger.LogIf(ctx, NotImplemented{})
+	return nil, NotImplemented{}
+}
+
+// DeleteObjectTags - not implemented.
+func (a GatewayUnsupported) DeleteObjectTags(ctx context.Context, bucket, object string, opts ObjectOptions) error {
+	logger.LogIf(ctx, NotImplemented{})
 	return NotImplemented{}
 }
 
@@ -154,8 +230,8 @@ func (a GatewayUnsupported) IsNotificationSupported() bool {
 	return false
 }
 
-// IsListenBucketSupported returns whether listen bucket notification is applicable for this layer.
-func (a GatewayUnsupported) IsListenBucketSupported() bool {
+// IsListenSupported returns whether listen bucket notification is applicable for this layer.
+func (a GatewayUnsupported) IsListenSupported() bool {
 	return false
 }
 
@@ -164,7 +240,17 @@ func (a GatewayUnsupported) IsEncryptionSupported() bool {
 	return false
 }
 
+// IsTaggingSupported returns whether object tagging is supported or not for this layer.
+func (a GatewayUnsupported) IsTaggingSupported() bool {
+	return false
+}
+
 // IsCompressionSupported returns whether compression is applicable for this layer.
 func (a GatewayUnsupported) IsCompressionSupported() bool {
 	return false
+}
+
+// Health - No Op.
+func (a GatewayUnsupported) Health(_ context.Context, _ HealthOptions) HealthResult {
+	return HealthResult{}
 }

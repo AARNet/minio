@@ -73,7 +73,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	v4Auth := req.Header.Get(xhttp.Authorization)
 
 	// Parse signature version '4' header.
-	signV4Values, errCode := parseSignV4(v4Auth, globalServerConfig.GetRegion(), serviceS3)
+	signV4Values, errCode := parseSignV4(v4Auth, globalServerRegion, serviceS3)
 	if errCode != ErrNone {
 		return cred, "", "", time.Time{}, errCode
 	}
@@ -102,7 +102,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 
 	// Extract date, if not present throw error.
 	var dateStr string
-	if dateStr = req.Header.Get(http.CanonicalHeaderKey("x-amz-date")); dateStr == "" {
+	if dateStr = req.Header.Get("x-amz-date"); dateStr == "" {
 		if dateStr = r.Header.Get("Date"); dateStr == "" {
 			return cred, "", "", time.Time{}, ErrMissingDateHeader
 		}

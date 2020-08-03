@@ -39,6 +39,18 @@ docker_secrets_env() {
     fi
 }
 
+## Set KMS_MASTER_KEY from docker secrets if provided
+docker_kms_encryption_env() {
+    KMS_MASTER_KEY_FILE="/run/secrets/$MINIO_KMS_MASTER_KEY_FILE"
+
+    if [ -f "$KMS_MASTER_KEY_FILE" ]; then
+        MINIO_KMS_MASTER_KEY="$(cat "$KMS_MASTER_KEY_FILE")"
+        export MINIO_KMS_MASTER_KEY
+
+    fi
+}
+
+## Legacy
 ## Set SSE_MASTER_KEY from docker secrets if provided
 docker_sse_encryption_env() {
     SSE_MASTER_KEY_FILE="/run/secrets/$MINIO_SSE_MASTER_KEY_FILE"
@@ -53,8 +65,14 @@ docker_sse_encryption_env() {
 # su-exec to requested user, if service cannot run exec will fail.
 docker_switch_user() {
     if [ ! -z "${MINIO_USERNAME}" ] && [ ! -z "${MINIO_GROUPNAME}" ]; then
-        addgroup -S "$MINIO_GROUPNAME" >/dev/null 2>&1 && \
-            adduser -S -G "$MINIO_GROUPNAME" "$MINIO_USERNAME" >/dev/null 2>&1
+
+	if [ ! -z "${MINIO_UID}" ] && [ ! -z "${MINIO_GID}" ]; then
+		addgroup -S -g "$MINIO_GID" "$MINIO_GROUPNAME" && \
+                        adduser -S -u "$MINIO_UID" -G "$MINIO_GROUPNAME" "$MINIO_USERNAME"
+	else
+		addgroup -S "$MINIO_GROUPNAME" && \
+                	adduser -S -G "$MINIO_GROUPNAME" "$MINIO_USERNAME"
+	fi
 
         exec su-exec "${MINIO_USERNAME}:${MINIO_GROUPNAME}" "$@"
     else
@@ -66,7 +84,10 @@ docker_switch_user() {
 ## Set access env from secrets if necessary.
 docker_secrets_env
 
-## Set sse encryption from secrets if necessary.
+## Set kms encryption from secrets if necessary.
+docker_kms_encryption_env
+
+## Set sse encryption from secrets if necessary. Legacy
 docker_sse_encryption_env
 
 ## Switch to user if applicable.

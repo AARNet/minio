@@ -28,8 +28,10 @@ func handleSignals() {
 	// Custom exit function
 	exit := func(success bool) {
 		// If global profiler is set stop before we exit.
-		if globalProfiler != nil {
-			globalProfiler.Stop()
+		globalProfilerMu.Lock()
+		defer globalProfilerMu.Unlock()
+		for _, p := range globalProfiler {
+			p.Stop()
 		}
 
 		if success {
@@ -49,13 +51,15 @@ func handleSignals() {
 		// Stop watching for any certificate changes.
 		globalTLSCerts.Stop()
 
-		err = globalHTTPServer.Shutdown()
-		logger.LogIf(context.Background(), err)
+		if httpServer := newHTTPServerFn(); httpServer != nil {
+			err = httpServer.Shutdown()
+			logger.LogIf(context.Background(), err)
+		}
 
 		// send signal to various go-routines that they need to quit.
-		close(GlobalServiceDoneCh)
+		cancelGlobalContext()
 
-		if objAPI := newObjectLayerFn(); objAPI != nil {
+		if objAPI := newObjectLayerWithoutSafeModeFn(); objAPI != nil {
 			oerr = objAPI.Shutdown(context.Background())
 			logger.LogIf(context.Background(), oerr)
 		}
@@ -66,7 +70,7 @@ func handleSignals() {
 	for {
 		select {
 		case err := <-globalHTTPServerErrorCh:
-			if objAPI := newObjectLayerFn(); objAPI != nil {
+			if objAPI := newObjectLayerWithoutSafeModeFn(); objAPI != nil {
 				objAPI.Shutdown(context.Background())
 			}
 			if err != nil {

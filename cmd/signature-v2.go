@@ -33,19 +33,15 @@ import (
 	"github.com/minio/minio/pkg/auth"
 )
 
-// Signature and API related constants.
-const (
-	signV2Algorithm = "AWS"
-)
-
-// AWS S3 Signature V2 calculation rule is give here:
-// http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationStringToSign
-
 // Whitelist resource list that will be used in query string for signature-V2 calculation.
-// The list should be alphabetically sorted
+//
+// This list should be kept alphabetically sorted, do not hastily edit.
 var resourceList = []string{
 	"acl",
+	"cors",
 	"delete",
+	"encryption",
+	"legal-hold",
 	"lifecycle",
 	"location",
 	"logging",
@@ -59,6 +55,10 @@ var resourceList = []string{
 	"response-content-language",
 	"response-content-type",
 	"response-expires",
+	"retention",
+	"select",
+	"select-type",
+	"tagging",
 	"torrent",
 	"uploadId",
 	"uploads",
@@ -68,8 +68,16 @@ var resourceList = []string{
 	"website",
 }
 
+// Signature and API related constants.
+const (
+	signV2Algorithm = "AWS"
+)
+
+// AWS S3 Signature V2 calculation rule is give here:
+// http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationStringToSign
+
 func doesPolicySignatureV2Match(formValues http.Header) APIErrorCode {
-	cred := globalServerConfig.GetCredential()
+	cred := globalActiveCred
 	accessKey := formValues.Get(xhttp.AmzAccessKeyID)
 	cred, _, s3Err := checkKeyValid(accessKey)
 	if s3Err != ErrNone {
@@ -101,9 +109,6 @@ func unescapeQueries(encodedQuery string) (unescapedQueries []string, err error)
 //     - http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
 // returns ErrNone if matches. S3 errors otherwise.
 func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
-	// Access credentials.
-	cred := globalServerConfig.GetCredential()
-
 	// r.RequestURI will have raw encoded URI as sent by the client.
 	tokens := strings.SplitN(r.RequestURI, "?", 2)
 	encodedResource := tokens[0]

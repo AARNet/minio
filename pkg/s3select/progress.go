@@ -18,8 +18,10 @@ package s3select
 
 import (
 	"compress/bzip2"
+	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	gzip "github.com/klauspost/pgzip"
@@ -37,6 +39,9 @@ func (r *countUpReader) Read(p []byte) (n int, err error) {
 }
 
 func (r *countUpReader) BytesRead() int64 {
+	if r == nil {
+		return 0
+	}
 	return atomic.LoadInt64(&r.bytesRead)
 }
 
@@ -50,17 +55,39 @@ type progressReader struct {
 	rc              io.ReadCloser
 	scannedReader   *countUpReader
 	processedReader *countUpReader
+
+	closedMu sync.Mutex
+	closed   bool
 }
 
 func (pr *progressReader) Read(p []byte) (n int, err error) {
+	// This ensures that Close will block until Read has completed.
+	// This allows another goroutine to close the reader.
+	pr.closedMu.Lock()
+	defer pr.closedMu.Unlock()
+	if pr.closed {
+		return 0, errors.New("progressReader: read after Close")
+	}
 	return pr.processedReader.Read(p)
 }
 
 func (pr *progressReader) Close() error {
+	if pr.rc == nil {
+		return nil
+	}
+	pr.closedMu.Lock()
+	defer pr.closedMu.Unlock()
+	if pr.closed {
+		return nil
+	}
+	pr.closed = true
 	return pr.rc.Close()
 }
 
 func (pr *progressReader) Stats() (bytesScanned, bytesProcessed int64) {
+	if pr == nil {
+		return 0, 0
+	}
 	return pr.scannedReader.BytesRead(), pr.processedReader.BytesRead()
 }
 
@@ -73,7 +100,11 @@ func newProgressReader(rc io.ReadCloser, compType CompressionType) (*progressRea
 	case noneType:
 		r = scannedReader
 	case gzipType:
-		if r, err = gzip.NewReader(scannedReader); err != nil {
+		r, err = gzip.NewReader(scannedReader)
+		if err != nil {
+			if errors.Is(err, gzip.ErrHeader) || errors.Is(err, gzip.ErrChecksum) {
+				return nil, errInvalidGZIPCompressionFormat(err)
+			}
 			return nil, errTruncatedInput(err)
 		}
 	case bzip2Type:

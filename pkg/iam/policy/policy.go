@@ -18,10 +18,11 @@ package iampolicy
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
+	"strings"
 
-	"github.com/minio/minio/pkg/policy"
+	"github.com/minio/minio-go/v7/pkg/set"
+	"github.com/minio/minio/pkg/bucket/policy"
 )
 
 // DefaultVersion - default policy version as per AWS S3 specification.
@@ -36,6 +37,54 @@ type Args struct {
 	IsOwner         bool                   `json:"owner"`
 	ObjectName      string                 `json:"object"`
 	Claims          map[string]interface{} `json:"claims"`
+}
+
+// GetPoliciesFromClaims returns the list of policies to be applied for this
+// incoming request, extracting the information from input JWT claims.
+func GetPoliciesFromClaims(claims map[string]interface{}, policyClaimName string) (set.StringSet, bool) {
+	s := set.NewStringSet()
+	pname, ok := claims[policyClaimName]
+	if !ok {
+		return s, false
+	}
+	pnames, ok := pname.([]interface{})
+	if !ok {
+		pnameStr, ok := pname.(string)
+		if ok {
+			for _, pname := range strings.Split(pnameStr, ",") {
+				pname = strings.TrimSpace(pname)
+				if pname == "" {
+					// ignore any empty strings, considerate
+					// towards some user errors.
+					continue
+				}
+				s.Add(pname)
+			}
+			return s, true
+		}
+		return s, false
+	}
+	for _, pname := range pnames {
+		pnameStr, ok := pname.(string)
+		if ok {
+			for _, pnameStr := range strings.Split(pnameStr, ",") {
+				pnameStr = strings.TrimSpace(pnameStr)
+				if pnameStr == "" {
+					// ignore any empty strings, considerate
+					// towards some user errors.
+					continue
+				}
+				s.Add(pnameStr)
+			}
+		}
+	}
+	return s, true
+}
+
+// GetPolicies returns the list of policies to be applied for this
+// incoming request, extracting the information from JWT claims.
+func (a Args) GetPolicies(policyClaimName string) (set.StringSet, bool) {
+	return GetPoliciesFromClaims(a.Claims, policyClaimName)
 }
 
 // Policy - iam bucket iamp.
@@ -81,7 +130,7 @@ func (iamp Policy) IsEmpty() bool {
 // isValid - checks if Policy is valid or not.
 func (iamp Policy) isValid() error {
 	if iamp.Version != DefaultVersion && iamp.Version != "" {
-		return fmt.Errorf("invalid version '%v'", iamp.Version)
+		return Errorf("invalid version '%v'", iamp.Version)
 	}
 
 	for _, statement := range iamp.Statements {
@@ -89,40 +138,32 @@ func (iamp Policy) isValid() error {
 			return err
 		}
 	}
+	return nil
+}
 
+func (iamp *Policy) dropDuplicateStatements() {
+redo:
 	for i := range iamp.Statements {
-		for _, statement := range iamp.Statements[i+1:] {
-			actions := iamp.Statements[i].Actions.Intersection(statement.Actions)
-			if len(actions) == 0 {
+		for j, statement := range iamp.Statements[i+1:] {
+			if iamp.Statements[i].Effect != statement.Effect {
 				continue
 			}
 
-			resources := iamp.Statements[i].Resources.Intersection(statement.Resources)
-			if len(resources) == 0 {
+			if !iamp.Statements[i].Actions.Equals(statement.Actions) {
+				continue
+			}
+
+			if !iamp.Statements[i].Resources.Equals(statement.Resources) {
 				continue
 			}
 
 			if iamp.Statements[i].Conditions.String() != statement.Conditions.String() {
 				continue
 			}
-
-			return fmt.Errorf("duplicate actions %v, resources %v found in statements %v, %v",
-				actions, resources, iamp.Statements[i], statement)
+			iamp.Statements = append(iamp.Statements[:j], iamp.Statements[j+1:]...)
+			goto redo
 		}
 	}
-
-	return nil
-}
-
-// MarshalJSON - encodes Policy to JSON data.
-func (iamp Policy) MarshalJSON() ([]byte, error) {
-	if err := iamp.isValid(); err != nil {
-		return nil, err
-	}
-
-	// subtype to avoid recursive call to MarshalJSON()
-	type subPolicy Policy
-	return json.Marshal(subPolicy(iamp))
 }
 
 // UnmarshalJSON - decodes JSON data to Iamp.
@@ -135,28 +176,14 @@ func (iamp *Policy) UnmarshalJSON(data []byte) error {
 	}
 
 	p := Policy(sp)
-	if err := p.isValid(); err != nil {
-		return err
-	}
-
+	p.dropDuplicateStatements()
 	*iamp = p
-
 	return nil
 }
 
 // Validate - validates all statements are for given bucket or not.
 func (iamp Policy) Validate() error {
-	if err := iamp.isValid(); err != nil {
-		return err
-	}
-
-	for _, statement := range iamp.Statements {
-		if err := statement.Validate(); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return iamp.isValid()
 }
 
 // ParseConfig - parses data in given reader to Iamp.
@@ -166,7 +193,7 @@ func ParseConfig(reader io.Reader) (*Policy, error) {
 	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&iamp); err != nil {
-		return nil, err
+		return nil, Errorf("%w", err)
 	}
 
 	return &iamp, iamp.Validate()

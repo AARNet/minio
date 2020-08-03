@@ -33,7 +33,7 @@ const HTTP_NOCONTENT = "204";
 const HTTP_BADREQUEST = "400";
 const HTTP_NOTIMPLEMENTED = "501";
 const HTTP_INTERNAL_ERROR = "500";
-const TEST_METADATA = ['Param_1' => 'val-1'];
+const TEST_METADATA = ['param_1' => 'val-1'];
 
 /**
  * ClientConfig abstracts configuration details to connect to a
@@ -186,7 +186,7 @@ function testHeadObject($s3Client, $objects) {
         if (getStatusCode($result) != HTTP_OK)
             throw new Exception('headObject API failed for ' .
                                 $bucket . '/' . $object);
-        if ($result['Metadata'] != TEST_METADATA) {
+        if (strtolower($result['Metadata']) != strtolower(TEST_METADATA)) {
             throw new Exception("headObject API Metadata didn't match for " .
                                 $bucket . '/' . $object);
         }
@@ -818,6 +818,28 @@ function testAnonDeleteObjects($s3Client, $params) {
     }
 }
 
+// Check if the policy statements are equal
+function are_statements_equal($expected, $got) {   
+    $expected = json_decode($expected, TRUE);
+    $got = json_decode($got, TRUE);
+
+    function are_actions_equal($action1, $action2) {
+        return (
+            is_array($action1) 
+            && is_array($action2) 
+            && count($action1) == count($action2) 
+            && array_diff($action1, $action2) === array_diff($action2, $action1)
+        );
+    }
+
+    foreach ($expected['Statement'] as $index => $value) {
+        if (!are_actions_equal($value['Action'], $got['Statement'][$index]['Action']))
+            return FALSE;
+    }
+
+    return TRUE;
+    
+}
  /**
   *  testBucketPolicy tests GET/PUT Bucket policy S3 APIs
   *
@@ -830,8 +852,7 @@ function testAnonDeleteObjects($s3Client, $params) {
 function testBucketPolicy($s3Client, $params) {
     $bucket = $params['Bucket'];
 
-    // Taken from policy set using `mc policy download`
-    $downloadPolicy = sprintf('{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/*"]}]}', $bucket);
+    $downloadPolicy = sprintf('{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":["*"]},"Action":["s3:GetBucketLocation","s3:ListBucket","s3:GetObject"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}', $bucket, $bucket);
 
     $result = $s3Client->putBucketPolicy([
         'Bucket' => $bucket,
@@ -846,7 +867,9 @@ function testBucketPolicy($s3Client, $params) {
                             $bucket);
 
     if ($result['Policy'] != $downloadPolicy)
-        throw new Exception('bucket policy we got is not we set');
+        if (!are_statements_equal($result['Policy'], $downloadPolicy))  
+            throw new Exception('bucket policy we got is not we set');  
+        
 
     // Delete the bucket, make the bucket (again) and check if policy is none
     // Ref: https://github.com/minio/minio/issues/4714

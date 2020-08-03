@@ -179,6 +179,12 @@ func (args *LoginArgs) ToKeyValue() KeyValueMap {
 	return km
 }
 
+// ToKeyValue implementation for LoginSTSArgs
+func (args *LoginSTSArgs) ToKeyValue() KeyValueMap {
+	km := KeyValueMap{}
+	return km
+}
+
 // ToKeyValue implementation for GetBucketPolicyArgs
 func (args *GetBucketPolicyArgs) ToKeyValue() KeyValueMap {
 	km := KeyValueMap{}
@@ -241,5 +247,5 @@ func newWebContext(r *http.Request, args ToKeyValuer, api string) context.Contex
 		BucketName:   bucket,
 		ObjectName:   object,
 	}
-	return logger.SetReqInfo(context.Background(), reqInfo)
+	return logger.SetReqInfo(GlobalContext, reqInfo)
 }

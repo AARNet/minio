@@ -40,7 +40,7 @@ func (ps *PubSub) Publish(item interface{}) {
 	defer ps.RUnlock()
 
 	for _, sub := range ps.subs {
-		if sub.filter(item) {
+		if sub.filter == nil || sub.filter(item) {
 			select {
 			case sub.ch <- item:
 			default:
@@ -50,7 +50,7 @@ func (ps *PubSub) Publish(item interface{}) {
 }
 
 // Subscribe - Adds a subscriber to pubsub system
-func (ps *PubSub) Subscribe(subCh chan interface{}, doneCh chan struct{}, filter func(entry interface{}) bool) {
+func (ps *PubSub) Subscribe(subCh chan interface{}, doneCh <-chan struct{}, filter func(entry interface{}) bool) {
 	ps.Lock()
 	defer ps.Unlock()
 
@@ -73,9 +73,14 @@ func (ps *PubSub) Subscribe(subCh chan interface{}, doneCh chan struct{}, filter
 
 // HasSubscribers returns true if pubsub system has subscribers
 func (ps *PubSub) HasSubscribers() bool {
+	return ps.NumSubscribers() > 0
+}
+
+// NumSubscribers returns the number of current subscribers
+func (ps *PubSub) NumSubscribers() int {
 	ps.RLock()
 	defer ps.RUnlock()
-	return len(ps.subs) > 0
+	return len(ps.subs)
 }
 
 // New inits a PubSub system

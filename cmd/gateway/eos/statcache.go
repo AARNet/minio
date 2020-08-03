@@ -70,9 +70,7 @@ func (c *StatCache) Write(path string, obj *FileStat) {
 // DeletePath remove an entry from the StatCache
 func (c *StatCache) DeletePath(path string) {
 	c.Lock()
-	if _, ok := c.cache[path]; ok {
-		delete(c.cache, path)
-	}
+	delete(c.cache, path)
 	c.Unlock()
 }
 

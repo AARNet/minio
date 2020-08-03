@@ -40,8 +40,9 @@ var masterKeyKMSTests = []struct {
 }
 
 func TestMasterKeyKMS(t *testing.T) {
-	kms := NewKMS([32]byte{})
 	for i, test := range masterKeyKMSTests {
+		kms := NewMasterKey(test.GenKeyID, [32]byte{})
+
 		key, sealedKey, err := kms.GenerateKey(test.GenKeyID, test.GenContext)
 		if err != nil {
 			t.Errorf("Test %d: KMS failed to generate key: %v", i, err)
@@ -56,15 +57,6 @@ func TestMasterKeyKMS(t *testing.T) {
 		if !test.ShouldFail && !bytes.Equal(key[:], unsealedKey[:]) {
 			t.Errorf("Test %d: The generated and unsealed key differ", i)
 		}
-
-		rotatedKey, err := kms.UpdateKey(test.UnsealKeyID, sealedKey, test.UnsealContext)
-		if err == nil && test.ShouldFail {
-			t.Errorf("Test %d: KMS updated the generated key successfully but should have failed", i)
-		}
-		if !test.ShouldFail && !bytes.Equal(rotatedKey, sealedKey[:]) {
-			t.Errorf("Test %d: The updated and sealed key differ", i)
-		}
-
 	}
 }
 

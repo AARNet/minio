@@ -131,7 +131,11 @@ func renameAll(srcFilePath, dstFilePath string) (err error) {
 
 	if err = reliableRename(srcFilePath, dstFilePath); err != nil {
 		switch {
-		case isSysErrNotDir(err):
+		case isSysErrNotDir(err) && !os.IsNotExist(err):
+			// Windows can have both isSysErrNotDir(err) and os.IsNotExist(err) returning
+			// true if the source file path contains an inexistant directory. In that case,
+			// we want to return errFileNotFound instead, which will honored in subsequent
+			// switch cases
 			return errFileAccessDenied
 		case isSysErrPathNotFound(err):
 			// This is a special case should be handled only for
@@ -139,7 +143,7 @@ func renameAll(srcFilePath, dstFilePath string) (err error) {
 			// directory" error message. Handle this specifically here.
 			return errFileAccessDenied
 		case isSysErrCrossDevice(err):
-			return fmt.Errorf("%s (%s)->(%s)", errCrossDeviceLink, srcFilePath, dstFilePath)
+			return fmt.Errorf("%w (%s)->(%s)", errCrossDeviceLink, srcFilePath, dstFilePath)
 		case os.IsNotExist(err):
 			return errFileNotFound
 		case os.IsExist(err):

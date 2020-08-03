@@ -151,7 +151,7 @@ func TestParseCredentialHeader(t *testing.T) {
 				"ABCD",
 				"ABCD"),
 			expectedCredentials: credentialHeader{},
-			expectedErrCode:     ErrInvalidService,
+			expectedErrCode:     ErrInvalidServiceS3,
 		},
 		// Test Case - 7.
 		// Test case with invalid region.
@@ -453,6 +453,36 @@ func TestParseSignV4(t *testing.T) {
 				Credential: generateCredentials(
 					t,
 					"Z7IXGOO6BZ0REAN1Q26I",
+					sampleTimeStr,
+					"us-west-1",
+					"s3",
+					"aws4_request"),
+				SignedHeaders: []string{"host", "x-amz-content-sha256", "x-amz-date"},
+				Signature:     "abcd",
+			},
+			expectedErrCode: ErrNone,
+		},
+		// Test case - 8.
+		{
+			inputV4AuthStr: signV4Algorithm +
+				strings.Join([]string{
+					// generating a valid credential.
+					generateCredentialStr(
+						"access key",
+						sampleTimeStr,
+						"us-west-1",
+						"s3",
+						"aws4_request"),
+					// valid SignedHeader.
+					"SignedHeaders=host;x-amz-content-sha256;x-amz-date",
+					// valid Signature field.
+					// a valid signature is of form "Signature="
+					"Signature=abcd",
+				}, ","),
+			expectedAuthField: signValues{
+				Credential: generateCredentials(
+					t,
+					"access key",
 					sampleTimeStr,
 					"us-west-1",
 					"s3",

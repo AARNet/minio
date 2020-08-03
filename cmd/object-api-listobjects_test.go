@@ -29,7 +29,7 @@ import (
 	"testing"
 )
 
-// Wrapper for calling ListObjects tests for both XL multiple disks and single node setup.
+// Wrapper for calling ListObjects tests for both Erasure multiple disks and single node setup.
 func TestListObjects(t *testing.T) {
 	ExecObjectLayerTest(t, testListObjects)
 }
@@ -45,9 +45,11 @@ func testListObjects(obj ObjectLayer, instanceType string, t1 TestErrHandler) {
 		// Will not store any objects in this bucket,
 		// Its to test ListObjects on an empty bucket.
 		"empty-bucket",
+		// Listing the case where the marker > last object.
+		"test-bucket-single-object",
 	}
 	for _, bucket := range testBuckets {
-		err := obj.MakeBucketWithLocation(context.Background(), bucket, "")
+		err := obj.MakeBucketWithLocation(context.Background(), bucket, BucketOptions{})
 		if err != nil {
 			t.Fatalf("%s : %s", instanceType, err.Error())
 		}
@@ -72,6 +74,7 @@ func testListObjects(obj ObjectLayer, instanceType string, t1 TestErrHandler) {
 		{testBuckets[1], "obj1", "obj1", nil},
 		{testBuckets[1], "obj2", "obj2", nil},
 		{testBuckets[1], "temporary/0/", "", nil},
+		{testBuckets[3], "A/B", "contentstring", nil},
 	}
 	for _, object := range testObjects {
 		md5Bytes := md5.Sum([]byte(object.content))
@@ -445,6 +448,11 @@ func testListObjects(obj ObjectLayer, instanceType string, t1 TestErrHandler) {
 				{Name: "temporary/0/"},
 			},
 		},
+		// ListObjectsResult-34 Listing with marker > last object should return empty
+		{
+			IsTruncated: false,
+			Objects:     []ObjectInfo{},
+		},
 	}
 
 	testCases := []struct {
@@ -552,18 +560,20 @@ func testListObjects(obj ObjectLayer, instanceType string, t1 TestErrHandler) {
 		// Test with prefix and delimiter set to '/'. (60)
 		{"test-bucket-list-object", SlashSeparator, "", SlashSeparator, 10, resultCases[30], nil, true},
 		// Test with invalid prefix (61)
-		{"test-bucket-list-object", "\\", "", SlashSeparator, 10, ListObjectsInfo{}, ObjectNameInvalid{Bucket: "test-bucket-list-object", Object: "\\"}, false},
+		{"test-bucket-list-object", "\\", "", SlashSeparator, 10, ListObjectsInfo{}, nil, true},
 		// Test listing an empty directory in recursive mode (62)
 		{"test-bucket-empty-dir", "", "", "", 10, resultCases[31], nil, true},
 		// Test listing an empty directory in a non recursive mode (63)
 		{"test-bucket-empty-dir", "", "", SlashSeparator, 10, resultCases[32], nil, true},
 		// Test listing a directory which contains an empty directory (64)
 		{"test-bucket-empty-dir", "", "temporary/", "", 10, resultCases[33], nil, true},
+		// Test listing with marker > last object such that response should be empty (65)
+		{"test-bucket-single-object", "", "A/C", "", 1000, resultCases[34], nil, true},
 	}
 
 	for i, testCase := range testCases {
 		testCase := testCase
-		t.Run(fmt.Sprintf("Test%d-%s", i+1, instanceType), func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s-Test%d", instanceType, i+1), func(t *testing.T) {
 			result, err := obj.ListObjects(context.Background(), testCase.bucketName,
 				testCase.prefix, testCase.marker, testCase.delimeter, int(testCase.maxKeys))
 			if err != nil && testCase.shouldPass {
@@ -659,7 +669,7 @@ func BenchmarkListObjects(b *testing.B) {
 
 	bucket := "ls-benchmark-bucket"
 	// Create a bucket.
-	err = obj.MakeBucketWithLocation(context.Background(), bucket, "")
+	err = obj.MakeBucketWithLocation(context.Background(), bucket, BucketOptions{})
 	if err != nil {
 		b.Fatal(err)
 	}

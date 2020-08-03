@@ -27,38 +27,33 @@ import (
 
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/lifecycle"
-	"github.com/minio/minio/pkg/madmin"
-	"github.com/minio/minio/pkg/policy"
 )
 
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
+	minio.GatewayUnsupported
 	maxRetry          int
 	maxKeys           int
 	path              string
 	hookurl           string
 	stage             string
-	foregroundStaging bool
 	readonly          bool
 	validbuckets      bool
 	TransferList      *TransferList
 	FileSystem        *eosFS
 }
 
+// ListObjectsMarker is the marker used to continue listing objects when maxKeys is hit.
 type ListObjectsMarker struct {
 	Prefixes []string
 	Skip     int
 }
 
-// IsNotificationSupported returns whether notifications are applicable for this layer.
-func (e *eosObjects) IsNotificationSupported() bool {
-	return false
-}
-
 // IsEncryptionSupported returns whether server side encryption is applicable for this layer.
 func (e *eosObjects) IsEncryptionSupported() bool {
-	return true
+	// note(mdu): don't think should be true unless we start using SSL between traefik + minio
+	// 	      I'd remove this method but wanted to leave a note :)
+	return false
 }
 
 // Shutdown - nothing to do really...
@@ -66,14 +61,13 @@ func (e *eosObjects) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-// IsCompressionSupported returns whether compression is applicable for this layer.
-func (e *eosObjects) IsCompressionSupported() bool {
-	return false
-}
-
 // StorageInfo
-func (e *eosObjects) StorageInfo(ctx context.Context) (storageInfo minio.StorageInfo) {
-	return storageInfo
+func (e *eosObjects) StorageInfo(ctx context.Context, _ bool) (si minio.StorageInfo, _ []error) {
+	si.Backend.Type = minio.BackendGateway
+	// See if we can determine if the gateway data directory is a directory to say things are up
+	online, _ := e.FileSystem.IsDir(ctx, "/")
+	si.Backend.GatewayOnline = online
+	return si, nil
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -115,7 +109,7 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 		stat, err := e.FileSystem.DirStat(ctx, dir.Name)
 
 		if stat == nil {
-			eosLogger.Error(ctx, err, "ListBuckets: unable to stat [dir: %s]", dir)
+			eosLogger.Error(ctx, err, "ListBuckets: unable to stat [dir: %s]", dir.Name)
 			continue
 		}
 
@@ -140,8 +134,8 @@ func (e *eosObjects) ListBuckets(ctx context.Context) (buckets []minio.BucketInf
 }
 
 // MakeBucketWithLocation - Create a new container.
-func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, location string) error {
-	eosLogger.Stat(ctx, "S3cmd: MakeBucketWithLocation [bucket: %s, location: %s]", bucket, location)
+func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket string, opts minio.BucketOptions) error {
+	eosLogger.Stat(ctx, "S3cmd: MakeBucketWithLocation [bucket: %s]", bucket)
 
 	if e.readonly {
 		return minio.NotImplemented{}
@@ -162,7 +156,7 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket, locatio
 }
 
 // DeleteBucket - delete a container
-func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
+func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string, forceDelete bool) error {
 	eosLogger.Stat(ctx, "S3cmd: DeleteBucket [bucket: %s]", bucket)
 
 	if e.readonly {
@@ -174,67 +168,6 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string) error {
 		return minio.BucketNotFound{Bucket: bucket}
 	}
 	return err
-}
-
-// GetBucketLifecycle - not implemented
-func (e *eosObjects) GetBucketLifecycle(ctx context.Context, bucket string) (*lifecycle.Lifecycle, error) {
-	eosLogger.Stat(ctx, "S3cmd: GetBucketLifecycle [bucket: %s]", bucket)
-
-	if e.readonly {
-		return nil, minio.NotImplemented{}
-	}
-
-	return nil, minio.NotImplemented{}
-}
-
-// SetBucketLifecycle - not implemented
-func (e *eosObjects) SetBucketLifecycle(ctx context.Context, bucket string, lifecycle *lifecycle.Lifecycle) error {
-	eosLogger.Stat(ctx, "S3cmd: SetBucketLifecycle [bucket: %s]", bucket)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
-// DeleteBucketLifecycle - not implemented
-func (e *eosObjects) DeleteBucketLifecycle(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "S3cmd: DeleteBucketLifecycle [bucket: %s]", bucket)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
-// GetBucketPolicy - Get the container ACL
-func (e *eosObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
-	eosLogger.Stat(ctx, "S3cmd: GetBucketPolicy [bucket: %s]", bucket)
-	return nil, minio.NotImplemented{}
-}
-
-// SetBucketPolicy
-func (e *eosObjects) SetBucketPolicy(ctx context.Context, bucket string, bucketPolicy *policy.Policy) error {
-	eosLogger.Stat(ctx, "S3cmd: SetBucketPolicy [bucket: %s, bucketPolicy: %s]", bucket, bucketPolicy)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
-}
-
-// DeleteBucketPolicy - Set the container ACL to "private"
-func (e *eosObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	eosLogger.Stat(ctx, "S3cmd: DeleteBucketPolicy [bucket: %s]", bucket)
-
-	if e.readonly {
-		return minio.NotImplemented{}
-	}
-
-	return minio.NotImplemented{}
 }
 
 // IsListenBucketSupported returns whether listen bucket notification is applicable for this gateway.
@@ -286,17 +219,6 @@ func (e *eosObjects) CopyObject(ctx context.Context, srcBucket, srcObject, destB
 	return e.GetObjectInfoWithRetry(ctx, destBucket, destObject, dstOpts)
 }
 
-// CopyObjectPart creates a part in a multipart upload by copying
-func (e *eosObjects) CopyObjectPart(ctx context.Context, srcBucket, srcObject, destBucket, destObject, uploadID string, partID int, startOffset, length int64, srcInfo minio.ObjectInfo, srcOpts, dstOpts minio.ObjectOptions) (p minio.PartInfo, err error) {
-	eosLogger.Stat(ctx, "S3cmd: CopyObjectPart: [srcpath: %s/%s, destpath: %s/%s]", srcBucket, srcObject, destBucket, destObject)
-
-	if e.readonly {
-		return p, minio.NotImplemented{}
-	}
-
-	return p, minio.NotImplemented{}
-}
-
 // PutObject - Create a new blob with the incoming data
 func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data *minio.PutObjReader, opts minio.ObjectOptions) (objInfo minio.ObjectInfo, err error) {
 	eosLogger.Stat(ctx, "S3cmd: PutObject: [bucket: %s, object: %s]", bucket, object)
@@ -324,11 +246,10 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	if err != nil {
 		eosLogger.Error(ctx, err, "PUT: %+v", err)
 		objInfo.ETag = defaultETag
-		if strings.Contains(err.Error(), "attempts") == true {
+		if strings.Contains(err.Error(), "attempts") {
 			return objInfo, minio.SlowDown{}
-		} else {
-			return objInfo, minio.OperationTimedOut{}
 		}
+		return objInfo, minio.OperationTimedOut{}
 	}
 	eosLogger.Debug(ctx, "Put response: %#v", response)
 
@@ -358,31 +279,33 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 }
 
 // DeleteObject - Deletes a blob on EOS
-func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string) error {
+func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string, opts minio.ObjectOptions) (minio.ObjectInfo, error) {
 	eosLogger.Stat(ctx, "S3cmd: DeleteObject: [bucket: %s object: %s]", bucket, object)
 
 	if e.readonly {
-		return minio.NotImplemented{}
+		return minio.ObjectInfo{}, minio.NotImplemented{}
 	}
 
 	_ = e.FileSystem.rm(ctx, PathJoin(bucket, object))
-	return nil
+	return minio.ObjectInfo{Bucket: bucket, Name: object}, nil
 }
 
 // DeleteObjects - Deletes multiple blobs on EOS
-func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects []string) ([]error, error) {
+func (e *eosObjects) DeleteObjects(ctx context.Context, bucket string, objects []minio.ObjectToDelete, opts minio.ObjectOptions) ([]minio.DeletedObject, []error) {
 	eosLogger.Stat(ctx, "S3cmd: DeleteObjects: [bucket: %s]", bucket)
 
 	errs := make([]error, len(objects))
 	deleted := make(map[string]bool)
+	dobjects := make([]minio.DeletedObject, len(objects))
 	for idx, object := range objects {
-		if _, ok := deleted[object]; !ok {
-			errs[idx] = e.DeleteObject(ctx, bucket, object)
-			deleted[object] = true
+		if _, ok := deleted[object.ObjectName]; !ok {
+			_, errs[idx] = e.DeleteObject(ctx, bucket, object.ObjectName, opts)
+			deleted[object.ObjectName] = true
+			dobjects[idx] = minio.DeletedObject{ObjectName: object.ObjectName}
 		}
 	}
 
-	return errs, nil
+	return dobjects, errs
 }
 
 // GetObject - reads an object from EOS
@@ -507,13 +430,26 @@ func (e *eosObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 	// Setup cleanup function to cause the above go-routine to
 	// exit in case of partial read
 	pipeCloser := func() { pr.Close() }
-	return minio.NewGetObjectReaderFromReader(pr, objInfo, opts.CheckCopyPrecondFn, pipeCloser)
+	return minio.NewGetObjectReaderFromReader(pr, objInfo, opts, pipeCloser)
 }
 
 // ListMultipartUploads - lists all multipart uploads.
 func (e *eosObjects) ListMultipartUploads(ctx context.Context, bucket, prefix, keyMarker, uploadIDMarker, delimiter string, maxUploads int) (result minio.ListMultipartsInfo, err error) {
 	eosLogger.Stat(ctx, "S3cmd: ListMultipartUploads: [bucket: %s, prefix: %s, keyMarket: %s, uploadIDMarker: %s, delimiter: %s, maxUploads: %d]", bucket, prefix, keyMarker, uploadIDMarker, delimiter, maxUploads)
-	return result, minio.NotImplemented{}
+	return result, nil
+}
+
+// GetMultipartInfo returns multipart info of the uploadId of the object
+func (e *eosObjects) GetMultipartInfo(ctx context.Context, bucket, object, uploadID string, opts minio.ObjectOptions) (result minio.MultipartInfo, err error) {
+	eosLogger.Stat(ctx, "S3cmd: GetMultipartInfo: [bucket: %s, object: %s, uploadID: %s]", bucket, object, uploadID)
+	if e.TransferList.GetTransfer(uploadID) == nil {
+		return result, err
+	}
+
+	result.Bucket = bucket
+	result.Object = object
+	result.UploadID = uploadID
+	return result, nil
 }
 
 // NewMultipartUpload
@@ -829,17 +765,9 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 		return objInfo, err
 	}
 
-	// Upload the transfer to EOS in the background
-	reqInfo := logger.GetReqInfo(ctx)
-	if strings.HasPrefix(reqInfo.UserAgent, "rclone") || e.foregroundStaging {
-		_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
-		e.TransferList.DeleteTransfer(uploadID)
-	} else {
-		go func() {
-			_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
-			e.TransferList.DeleteTransfer(uploadID)
-		}()
-	}
+	_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
+	e.TransferList.DeleteTransfer(uploadID)
+
 	return objInfo, nil
 }
 
@@ -1262,52 +1190,6 @@ func (e *eosObjects) ListObjectsV2(ctx context.Context, bucket, prefix, continua
 	result.NextContinuationToken = resultV1.NextMarker
 	result.IsTruncated = (resultV1.NextMarker != "")
 	return result, nil
-}
-
-/*
- *  Methods that are not implemented
- */
-
-// HealFormat - no-op for fs
-func (e *eosObjects) HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error) {
-	eosLogger.Stat(ctx, "S3cmd: HealFormat:")
-	return madmin.HealResultItem{}, minio.NotImplemented{}
-}
-
-// ReloadFormat - no-op for fs
-func (e *eosObjects) ReloadFormat(ctx context.Context, dryRun bool) error {
-	eosLogger.Stat(ctx, "S3cmd: ReloadFormat:")
-	return minio.NotImplemented{}
-}
-
-// ListObjectsHeal - list all objects to be healed.
-func (e *eosObjects) ListObjectsHeal(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int) (loi minio.ListObjectsInfo, err error) {
-	eosLogger.Stat(ctx, "S3cmd: ListObjectsHeal:")
-	return loi, minio.NotImplemented{}
-}
-
-// HealObject - no-op for fs.
-func (e *eosObjects) HealObject(ctx context.Context, bucket, object string, dryRun bool, remove bool, scanMode madmin.HealScanMode) (results madmin.HealResultItem, err error) {
-	eosLogger.Stat(ctx, "S3cmd: HealObject:")
-	return results, minio.NotImplemented{}
-}
-
-// HealObjects - no-op for fs.
-func (e *eosObjects) HealObjects(ctx context.Context, bucket, prefix string, fn func(string, string) error) (err error) {
-	eosLogger.Stat(ctx, "S3cmd: HealObjects:")
-	return minio.NotImplemented{}
-}
-
-// ListBucketsHeal - list all buckets to be healed
-func (e *eosObjects) ListBucketsHeal(ctx context.Context) ([]minio.BucketInfo, error) {
-	eosLogger.Stat(ctx, "S3cmd: ListBucketsHeal:")
-	return []minio.BucketInfo{}, minio.NotImplemented{}
-}
-
-// HealBucket - heals inconsistent buckets and bucket metadata on all sets.
-func (e *eosObjects) HealBucket(ctx context.Context, bucket string, dryRun bool, remove bool) (results madmin.HealResultItem, err error) {
-	eosLogger.Stat(ctx, "S3cmd: HealBucket:")
-	return madmin.HealResultItem{}, minio.NotImplemented{}
 }
 
 /*

@@ -17,12 +17,15 @@
 package cmd
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
 
 // Tests initializing new object layer.
 func TestNewObjectLayer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	// Tests for FS object layer.
 	nDisks := 1
 	disks, err := getRandomDisks(nDisks)
@@ -31,8 +34,7 @@ func TestNewObjectLayer(t *testing.T) {
 	}
 	defer removeRoots(disks)
 
-	endpoints := mustGetNewEndpointList(disks...)
-	obj, err := newObjectLayer(endpoints)
+	obj, err := newObjectLayer(ctx, mustGetZoneEndpoints(disks...))
 	if err != nil {
 		t.Fatal("Unexpected object layer initialization error", err)
 	}
@@ -41,7 +43,7 @@ func TestNewObjectLayer(t *testing.T) {
 		t.Fatal("Unexpected object layer detected", reflect.TypeOf(obj))
 	}
 
-	// Tests for XL object layer initialization.
+	// Tests for Erasure object layer initialization.
 
 	// Create temporary backend for the test server.
 	nDisks = 16
@@ -51,16 +53,12 @@ func TestNewObjectLayer(t *testing.T) {
 	}
 	defer removeRoots(disks)
 
-	globalXLSetCount = 1
-	globalXLSetDriveCount = 16
-
-	endpoints = mustGetNewEndpointList(disks...)
-	obj, err = newObjectLayer(endpoints)
+	obj, err = newObjectLayer(ctx, mustGetZoneEndpoints(disks...))
 	if err != nil {
 		t.Fatal("Unexpected object layer initialization error", err)
 	}
 
-	_, ok = obj.(*xlSets)
+	_, ok = obj.(*erasureZones)
 	if !ok {
 		t.Fatal("Unexpected object layer detected", reflect.TypeOf(obj))
 	}

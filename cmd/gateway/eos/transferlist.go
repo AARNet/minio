@@ -8,8 +8,9 @@
 package eos
 
 import (
-	minio "github.com/minio/minio/cmd"
 	"sync"
+
+	minio "github.com/minio/minio/cmd"
 )
 
 // TransferList is a list of Transfers with a read/write lock

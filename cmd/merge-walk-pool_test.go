@@ -1,5 +1,5 @@
 /*
- * MinIO Cloud Storage, (C) 2019 MinIO, Inc.
+ * MinIO Cloud Storage, (C) 2019,2020 MinIO, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,42 @@ import (
 	"testing"
 	"time"
 )
+
+// Test if tree walker go-routine is removed from the pool after timeout
+// and that is available in the pool before the timeout.
+func TestMergeWalkPoolVersionsBasic(t *testing.T) {
+	// Create a treeWalkPool
+	tw := NewMergeWalkVersionsPool(1 * time.Second)
+
+	// Create sample params
+	params := listParams{
+		bucket: "test-bucket",
+	}
+
+	endWalkCh := make(chan struct{})
+	// Add a treeWalk to the pool
+	tw.Set(params, []FileInfoVersionsCh{}, endWalkCh)
+
+	// Wait for treeWalkPool timeout to happen
+	<-time.After(2 * time.Second)
+	if c1, _ := tw.Release(params); c1 != nil {
+		t.Error("treeWalk go-routine must have been freed")
+	}
+
+	// Add the treeWalk back to the pool
+	endWalkCh = make(chan struct{})
+	tw.Set(params, []FileInfoVersionsCh{}, endWalkCh)
+
+	// Release the treeWalk before timeout
+	select {
+	case <-time.After(1 * time.Second):
+		break
+	default:
+		if c1, _ := tw.Release(params); c1 == nil {
+			t.Error("treeWalk go-routine got freed before timeout")
+		}
+	}
+}
 
 // Test if tree walker go-routine is removed from the pool after timeout
 // and that is available in the pool before the timeout.
@@ -74,28 +110,74 @@ func TestManyMergeWalksSameParam(t *testing.T) {
 		break
 	default:
 		// Create many treeWalk go-routines for the same params.
-		for i := 0; i < 10; i++ {
+		for i := 0; i < treeWalkSameEntryLimit; i++ {
 			endWalkCh := make(chan struct{})
 			walkChs := make([]FileInfoCh, 0)
 			tw.Set(params, walkChs, endWalkCh)
 		}
 
-		tw.lock.Lock()
+		tw.Lock()
 		if walks, ok := tw.pool[params]; ok {
-			if len(walks) != 10 {
+			if len(walks) != treeWalkSameEntryLimit {
 				t.Error("There aren't as many walks as were Set")
 			}
 		}
-		tw.lock.Unlock()
-		for i := 0; i < 10; i++ {
-			tw.lock.Lock()
+		tw.Unlock()
+		for i := 0; i < treeWalkSameEntryLimit; i++ {
+			tw.Lock()
 			if walks, ok := tw.pool[params]; ok {
-				// Before ith Release we should have 10-i treeWalk go-routines.
-				if 10-i != len(walks) {
+				// Before ith Release we should have n-i treeWalk go-routines.
+				if treeWalkSameEntryLimit-i != len(walks) {
 					t.Error("There aren't as many walks as were Set")
 				}
 			}
-			tw.lock.Unlock()
+			tw.Unlock()
+			tw.Release(params)
+		}
+	}
+
+}
+
+// Test if multiple merge walkers for the same listParams are managed as expected by the pool
+// but that treeWalkSameEntryLimit is respected.
+func TestManyMergeWalksSameParamPrune(t *testing.T) {
+	// Create a treeWalkPool.
+	tw := NewMergeWalkPool(5 * time.Second)
+
+	// Create sample params.
+	params := listParams{
+		bucket: "test-bucket",
+	}
+
+	select {
+	// This timeout is an upper-bound. This is started
+	// before the first treeWalk go-routine's timeout period starts.
+	case <-time.After(5 * time.Second):
+		break
+	default:
+		// Create many treeWalk go-routines for the same params.
+		for i := 0; i < treeWalkSameEntryLimit*4; i++ {
+			endWalkCh := make(chan struct{})
+			walkChs := make([]FileInfoCh, 0)
+			tw.Set(params, walkChs, endWalkCh)
+		}
+
+		tw.Lock()
+		if walks, ok := tw.pool[params]; ok {
+			if len(walks) > treeWalkSameEntryLimit {
+				t.Error("There aren't as many walks as were Set")
+			}
+		}
+		tw.Unlock()
+		for i := 0; i < treeWalkSameEntryLimit; i++ {
+			tw.Lock()
+			if walks, ok := tw.pool[params]; ok {
+				// Before ith Release we should have n-i treeWalk go-routines.
+				if treeWalkSameEntryLimit-i != len(walks) {
+					t.Error("There aren't as many walks as were Set")
+				}
+			}
+			tw.Unlock()
 			tw.Release(params)
 		}
 	}

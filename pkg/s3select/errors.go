@@ -56,7 +56,7 @@ func (err *s3Error) Error() string {
 func errMalformedXML(err error) *s3Error {
 	return &s3Error{
 		code:       "MalformedXML",
-		message:    "The XML provided was not well-formed or did not validate against our published schema. Check the service documentation and try again.",
+		message:    "The XML provided was not well-formed or did not validate against our published schema. Check the service documentation and try again: " + err.Error(),
 		statusCode: 400,
 		cause:      err,
 	}
@@ -66,6 +66,24 @@ func errInvalidCompressionFormat(err error) *s3Error {
 	return &s3Error{
 		code:       "InvalidCompressionFormat",
 		message:    "The file is not in a supported compression format. Only GZIP and BZIP2 are supported.",
+		statusCode: 400,
+		cause:      err,
+	}
+}
+
+func errInvalidBZIP2CompressionFormat(err error) *s3Error {
+	return &s3Error{
+		code:       "InvalidCompressionFormat",
+		message:    "BZIP2 is not applicable to the queried object. Please correct the request and try again.",
+		statusCode: 400,
+		cause:      err,
+	}
+}
+
+func errInvalidGZIPCompressionFormat(err error) *s3Error {
+	return &s3Error{
+		code:       "InvalidCompressionFormat",
+		message:    "GZIP is not applicable to the queried object. Please correct the request and try again.",
 		statusCode: 400,
 		cause:      err,
 	}

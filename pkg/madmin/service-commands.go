@@ -18,8 +18,8 @@
 package madmin
 
 import (
+	"context"
 	"encoding/json"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,15 +28,13 @@ import (
 )
 
 // ServiceRestart - restarts the MinIO cluster
-func (adm *AdminClient) ServiceRestart() error {
-	_, err := adm.serviceCallAction(ServiceActionRestart)
-	return err
+func (adm *AdminClient) ServiceRestart(ctx context.Context) error {
+	return adm.serviceCallAction(ctx, ServiceActionRestart)
 }
 
 // ServiceStop - stops the MinIO cluster
-func (adm *AdminClient) ServiceStop() error {
-	_, err := adm.serviceCallAction(ServiceActionStop)
-	return err
+func (adm *AdminClient) ServiceStop(ctx context.Context) error {
+	return adm.serviceCallAction(ctx, ServiceActionStop)
 }
 
 // ServiceAction - type to restrict service-action values
@@ -50,25 +48,27 @@ const (
 )
 
 // serviceCallAction - call service restart/update/stop API.
-func (adm *AdminClient) serviceCallAction(action ServiceAction) ([]byte, error) {
+func (adm *AdminClient) serviceCallAction(ctx context.Context, action ServiceAction) error {
 	queryValues := url.Values{}
 	queryValues.Set("action", string(action))
 
 	// Request API to Restart server
-	resp, err := adm.executeMethod("POST", requestData{
-		relPath:     "/v1/service",
-		queryValues: queryValues,
-	})
+	resp, err := adm.executeMethod(ctx,
+		http.MethodPost, requestData{
+			relPath:     adminAPIPrefix + "/service",
+			queryValues: queryValues,
+		},
+	)
 	defer closeResponse(resp)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, httpRespToErrorResponse(resp)
+		return httpRespToErrorResponse(resp)
 	}
 
-	return ioutil.ReadAll(resp.Body)
+	return nil
 }
 
 // ServiceTraceInfo holds http trace
@@ -78,7 +78,7 @@ type ServiceTraceInfo struct {
 }
 
 // ServiceTrace - listen on http trace notifications.
-func (adm AdminClient) ServiceTrace(allTrace, errTrace bool, doneCh <-chan struct{}) <-chan ServiceTraceInfo {
+func (adm AdminClient) ServiceTrace(ctx context.Context, allTrace, errTrace bool) <-chan ServiceTraceInfo {
 	traceInfoCh := make(chan ServiceTraceInfo)
 	// Only success, start a routine to start reading line by line.
 	go func(traceInfoCh chan<- ServiceTraceInfo) {
@@ -88,11 +88,11 @@ func (adm AdminClient) ServiceTrace(allTrace, errTrace bool, doneCh <-chan struc
 			urlValues.Set("all", strconv.FormatBool(allTrace))
 			urlValues.Set("err", strconv.FormatBool(errTrace))
 			reqData := requestData{
-				relPath:     "/v1/trace",
+				relPath:     adminAPIPrefix + "/trace",
 				queryValues: urlValues,
 			}
 			// Execute GET to call trace handler
-			resp, err := adm.executeMethod("GET", reqData)
+			resp, err := adm.executeMethod(ctx, http.MethodGet, reqData)
 			if err != nil {
 				closeResponse(resp)
 				return
@@ -110,7 +110,7 @@ func (adm AdminClient) ServiceTrace(allTrace, errTrace bool, doneCh <-chan struc
 					break
 				}
 				select {
-				case <-doneCh:
+				case <-ctx.Done():
 					return
 				case traceInfoCh <- ServiceTraceInfo{Trace: info}:
 				}

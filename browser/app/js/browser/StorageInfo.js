@@ -26,6 +26,10 @@ export class StorageInfo extends React.Component {
   }
   render() {
     const { used } = this.props.storageInfo
+    if (!used || used == 0) {
+      return <noscript />
+    }
+
     return (
       <div className="feh-used">
         <div className="fehu-chart">
@@ -54,4 +58,7 @@ const mapDispatchToProps = dispatch => {
   }
 }
 
-export default connect(mapStateToProps, mapDispatchToProps)(StorageInfo)
+export default connect(
+  mapStateToProps,
+  mapDispatchToProps
+)(StorageInfo)

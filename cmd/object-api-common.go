@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"context"
-	"path"
 	"sync"
 
 	"strings"
@@ -42,24 +41,19 @@ const (
 )
 
 // Global object layer mutex, used for safely updating object layer.
-var globalObjLayerMutex *sync.RWMutex
+var globalObjLayerMutex sync.RWMutex
 
-// Global object layer, only accessed by newObjectLayerFn().
+// Global object layer, only accessed by globalObjectAPI.
 var globalObjectAPI ObjectLayer
 
 //Global cacheObjects, only accessed by newCacheObjectsFn().
 var globalCacheObjectAPI CacheObjectLayer
 
-func init() {
-	// Initialize this once per server initialization.
-	globalObjLayerMutex = &sync.RWMutex{}
-}
-
 // Checks if the object is a directory, this logic uses
 // if size == 0 and object ends with SlashSeparator then
 // returns true.
 func isObjectDir(object string, size int64) bool {
-	return hasSuffix(object, SlashSeparator) && size == 0
+	return HasSuffix(object, SlashSeparator) && size == 0
 }
 
 // Converts just bucket, object metadata into ObjectInfo datatype.
@@ -85,24 +79,17 @@ func dirObjectInfo(bucket, object string, size int64, metadata map[string]string
 	}
 }
 
-func deleteBucketMetadata(ctx context.Context, bucket string, objAPI ObjectLayer) {
-	// Delete bucket access policy, if present - ignore any errors.
-	removePolicyConfig(ctx, objAPI, bucket)
-
-	// Delete notification config, if present - ignore any errors.
-	removeNotificationConfig(ctx, objAPI, bucket)
-
-	// Delete listener config, if present - ignore any errors.
-	removeListenerConfig(ctx, objAPI, bucket)
-}
-
 // Depending on the disk type network or local, initialize storage API.
 func newStorageAPI(endpoint Endpoint) (storage StorageAPI, err error) {
 	if endpoint.IsLocal {
-		return newPosix(endpoint.Path)
+		storage, err := newXLStorage(endpoint.Path, endpoint.Host)
+		if err != nil {
+			return nil, err
+		}
+		return &xlStorageDiskIDCheck{storage: storage}, nil
 	}
 
-	return newStorageRESTClient(endpoint)
+	return newStorageRESTClient(endpoint), nil
 }
 
 // Cleanup a directory recursively.
@@ -110,27 +97,33 @@ func cleanupDir(ctx context.Context, storage StorageAPI, volume, dirPath string)
 	var delFunc func(string) error
 	// Function to delete entries recursively.
 	delFunc = func(entryPath string) error {
-		if !hasSuffix(entryPath, SlashSeparator) {
+		if !HasSuffix(entryPath, SlashSeparator) {
 			// Delete the file entry.
 			err := storage.DeleteFile(volume, entryPath)
-			logger.LogIf(ctx, err)
+			if err != errDiskNotFound && err != errUnformattedDisk {
+				logger.LogIf(ctx, err)
+			}
 			return err
 		}
 
 		// If it's a directory, list and call delFunc() for each entry.
-		entries, err := storage.ListDir(volume, entryPath, -1, "")
+		entries, err := storage.ListDir(volume, entryPath, -1)
 		// If entryPath prefix never existed, safe to ignore.
 		if err == errFileNotFound {
 			return nil
 		} else if err != nil { // For any other errors fail.
-			logger.LogIf(ctx, err)
+			if err != errDiskNotFound && err != errUnformattedDisk {
+				logger.LogIf(ctx, err)
+			}
 			return err
 		} // else on success..
 
 		// Entry path is empty, just delete it.
 		if len(entries) == 0 {
 			err = storage.DeleteFile(volume, entryPath)
-			logger.LogIf(ctx, err)
+			if err != errDiskNotFound && err != errUnformattedDisk {
+				logger.LogIf(ctx, err)
+			}
 			return err
 		}
 
@@ -146,97 +139,7 @@ func cleanupDir(ctx context.Context, storage StorageAPI, volume, dirPath string)
 	return err
 }
 
-// Cleanup objects in bulk and recursively: each object will have a list of sub-files to delete in the backend
-func cleanupObjectsBulk(ctx context.Context, storage StorageAPI, volume string, objsPaths []string, errs []error) ([]error, error) {
-	// The list of files in disk to delete
-	var filesToDelete []string
-	// Map files to delete to the passed objsPaths
-	var filesToDeleteObjsIndexes []int
-
-	// Traverse and return the list of sub entries
-	var traverse func(string) ([]string, error)
-	traverse = func(entryPath string) ([]string, error) {
-		var output = make([]string, 0)
-		if !hasSuffix(entryPath, SlashSeparator) {
-			output = append(output, entryPath)
-			return output, nil
-		}
-		entries, err := storage.ListDir(volume, entryPath, -1, "")
-		if err != nil {
-			if err == errFileNotFound {
-				return nil, nil
-			}
-			return nil, err
-		}
-
-		for _, entry := range entries {
-			subEntries, err := traverse(pathJoin(entryPath, entry))
-			if err != nil {
-				return nil, err
-			}
-			output = append(output, subEntries...)
-		}
-		return output, nil
-	}
-
-	// Find and collect the list of files to remove associated
-	// to the passed objects paths
-	for idx, objPath := range objsPaths {
-		if errs[idx] != nil {
-			continue
-		}
-		output, err := traverse(retainSlash(pathJoin(objPath)))
-		if err != nil {
-			errs[idx] = err
-			continue
-		} else {
-			errs[idx] = nil
-		}
-		filesToDelete = append(filesToDelete, output...)
-		for i := 0; i < len(output); i++ {
-			filesToDeleteObjsIndexes = append(filesToDeleteObjsIndexes, idx)
-		}
-	}
-
-	// Reverse the list so remove can succeed
-	reverseStringSlice(filesToDelete)
-
-	dErrs, err := storage.DeleteFileBulk(volume, filesToDelete)
-	if err != nil {
-		return nil, err
-	}
-
-	// Map files deletion errors to the correspondent objects
-	for i := range dErrs {
-		if dErrs[i] != nil {
-			if errs[filesToDeleteObjsIndexes[i]] != nil {
-				errs[filesToDeleteObjsIndexes[i]] = dErrs[i]
-			}
-		}
-	}
-
-	return errs, nil
-}
-
-// Removes notification.xml for a given bucket, only used during DeleteBucket.
-func removeNotificationConfig(ctx context.Context, objAPI ObjectLayer, bucket string) error {
-	// Verify bucket is valid.
-	if !IsValidBucketName(bucket) {
-		return BucketNameInvalid{Bucket: bucket}
-	}
-
-	ncPath := path.Join(bucketConfigPrefix, bucket, bucketNotificationConfig)
-	return objAPI.DeleteObject(ctx, minioMetaBucket, ncPath)
-}
-
-// Remove listener configuration from storage layer. Used when a bucket is deleted.
-func removeListenerConfig(ctx context.Context, objAPI ObjectLayer, bucket string) error {
-	// make the path
-	lcPath := path.Join(bucketConfigPrefix, bucket, bucketListenerConfig)
-	return objAPI.DeleteObject(ctx, minioMetaBucket, lcPath)
-}
-
-func listObjectsNonSlash(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, delimiter string, maxKeys int, tpool *TreeWalkPool, listDir ListDirFunc, getObjInfo func(context.Context, string, string) (ObjectInfo, error), getObjectInfoDirs ...func(context.Context, string, string) (ObjectInfo, error)) (loi ListObjectsInfo, err error) {
+func listObjectsNonSlash(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int, tpool *TreeWalkPool, listDir ListDirFunc, getObjInfo func(context.Context, string, string) (ObjectInfo, error), getObjectInfoDirs ...func(context.Context, string, string) (ObjectInfo, error)) (loi ListObjectsInfo, err error) {
 	endWalkCh := make(chan struct{})
 	defer close(endWalkCh)
 	recursive := true
@@ -268,7 +171,7 @@ func listObjectsNonSlash(ctx context.Context, obj ObjectLayer, bucket, prefix, m
 				// ignore quorum error as it might be an entry from an outdated disk.
 				if IsErrIgnored(err, []error{
 					errFileNotFound,
-					errXLReadQuorum,
+					errErasureReadQuorum,
 				}...) {
 					continue
 				}
@@ -319,19 +222,74 @@ func listObjectsNonSlash(ctx context.Context, obj ObjectLayer, bucket, prefix, m
 	return result, nil
 }
 
-func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, delimiter string, maxKeys int, tpool *TreeWalkPool, listDir ListDirFunc, getObjInfo func(context.Context, string, string) (ObjectInfo, error), getObjectInfoDirs ...func(context.Context, string, string) (ObjectInfo, error)) (loi ListObjectsInfo, err error) {
-	if delimiter != SlashSeparator && delimiter != "" {
-		return listObjectsNonSlash(ctx, obj, bucket, prefix, marker, delimiter, maxKeys, tpool, listDir, getObjInfo, getObjectInfoDirs...)
+// Walk a bucket, optionally prefix recursively, until we have returned
+// all the content to objectInfo channel, it is callers responsibility
+// to allocate a receive channel for ObjectInfo, upon any unhandled
+// error walker returns error. Optionally if context.Done() is received
+// then Walk() stops the walker.
+func fsWalk(ctx context.Context, obj ObjectLayer, bucket, prefix string, listDir ListDirFunc, results chan<- ObjectInfo, getObjInfo func(context.Context, string, string) (ObjectInfo, error), getObjectInfoDirs ...func(context.Context, string, string) (ObjectInfo, error)) error {
+	if err := checkListObjsArgs(ctx, bucket, prefix, "", obj); err != nil {
+		// Upon error close the channel.
+		close(results)
+		return err
 	}
 
-	if err := checkListObjsArgs(ctx, bucket, prefix, marker, delimiter, obj); err != nil {
+	walkResultCh := startTreeWalk(ctx, bucket, prefix, "", true, listDir, ctx.Done())
+
+	go func() {
+		defer close(results)
+
+		for {
+			walkResult, ok := <-walkResultCh
+			if !ok {
+				break
+			}
+
+			var objInfo ObjectInfo
+			var err error
+			if HasSuffix(walkResult.entry, SlashSeparator) {
+				for _, getObjectInfoDir := range getObjectInfoDirs {
+					objInfo, err = getObjectInfoDir(ctx, bucket, walkResult.entry)
+					if err == nil {
+						break
+					}
+					if err == errFileNotFound {
+						err = nil
+						objInfo = ObjectInfo{
+							Bucket: bucket,
+							Name:   walkResult.entry,
+							IsDir:  true,
+						}
+					}
+				}
+			} else {
+				objInfo, err = getObjInfo(ctx, bucket, walkResult.entry)
+			}
+			if err != nil {
+				continue
+			}
+			results <- objInfo
+			if walkResult.end {
+				break
+			}
+		}
+	}()
+	return nil
+}
+
+func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, delimiter string, maxKeys int, tpool *TreeWalkPool, listDir ListDirFunc, getObjInfo func(context.Context, string, string) (ObjectInfo, error), getObjectInfoDirs ...func(context.Context, string, string) (ObjectInfo, error)) (loi ListObjectsInfo, err error) {
+	if delimiter != SlashSeparator && delimiter != "" {
+		return listObjectsNonSlash(ctx, bucket, prefix, marker, delimiter, maxKeys, tpool, listDir, getObjInfo, getObjectInfoDirs...)
+	}
+
+	if err := checkListObjsArgs(ctx, bucket, prefix, marker, obj); err != nil {
 		return loi, err
 	}
 
 	// Marker is set validate pre-condition.
 	if marker != "" {
 		// Marker not common with prefix is not implemented. Send an empty response
-		if !hasPrefix(marker, prefix) {
+		if !HasPrefix(marker, prefix) {
 			return loi, nil
 		}
 	}
@@ -361,7 +319,7 @@ func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, d
 		recursive = false
 	}
 
-	walkResultCh, endWalkCh := tpool.Release(listParams{bucket, recursive, marker, prefix, false})
+	walkResultCh, endWalkCh := tpool.Release(listParams{bucket, recursive, marker, prefix})
 	if walkResultCh == nil {
 		endWalkCh = make(chan struct{})
 		walkResultCh = startTreeWalk(ctx, bucket, prefix, marker, recursive, listDir, endWalkCh)
@@ -382,7 +340,7 @@ func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, d
 
 		var objInfo ObjectInfo
 		var err error
-		if hasSuffix(walkResult.entry, SlashSeparator) {
+		if HasSuffix(walkResult.entry, SlashSeparator) {
 			for _, getObjectInfoDir := range getObjectInfoDirs {
 				objInfo, err = getObjectInfoDir(ctx, bucket, walkResult.entry)
 				if err == nil {
@@ -406,7 +364,7 @@ func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, d
 			// ignore quorum error as it might be an entry from an outdated disk.
 			if IsErrIgnored(err, []error{
 				errFileNotFound,
-				errXLReadQuorum,
+				errErasureReadQuorum,
 			}...) {
 				continue
 			}
@@ -422,7 +380,7 @@ func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, d
 	}
 
 	// Save list routine for the next marker if we haven't reached EOF.
-	params := listParams{bucket, recursive, nextMarker, prefix, false}
+	params := listParams{bucket, recursive, nextMarker, prefix}
 	if !eof {
 		tpool.Set(params, walkResultCh, endWalkCh)
 	}
