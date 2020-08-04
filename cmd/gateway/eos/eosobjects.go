@@ -232,7 +232,6 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 	//	eosLogger.Debug(ctx, "PutObject [path: %s%s, key: %s, value: %s]", bucket, object, key, val)
 	//}
 
-	buf := bufio.NewReader(data)
 	dir := bucket + "/" + filepath.Dir(object)
 	objectpath := bucket + "/" + object
 
@@ -241,38 +240,44 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		e.FileSystem.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
 
-	// Send the file
-	response, err := e.FileSystem.PutBuffer(ctx, e.stage, objectpath, buf)
-	if err != nil {
-		eosLogger.Error(ctx, err, "PUT: %+v", err)
-		objInfo.ETag = defaultETag
-		if strings.Contains(err.Error(), "attempts") {
-			return objInfo, minio.SlowDown{}
+	// If actual file being uploaded
+	if !strings.HasSuffix(object, "/") {
+		// Send the file
+		buf := bufio.NewReader(data)
+		response, err := e.FileSystem.PutBuffer(ctx, e.stage, objectpath, buf)
+		if err != nil {
+			eosLogger.Error(ctx, err, "PUT: %+v", err)
+			objInfo.ETag = defaultETag
+			if strings.Contains(err.Error(), "attempts") {
+				return objInfo, minio.SlowDown{}
+			}
+			return objInfo, minio.OperationTimedOut{}
 		}
-		return objInfo, minio.OperationTimedOut{}
-	}
-	eosLogger.Debug(ctx, "Put response: %#v", response)
+		eosLogger.Debug(ctx, "Put response: %#v", response)
 
-	etag := response.Checksum
-	err = e.FileSystem.SetETag(ctx, objectpath, etag)
-	if err != nil {
-		eosLogger.Error(ctx, err, "PUT.SetETag: %+v", err)
-		objInfo.ETag = defaultETag
-		return objInfo, minio.InvalidETag{}
-	}
+		etag := response.Checksum
+		err = e.FileSystem.SetETag(ctx, objectpath, etag)
+		if err != nil {
+			eosLogger.Error(ctx, err, "PUT.SetETag: %+v", err)
+			objInfo.ETag = defaultETag
+			return objInfo, minio.InvalidETag{}
+		}
 
-	err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
-	if err != nil {
-		eosLogger.Error(ctx, err, "PUT.SetContentType: %+v", err)
-		return objInfo, err
-	}
+		err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
+		if err != nil {
+			eosLogger.Error(ctx, err, "PUT.SetContentType: %+v", err)
+			return objInfo, err
+		}
 
-	objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts)
-	if err == nil && objInfo.Size != data.Size() {
-		eosLogger.Error(ctx, err, "PUT: File on disk is not the correct size [disk: %d, expected: %d]", objInfo.Size, data.Size())
-		// Remove the file
-		_ = e.FileSystem.rm(ctx, objectpath)
-		return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
+		objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts)
+		if err == nil && objInfo.Size != data.Size() {
+			eosLogger.Error(ctx, err, "PUT: File on disk is not the correct size [disk: %d, expected: %d]", objInfo.Size, data.Size())
+			// Remove the file
+			_ = e.FileSystem.rm(ctx, objectpath)
+			return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
+		}
+        } else {
+		objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts)
 	}
 
 	return objInfo, err
