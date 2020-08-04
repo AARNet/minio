@@ -143,15 +143,15 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 
 	// and go
 	return &eosObjects{
-		maxRetry:          maxRetry,
-		maxKeys:           maxKeys,
-		path:              os.Getenv("VOLUME_PATH"),
-		hookurl:           os.Getenv("HOOKSURL"),
-		stage:             stage,
-		validbuckets:      validbuckets,
-		TransferList:      NewTransferList(),
-		FileSystem:        filesystem,
-		readonly:          readonly,
+		maxRetry:     maxRetry,
+		maxKeys:      maxKeys,
+		path:         os.Getenv("VOLUME_PATH"),
+		hookurl:      os.Getenv("HOOKSURL"),
+		stage:        stage,
+		validbuckets: validbuckets,
+		TransferList: NewTransferList(),
+		FileSystem:   filesystem,
+		readonly:     readonly,
 	}, nil
 }
 

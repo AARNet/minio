@@ -32,15 +32,15 @@ import (
 // eosObjects implements gateway for Minio and S3 compatible object storage servers.
 type eosObjects struct {
 	minio.GatewayUnsupported
-	maxRetry          int
-	maxKeys           int
-	path              string
-	hookurl           string
-	stage             string
-	readonly          bool
-	validbuckets      bool
-	TransferList      *TransferList
-	FileSystem        *eosFS
+	maxRetry     int
+	maxKeys      int
+	path         string
+	hookurl      string
+	stage        string
+	readonly     bool
+	validbuckets bool
+	TransferList *TransferList
+	FileSystem   *eosFS
 }
 
 // ListObjectsMarker is the marker used to continue listing objects when maxKeys is hit.
@@ -276,7 +276,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 			_ = e.FileSystem.rm(ctx, objectpath)
 			return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
 		}
-        } else {
+	} else {
 		objInfo, err = e.GetObjectInfoWithRetry(ctx, bucket, object, opts)
 	}
 
