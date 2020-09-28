@@ -1,0 +1,8 @@
+[epel]
+name=AARNet EPEL mirror $releasever - $basearch - Packages
+baseurl=https://repos.aarnet.net.au/yum/epel/7Server/
+gpgcheck=1
+exclude=nagios* cfengine* flow-tools* ceph* trafficserver* xrootd* libmicrohttpd* python2-xrootd*
+gpgkey=https://repos.aarnet.net.au/yum/repokeys/RPM-GPG-KEY-EPEL-7
+enabled=1
+
