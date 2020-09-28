@@ -1,0 +1,193 @@
+#!/bin/bash
+PROGNAME=`basename "$0"`
+export EOS_DIR=`pwd`
+export BUILD_TAG="${BUILD_TAG-minio-dev}"
+
+# docker-compose prefixes the network name with the parent directory.. so:
+dc_base=`basename ${EOS_DIR}`
+minio_container_host="minio.${dc_base}_minioshard"
+
+#==============================================================================
+# print script usage information
+#==============================================================================
+
+function usage {
+  echo "./${PROGNAME} -b|-d|-s|-a|-v"
+  echo "  -b pull eos-docker repo and build EOS docker images"
+  echo "  -d delete/destroy all existing containers"
+  echo "  -s start up containers and configure eos"
+  echo "  -a do everything, in above order"
+  echo "  -v verbose output"
+  exit 1
+}
+
+function dockerr {
+  if [ $jenkins ]; then
+    docker "${@}"
+  else 
+    sudo docker "${@}"
+  fi
+}
+
+function dockercompose {
+  if [ $jenkins ]; then
+    BUILD_TAG=${BUILD_TAG} docker-compose -f docker-compose.Jenkins.yml "${@}"
+  else 
+    sudo docker-compose "${@}"
+  fi
+}
+
+function dcexec {
+  dockercompose exec -T "${@}"
+}
+
+function quiet_dcexec {
+  if [ "${VERBOSE}" = "true" ]; then
+    dcexec "${@}"
+  else
+    dcexec "${@}" > /dev/null
+  fi
+}
+
+#==============================================================================
+# pull eos-docker and build container images locally
+#==============================================================================
+
+function build_docker_images {
+  docker build -t aplregistry.aarnet.edu.au/cloudservices/minio/shard:minio-dev -f ../../Dockerfile.aarnet ../../
+  cd ${EOS_DIR}
+  if [ -d "eos-docker_tmp" ]; then
+    rm -rf eos-docker_tmp
+  fi
+  git clone git@git.aarnet.edu.au:dockerfiles/eos-docker.git eos-docker_tmp
+  ## Can be used by external users, docker-compose.yml will need to be
+  ## updated to not include aplregistry.aarnet.edu.au/ in the image name
+  # git clone https://github.com/AARNet/eos-docker.git eos-docker_tmp
+  cd eos-docker_tmp
+  ./build -t minio-dev -i mgm,mq,fst,qdb
+  cd ..
+  rm -rf eos-docker_tmp
+}
+
+
+#==============================================================================
+# tear down existing containers
+#==============================================================================
+
+function destroy {
+  echo; echo "Removing containers..."
+  echo;
+  dockercompose ${dockercompose_opts} down
+  # Use docker so we don't have to worry about permissions
+  dockerr run --rm -v ${EOS_DIR}:/tmpdir alpine:latest sh -c 'mkdir -p /tmpdir/e;rm -rf /tmpdir/e' 
+}
+
+#==============================================================================
+# recreate files
+#==============================================================================
+
+function create_files {
+  # Use docker so we don't have to worry about sudo when we don't have it
+  dockerr run --rm -v ${EOS_DIR}/e:/e -v ${EOS_DIR}/files:/files alpine:latest sh -c '
+  mkdir -p /e/md;
+  mkdir -p /e/config;
+  mkdir -p /e/ns-queue;
+  mkdir -p /e/disks;
+  mkdir -p /e/eos;
+  mkdir -p /e/grid_hammer;
+  mkdir -p /e/qdb;
+  mkdir -p /e/log;
+  mkdir -p /e/log/tx;
+  mkdir -p /e/qdb/log;
+  mkdir -p /e/qdb/ns;
+  cp /files/*.keytab /e;
+  chown -R 2:2 /e;
+  chmod 600 /e/eos.keytab;
+  chmod 400 /e/qdb.keytab;
+'
+}
+
+#==============================================================================
+# set up eos test instances
+#==============================================================================
+
+function setup {
+  create_files
+  sleep 5
+ 
+  echo; echo "Starting containers..."
+  echo; dockercompose up -d
+
+  echo; echo "Checking mgm is booted...";
+  echo; dcexec mgm eos ns | grep -c booted > /dev/null || { echo 'Master MGM failed to start - check logs in e/log/mgm/xrdlog.mgm' ; cat e/log/mgm/xrdlog.mgm ; exit 1; }
+
+  sleep 5
+  echo; echo "Setting up vids..."
+  echo;
+  quiet_dcexec mgm eos -r 0 0 -b vid enable sss
+  quiet_dcexec mgm eos -r 0 0 -b vid enable unix
+  quiet_dcexec mgm eos -r 0 0 -b vid enable https
+  quiet_dcexec mgm eos -r 0 0 -b vid set membership daemon -uids adm
+  quiet_dcexec mgm eos -r 0 0 -b vid set membership daemon -gids adm
+  quiet_dcexec mgm eos -r 0 0 -b vid set membership daemon +sudo
+  quiet_dcexec mgm eos -r 0 0 -b vid set membership 48 +sudo
+  quiet_dcexec mgm eos -r 0 0 -b vid set map -tident *@${minio_container_host} vuid:48 vgid:48
+  quiet_dcexec mgm eos -r 0 0 -b vid set map -tident minio@${minio_container_host} vuid:48 vgid:48
+  quiet_dcexec mgm eos -r 0 0 -b debug err
+
+  # create filesystems
+  echo; echo "Setting up FST..."
+  echo;
+  quiet_dcexec fst mkdir /disks/eosfs1
+  quiet_dcexec fst chown daemon:daemon /disks/eosfs1
+  quiet_dcexec fst eos -r 0 0 -b fs add eosfs1 fst.minioshard:1095 /disks/eosfs1 default rw
+
+
+  echo; echo "Creating and setting permissions on minio directory /eos/minioshard/gateways/miniodev"
+  echo;
+  quiet_dcexec fst eos -r 0 0 -b mkdir -p /eos/minioshard/gateways/miniodev
+  quiet_dcexec fst eos -r 0 0 -b chown 48:48 /eos/minioshard/gateways/miniodev
+  quiet_dcexec mgm eos -r 0 0 -b attr -r set sys.forced.checksum=md5 /eos/minioshard/gateways/miniodev
+
+  echo; echo "Enabling space and groups..";
+  quiet_dcexec mgm eos group set default.0 on
+  echo; quiet_dcexec mgm eos space set default on
+
+  echo; echo "..All done!"
+}
+
+#==============================================================================
+# main script logic
+#==============================================================================
+
+if [ $# -eq 0 ]; then
+  usage
+fi
+
+# check which options are set
+while getopts "vjbdsaet:" opt; do
+  case "$opt" in
+    v) VERBOSE=true ;;
+    b) B=true ;;
+    d) D=true ;;
+    s) S=true ;;
+    a) A=true ;;
+    e) extra=true ;;
+    t) type=${OPTARG} ;;
+    j) jenkins=true ;;
+    \?) usage ;;
+  esac
+done
+
+if [ $B ]; then
+  build_docker_images
+fi
+
+# run actions in order
+if [ $D ] || [ $A ]; then
+  destroy
+fi
+
+if [ $S ] || [ $A ]; then
+  setup
+fi

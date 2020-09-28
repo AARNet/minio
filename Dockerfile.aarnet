@@ -1,0 +1,27 @@
+FROM golang:1.13-alpine as build
+RUN apk add --no-cache build-base git perl bash curl
+ADD . /app
+WORKDIR /app
+RUN make
+
+FROM aplregistry.aarnet.edu.au/cloudservices/apl-rhel7
+
+LABEL maintainer="Michael Usher <michael.usher@aarnet.edu.au>"
+LABEL maintainer="Michael D'Silva <md@aarnet.edu.au>"
+
+COPY aarnet/docker/yum.repos.d/* /etc/yum.repos.d/
+
+RUN  rpm --rebuilddb &&\
+     yum -y remove ed mailx wget libselinux-python sysstat lm_sensors-libs crontabs vim-minimal yum-utils &&\
+     yum -y update &&\
+     yum -y install xrootd-client-4.9.1 python2-xrootd-4.9.1 xrootd-libs-4.9.1 --enablerepo=xrootd &&\
+     chmod 4755 /usr/bin/xrdcp &&\
+     yum clean all &&\
+     rm -rf /var/cache/yum &&\
+     echo "*               soft    nofile          300000" >> /etc/security/limits.conf
+
+COPY aarnet/docker/scripts /scripts
+COPY --from=build /app/minio /scripts/minio
+
+EXPOSE 9000
+CMD /scripts/docker-entrypoint.sh
