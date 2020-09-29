@@ -46,10 +46,17 @@ pipeline {
 					sh script: "docker build -t ${ImageName} -f Dockerfile.aarnet .", label: "Build cloudstor-s3-gateway docker image"
 					sh script: "( cd aarnet/devenv && BUILD_TAG=${ImageTag} ./devenv -a -j )", label: "Start EOS and minio"
 				}
-				sh script: "docker run --network devenv_minioshard -e SERVER_ENDPOINT=minio:9000 -e ACCESS_KEY=minioadmin -e SECRET_KEY=minioadmin -e ENABLE_HTTPS=0 minio/mint", label: "Running Mint Tests"
+				catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+					sh script: "docker run --network devenv_minioshard -e SERVER_ENDPOINT=minio:9000 -e ACCESS_KEY=minioadmin -e SECRET_KEY=minioadmin -e ENABLE_HTTPS=0 minio/mint", label: "Running Mint Tests"
+				}
 			}
 			post {
 				success {
+					withDockerRegistry(url: 'https://aplregistry.aarnet.edu.au', credentialsId: 'jenkins-cloudservices-docker') {
+						sh script: "docker push ${ImageName}", label: "Push image to registry"
+					}
+				}
+				unstable {
 					withDockerRegistry(url: 'https://aplregistry.aarnet.edu.au', credentialsId: 'jenkins-cloudservices-docker') {
 						sh script: "docker push ${ImageName}", label: "Push image to registry"
 					}
