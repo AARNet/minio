@@ -12,6 +12,7 @@ Like it's never been done befooooooooooooooore
 This container is recommended to be run read-only, and ephemeral. It is required to be run as user apache:apache (AARNet standard is uid 48, gid 48).
 
 ### Port mapping
+
 * `9000` - default minio port
 
 ### Volume mounts
