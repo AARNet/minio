@@ -61,15 +61,15 @@ pipeline {
 						sh script: "docker push ${ImageName}", label: "Push image to registry"
 					}
 				}
-				always {
+				cleanup {
 					sh script: "( cd aarnet/devenv && BUILD_TAG=${ImageTag} ./devenv -d -j )", label: "Tear down EOS and minio"
+					sh script: "docker rmi ${ImageName}", label: "Cleanup cloudstor-s3-gateway docker image"
 				}
 			}
 		}
 	}
 	post {
-		always {
-			sh script: "docker rmi ${ImageName}", label: "Cleanup cloudstor-s3-gateway docker image"
+		cleanup {
 			sh script: "docker rmi ${buildImageName}", label: "Cleanup docker environment image"
 		}
 		success {
