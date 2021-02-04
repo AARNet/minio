@@ -46,7 +46,7 @@ pipeline {
 					sh script: "docker build -t ${ImageName} -f Dockerfile.aarnet .", label: "Build cloudstor-s3-gateway docker image"
 					sh script: "( cd aarnet/devenv && BUILD_TAG=${ImageTag} ./devenv -a -j )", label: "Start EOS and minio"
 				}
-				catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+				catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
 					sh script: "docker run --network devenv_minioshard -e SERVER_ENDPOINT=minio:9000 -e ACCESS_KEY=minioadmin -e SECRET_KEY=minioadmin -e ENABLE_HTTPS=0 minio/mint", label: "Running Mint Tests"
 				}
 			}
