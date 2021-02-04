@@ -69,9 +69,6 @@ pipeline {
 		}
 	}
 	post {
-		cleanup {
-			sh script: "docker rmi ${buildImageName}", label: "Cleanup docker environment image"
-		}
 		success {
 			slackSend(
 				channel: 'apl-cs-pipeline',
@@ -101,6 +98,9 @@ pipeline {
 				color: 'danger',
 				message: "${currentBuild.projectName} #${currentBuild.number} failed.\n" + "${currentBuild.description}\n" + "${env.BUILD_URL}\n"
 			)
+		}
+		cleanup {
+			sh script: "docker rmi ${buildImageName}", label: "Cleanup docker environment image"
 		}
 	}
 };
