@@ -759,20 +759,17 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 		return objInfo, err
 	}
 
-	err = e.FileSystem.SetETag(ctx, uploadID, etag)
+	err = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
-		return objInfo, err
-	}
-	err = e.FileSystem.SetContentType(ctx, uploadID, contenttype)
-	if err != nil {
-		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
-		return objInfo, err
+		err = e.FileSystem.rm(ctx, uploadID)
+		if err != nil {
+			eosLogger.Error(ctx, err, "CompleteMultipartUpload: cleanup rm failed [uploadID: %s]", uploadID)
+		}
 	}
 
-	_ = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
+	// Successful upload
 	e.TransferList.DeleteTransfer(uploadID)
-
 	return objInfo, nil
 }
 
