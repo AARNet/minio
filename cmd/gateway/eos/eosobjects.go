@@ -584,7 +584,7 @@ func (e *eosObjects) PutObjectPartStaging(ctx context.Context, bucket, object, u
 	f.Close()
 
 	//force free buf
-	buf = nil
+	buf = nil //nolint:ineffassign
 
 	transfer := e.TransferList.GetTransfer(uploadID)
 	for {
