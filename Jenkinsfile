@@ -18,8 +18,13 @@ pipeline {
 		stage('Setup') {
 			steps {
 				script {
-					if ( gitlabActionType == "PUSH" ) {
-						currentBuild.description = "Build of '$env.gitlabBranch' started by $env.gitlabUserName"
+					try {
+						if ( gitlabActionType && gitlabActionType == "PUSH" ) {
+							currentBuild.description = "Build of '$env.gitlabBranch' started by $env.gitlabUserName"
+						}
+					}
+					catch (MissingPropertyException e) {
+						// Just don't error if gitlabActionType is not set
 					}
 				}
 				sh script: "docker build . -f Dockerfile.jenkins -t ${buildImageName}", label: "Build docker environment"
