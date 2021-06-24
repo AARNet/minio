@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -846,30 +847,43 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 	fullstagepath := e.stage + "/" + stagepath + "/file"
 	eosLogger.Debug(ctx, "CompleteMultipartUpload: xrdcp: [stagepath: %s, uploadIDpath: %s, size: %d]", fullstagepath, uploadID+".minio.sys", objInfo.Size)
 
-	f, err := os.Open(fullstagepath)
-	if err != nil {
-		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Failed to open chunk [uploadID: %s]", uploadID)
+	// Check for file existence and permission to read
+	stat, err := os.Stat(fullstagepath)
+	if os.IsNotExist(err) {
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Chunk file does not exist [uploadID: %s]", uploadID)
 	}
-	defer f.Close()
+	if os.IsPermission(err) {
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Permission denied for chunk file [uploadID: %s]", uploadID)
+	}
+	if err != nil {
+		return err
+	}
+	if stat.Size() != objInfo.Size {
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
+		return errors.New("File size of staged file does not match expected file size")
+	}
 
 	err = e.FileSystem.Xrdcp.Put(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: xrdcp: [uploadID: %s]", uploadID)
 		return err
 	}
+
 	err = e.FileSystem.Rename(ctx, uploadID+".minio.sys", uploadID)
 	if err != nil {
-		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSrename: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Rename: [uploadID: %s]", uploadID)
 		return err
 	}
+
 	err = e.FileSystem.SetETag(ctx, uploadID, objInfo.ETag)
 	if err != nil {
-		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSsetETag: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetETag: [uploadID: %s]", uploadID)
 		return err
 	}
+
 	err = e.FileSystem.SetContentType(ctx, uploadID, objInfo.ContentType)
 	if err != nil {
-		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOSsetContentType: [uploadID: %s]", uploadID)
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetContentType: [uploadID: %s]", uploadID)
 		return err
 	}
 
