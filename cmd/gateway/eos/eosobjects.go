@@ -771,7 +771,7 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 
 	// Successful upload
 	e.TransferList.DeleteTransfer(uploadID)
-	return objInfo, nil
+	return e.GetObjectInfoWithRetry(ctx, bucket, object, opts)
 }
 
 // CompleteMultipartUploadXrootd
