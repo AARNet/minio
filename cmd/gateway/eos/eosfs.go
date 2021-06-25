@@ -465,8 +465,14 @@ func (e *eosFS) SetMeta(ctx context.Context, p, key, value string) error {
 func (e *eosFS) SetContentType(ctx context.Context, p, ct string) error {
 	return e.SetMeta(ctx, p, "contenttype", ct)
 }
+
 func (e *eosFS) SetETag(ctx context.Context, p, etag string) error {
 	return e.SetMeta(ctx, p, "etag", etag)
+}
+
+// SetSourceChecksum - set an atttribute on the file containing the checksum of the source data
+func (e *eosFS) SetSourceChecksum(ctx context.Context, p, etag string) error {
+	return e.SetMeta(ctx, p, "source_checksum", etag)
 }
 
 func (e *eosFS) PutBuffer(ctx context.Context, stage string, p string, data io.Reader) (response *PutFileResponse, err error) {

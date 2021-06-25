@@ -422,28 +422,38 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 }
 
 // Put - puts a file
-func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) error {
+func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) (*PutFileResponse, error) {
 	eospath, err := x.AbsoluteEOSPath(dst)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
 	if err != nil {
 		eosLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
-		return err
+		return nil, err
 	}
 	eosLogger.Debug(ctx, "xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
-	outputStr, err := x.XrdcpWithRetry(ctx, "-N", "-f", "-p", src, eosurl)
+	outputStr, err := x.XrdcpWithRetry(ctx, "--nopbar", "--force", "--path", "--cksum", "md5:print", src, eosurl)
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp -N -f -p %s %s [eospath: %s]", src, eosurl, eospath)
-	}
-	if outputStr != "" {
-		eosLogger.Info(ctx, outputStr, nil)
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp --nopbar --force --path --cksum md5:print %s %s [eospath: %s]", src, eosurl, eospath)
+		return nil, err
 	}
 
-	return err
+	if !strings.HasPrefix(outputStr, "md5: ") {
+		return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", outputStr)
+	}
+
+	eosLogger.Info(ctx, outputStr, nil)
+	splitStr := strings.Split(outputStr, " ")
+	response := &PutFileResponse{}
+	response.ChecksumType = strings.TrimRight(splitStr[0], ":")
+	response.Checksum = splitStr[1]
+	response.URI = splitStr[2]
+	response.Size = strings.TrimSpace(splitStr[3])
+
+	return response, err
 }
 
 // ReadChunk - reads a chunk

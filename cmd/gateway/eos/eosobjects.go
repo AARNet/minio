@@ -256,12 +256,18 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		}
 		eosLogger.Debug(ctx, "Put response: %#v", response)
 
-		etag := response.Checksum
-		err = e.FileSystem.SetETag(ctx, objectpath, etag)
+		err = e.FileSystem.SetETag(ctx, objectpath, response.Checksum)
 		if err != nil {
 			eosLogger.Error(ctx, err, "PUT.SetETag: %+v", err)
 			objInfo.ETag = defaultETag
 			return objInfo, minio.InvalidETag{}
+		}
+
+		sourceChecksum := hex.EncodeToString(data.MD5Current())
+		err = e.FileSystem.SetSourceChecksum(ctx, objectpath, sourceChecksum)
+		if err != nil {
+			eosLogger.Error(ctx, err, "PUT.SetSourceChecksum: %+v", err)
+			return objInfo, err
 		}
 
 		err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
@@ -856,15 +862,26 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 		return errors.New("File size of staged file does not match expected file size")
 	}
 
-	err = e.FileSystem.Xrdcp.Put(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
+	response, err := e.FileSystem.Xrdcp.Put(ctx, fullstagepath, uploadID+".minio.sys", objInfo.Size)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: xrdcp: [uploadID: %s]", uploadID)
 		return err
 	}
 
+	// Save source data's checksum for later
+	sourceChecksum := objInfo.ETag
+	// Use checksum returned from EOS
+	objInfo.ETag = response.Checksum
+
 	err = e.FileSystem.Rename(ctx, uploadID+".minio.sys", uploadID)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Rename: [uploadID: %s]", uploadID)
+		return err
+	}
+
+	err = e.FileSystem.SetSourceChecksum(ctx, uploadID, sourceChecksum)
+	if err != nil {
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetSourceChecksum: [uploadID: %s]", uploadID)
 		return err
 	}
 
