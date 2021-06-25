@@ -2,7 +2,7 @@ version: '2'
 services:
   mq:
     container_name: mq
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mq:4.6.5
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mq:4.8.43-43
     tty: true
     privileged: true
     stdin_open: true
@@ -25,7 +25,7 @@ services:
 
   mgm:
     container_name: mgm
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mgm:4.6.5
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mgm:4.8.43-43
     tty: true
     privileged: true
     stdin_open: true
@@ -45,7 +45,7 @@ services:
 
   fst:
     container_name: fst
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-fst:4.6.5
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-fst:4.8.43-43
     tty: true
     privileged: true
     stdin_open: true
@@ -67,7 +67,7 @@ services:
 
   qdb:
     container_name: qdb
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-qdb:0.4.0
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-qdb:0.4.2-29
     tty: true
     privileged: true
     stdin_open: true
@@ -94,6 +94,9 @@ services:
 
   minio:
     image: aplregistry.aarnet.edu.au/cloudservices/minio/shard:${BUILD_TAG}
+    build:
+        dockerfile:  Dockerfile.aarnet
+        context: ../../
     container_name: minio
     environment:
     - EOS=mgm.minioshard
