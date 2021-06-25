@@ -753,13 +753,6 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 		ContentType: contenttype,
 	}
 
-	// Create an empty file
-	err = e.FileSystem.Touch(ctx, uploadID, size)
-	if err != nil {
-		eosLogger.Error(ctx, err, "CompleteMultipartUpload: EOStouch: [uploadID: %s, error: %+v]", uploadID, err)
-		return objInfo, err
-	}
-
 	err = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
