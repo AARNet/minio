@@ -263,6 +263,12 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 			return objInfo, minio.InvalidETag{}
 		}
 
+		err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
+		if err != nil {
+			eosLogger.Error(ctx, err, "PUT.SetContentType: %+v", err)
+			return objInfo, err
+		}
+
 		sourceChecksum := hex.EncodeToString(data.MD5Current())
 		err = e.FileSystem.SetSourceChecksum(ctx, objectpath, sourceChecksum)
 		if err != nil {
@@ -270,9 +276,10 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 			return objInfo, err
 		}
 
-		err = e.FileSystem.SetContentType(ctx, objectpath, opts.UserDefined["content-type"])
+		sourceSize := interfaceToString(data.Size())
+		err = e.FileSystem.SetSourceSize(ctx, objectpath, sourceSize)
 		if err != nil {
-			eosLogger.Error(ctx, err, "PUT.SetContentType: %+v", err)
+			eosLogger.Error(ctx, err, "PUT.SetSourceSize: %+v", err)
 			return objInfo, err
 		}
 
@@ -868,24 +875,26 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 		return err
 	}
 
-	// Save source data's checksum for later
-	sourceChecksum := objInfo.ETag
-	// Use checksum returned from EOS
-	objInfo.ETag = response.Checksum
-
 	err = e.FileSystem.Rename(ctx, uploadID+".minio.sys", uploadID)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: Rename: [uploadID: %s]", uploadID)
 		return err
 	}
 
-	err = e.FileSystem.SetSourceChecksum(ctx, uploadID, sourceChecksum)
+	err = e.FileSystem.SetSourceChecksum(ctx, uploadID, objInfo.ETag)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetSourceChecksum: [uploadID: %s]", uploadID)
 		return err
 	}
 
-	err = e.FileSystem.SetETag(ctx, uploadID, objInfo.ETag)
+	sourceSize := interfaceToString(objInfo.Size)
+	err = e.FileSystem.SetSourceSize(ctx, uploadID, sourceSize)
+	if err != nil {
+		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetSourceSize: [uploadID: %s]", uploadID)
+		return err
+	}
+
+	err = e.FileSystem.SetETag(ctx, uploadID, response.Checksum)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetETag: [uploadID: %s]", uploadID)
 		return err

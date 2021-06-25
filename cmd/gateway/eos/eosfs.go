@@ -462,6 +462,32 @@ func (e *eosFS) SetMeta(ctx context.Context, p, key, value string) error {
 	return nil
 }
 
+// SetMinioAttr - to replace SetMeta, uses minio.* format instead of minio_* format
+func (e *eosFS) SetMinioAttr(ctx context.Context, p, key, value string) error {
+	if key == "" || value == "" {
+		//dont bother setting if we don't get what we need
+		return nil
+	}
+	eospath, err := e.AbsoluteEOSPath(p)
+	if err != nil {
+		return err
+	}
+	eosLogger.Debug(ctx, "EOScmd: procuser.attr.set [path: "+eospath+", key: "+key+", value: "+value+"]", nil)
+	cmd := "mgm.cmd=attr&mgm.subcmd=set&mgm.attr.key=minio." + url.QueryEscape(key) + "&mgm.attr.value=" + url.QueryEscape(value) + "&mgm.path=" + url.QueryEscape(eospath) + e.URLExtras()
+	_, m, err := e.MGMcurlWithRetry(ctx, cmd)
+	if err != nil {
+		eosLogger.Error(ctx, err, "eosfs.SetMinioAttr: request to MGM failed [eospath: %s, error: %+v]", eospath, err)
+		return err
+	}
+
+	if interfaceToString(m["errormsg"]) != "" {
+		eosLogger.Error(ctx, nil, "eosfs.SetMinioAttr: attribute setting failed [eospath: %s, command: %s, error: %s]", eospath, cmd, interfaceToString(m["errormsg"]))
+		return errors.New(interfaceToString(m["errormsg"]))
+	}
+
+	return nil
+}
+
 func (e *eosFS) SetContentType(ctx context.Context, p, ct string) error {
 	return e.SetMeta(ctx, p, "contenttype", ct)
 }
@@ -470,9 +496,14 @@ func (e *eosFS) SetETag(ctx context.Context, p, etag string) error {
 	return e.SetMeta(ctx, p, "etag", etag)
 }
 
-// SetSourceChecksum - set an atttribute on the file containing the checksum of the source data
+// SetSourceSize - set an atttribute on the file containing the size of the source data
 func (e *eosFS) SetSourceChecksum(ctx context.Context, p, etag string) error {
-	return e.SetMeta(ctx, p, "source_checksum", etag)
+	return e.SetMinioAttr(ctx, p, "source.size", etag)
+}
+
+// SetSourceChecksum - set an atttribute on the file containing the checksum of the source data
+func (e *eosFS) SetSourceSize(ctx context.Context, p, etag string) error {
+	return e.SetMinioAttr(ctx, p, "source.checksum", etag)
 }
 
 func (e *eosFS) PutBuffer(ctx context.Context, stage string, p string, data io.Reader) (response *PutFileResponse, err error) {
