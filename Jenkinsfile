@@ -52,7 +52,7 @@ pipeline {
 					sh script: "( cd aarnet/devenv && BUILD_TAG=${ImageTag} ./devenv -a -j )", label: "Start EOS and minio"
 				}
 				catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
-					sh script: "docker run --network devenv_minioshard -e SERVER_ENDPOINT=minio:9000 -e ACCESS_KEY=minioadmin -e SECRET_KEY=minioadmin -e ENABLE_HTTPS=0 minio/mint", label: "Running Mint Tests"
+					sh script: "docker run --network devenvminio_shard -e SERVER_ENDPOINT=minio.shard:9000 -e ACCESS_KEY=minioadmin -e SECRET_KEY=minioadmin -e ENABLE_HTTPS=0 minio/mint", label: "Running Mint Tests"
 				}
 			}
 			post {
