@@ -498,12 +498,12 @@ func (e *eosFS) SetETag(ctx context.Context, p, etag string) error {
 
 // SetSourceSize - set an atttribute on the file containing the size of the source data
 func (e *eosFS) SetSourceChecksum(ctx context.Context, p, etag string) error {
-	return e.SetMinioAttr(ctx, p, "source.size", etag)
+	return e.SetMinioAttr(ctx, p, "source.checksum", etag)
 }
 
 // SetSourceChecksum - set an atttribute on the file containing the checksum of the source data
-func (e *eosFS) SetSourceSize(ctx context.Context, p, etag string) error {
-	return e.SetMinioAttr(ctx, p, "source.checksum", etag)
+func (e *eosFS) SetSourceSize(ctx context.Context, p, size string) error {
+	return e.SetMinioAttr(ctx, p, "source.size", size)
 }
 
 func (e *eosFS) PutBuffer(ctx context.Context, stage string, p string, data io.Reader) (response *PutFileResponse, err error) {

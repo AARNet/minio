@@ -62,6 +62,11 @@ func StringToBool(str string) bool {
 	return b
 }
 
+// Int64ToString converts a int64 to a string
+func Int64ToString(i int64) string {
+	return strconv.FormatInt(i, 10)
+}
+
 const (
 	// SleepDefault is the default sleep time in ms
 	SleepDefault int = 100

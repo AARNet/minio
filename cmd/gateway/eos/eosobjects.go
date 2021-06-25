@@ -276,7 +276,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 			return objInfo, err
 		}
 
-		sourceSize := interfaceToString(data.Size())
+		sourceSize := Int64ToString(data.Size())
 		err = e.FileSystem.SetSourceSize(ctx, objectpath, sourceSize)
 		if err != nil {
 			eosLogger.Error(ctx, err, "PUT.SetSourceSize: %+v", err)
@@ -887,7 +887,7 @@ func (e *eosObjects) TransferFromStaging(ctx context.Context, stagepath string, 
 		return err
 	}
 
-	sourceSize := interfaceToString(objInfo.Size)
+	sourceSize := Int64ToString(objInfo.Size)
 	err = e.FileSystem.SetSourceSize(ctx, uploadID, sourceSize)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: SetSourceSize: [uploadID: %s]", uploadID)
