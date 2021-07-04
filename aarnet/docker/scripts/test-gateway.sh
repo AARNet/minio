@@ -117,6 +117,13 @@ function test_mc_fileinfo {
   return 0
 }
 
+function add_return_code {
+  current=$1
+  to_add=$2
+  echo $(( ${current} + ${to_add} ))
+  return ${to_add}
+}
+
 function test_mc {
   mc="/usr/bin/mc"
   local url="${1}"
@@ -128,15 +135,22 @@ function test_mc {
   local test_bucket="testbucket-${tmp_string}"
   local test_file="test-${tmp_string}"
   local test_file_multipart="test-multipart-${tmp_string}"
+  local test_result=0
 
-  echo_info "Running tests using minio client"
+  echo_info "Setting up minio client"
   ${mc} config host ls ${test_gateway} > /dev/null 2>&1
   if [ $? -eq 0 ]; then
-    ${mc} config host remove ${test_gateway} > /dev/null 2>&1
+    test_run "${mc} config host remove ${test_gateway}" "Removing existing config" 0
+    test_result=$(add_return_code ${test_result} $?)
   fi
   test_run "${mc} config host add ${test_gateway} ${url} ${access_key} ${secret_key}" "${mc} config host add ${test_gateway} ${url} xxxxxx xxxxxxxxxxxxxx" 0
-  if [[ $? -eq 0 ]]; then
+  test_result=$(add_return_code ${test_result} $?)
+  rc=$?
+
+  echo_info "Running tests using minio client"
+  if [[ ${rc} -eq 0 ]]; then
     test_run "${mc} mb ${test_gateway}/${test_bucket}" "${mc} mb ${test_gateway}/${test_bucket}" $read_only
+    test_result=$(add_return_code ${test_result} $?)
     if [[ $? -eq 0 ]]; then
       echo_info "Generating test files"
       echo "does it work?" > "${test_file}"
@@ -146,54 +160,71 @@ function test_mc {
 
       # Test that we can upload into a bucket
       test_mc_cp "${mc}" "${test_file}" "${test_gateway}/${test_bucket}/${test_file}" $read_only
+      test_result=$(add_return_code ${test_result} $?)
       file_copied=$?
       if [ $file_copied -eq 0 ]; then
         test_mc_fileinfo "${mc}" "${test_gateway}/${test_bucket}/${test_file}" 14 "${test_file}" "$testfile_etag" $read_only
+        test_result=$(add_return_code ${test_result} $?)
       fi
 
       # Test that we can upload into a directory in a bucket
       test_mc_cp "${mc}" "${test_file}" "${test_gateway}/${test_bucket}/inadirectory/${test_file}"
+      test_result=$(add_return_code ${test_result} $?)
       file_copied=$?
       if [ $file_copied -eq 0 ]; then
         test_mc_fileinfo "${mc}" "${test_gateway}/${test_bucket}/inadirectory/${test_file}" 14 "${test_file}" "${testfile_etag}"
+        test_result=$(add_return_code ${test_result} $?)
       fi
 
       # Test upload "big" file (xrdcp)
       test_mc_cp "${mc}" "${test_file_multipart}" "${test_gateway}/${test_bucket}/${test_file_multipart}"
+      test_result=$(add_return_code ${test_result} $?)
       file_copied=$?
       if [ $file_copied -eq 0 ]; then
         echo_info "Waiting 5 seconds to allow multipart transfer to complete"
         sleep 5
         test_mc_fileinfo "${mc}" "${test_gateway}/${test_bucket}/${test_file_multipart}" 134217728 "${test_file_multipart}" "${testfilexrdcp_etag}"
+        test_result=$(add_return_code ${test_result} $?)
         test_run "${mc} rm ${test_gateway}/${test_bucket}/${test_file_multipart}" "${mc} rm ${test_gateway}/${test_bucket}/${test_file_multipart}" $read_only
+        test_result=$(add_return_code ${test_result} $?)
       fi
 
       test_mc_cp "${mc}" "${test_file_multipart}" "${test_gateway}/${test_bucket}/inadirectory-xrdcp/${test_file_multipart}"
+      test_result=$(add_return_code ${test_result} $?)
       file_copied=$?
       if [ $file_copied -eq 0 ]; then
         echo_info "Waiting 5 seconds to allow multipart transfer to complete"
         sleep 5
         test_mc_fileinfo "${mc}" "${test_gateway}/${test_bucket}/inadirectory-xrdcp/${test_file_multipart}" 134217728 "${test_file_multipart}" "${testfilexrdcp_etag}"
+        test_result=$(add_return_code ${test_result} $?)
         test_run "${mc} rm ${test_gateway}/${test_bucket}/inadirectory-xrdcp/${test_file_multipart}" "${mc} rm ${test_gateway}/${test_bucket}/inadirectory-xrdcp/${test_file_multipart}"  $read_only
+        test_result=$(add_return_code ${test_result} $?)
       fi
 
       test_run "${mc} ls --recursive ${test_gateway}/${test_bucket}" "${mc} ls --recursive ${test_gateway}/${test_bucket}" $read_only
+      test_result=$(add_return_code ${test_result} $?)
       # Retrieve file
       if [[ $file_copied -eq 0 ]]; then
         test_mc_cp "${mc}" "${test_gateway}/${test_bucket}/${test_file}" "${test_file}-retrieved"
-	if [[ $? -eq 0 ]]; then
-		rm ${test_file}-retrieved
-	fi
+        test_result=$(add_return_code ${test_result} $?)
+        if [[ $? -eq 0 ]]; then
+          rm ${test_file}-retrieved
+        fi
       fi
+
       # Remove file
       if [[ $file_copied -eq 0 ]]; then
         test_run "${mc} rm ${test_gateway}/${test_bucket}/test-${tmp_string}" "${mc} rm ${test_gateway}/${test_bucket}/test-${tmp_string}"  $read_only
+        test_result=$(add_return_code ${test_result} $?)
       fi
       # List files
       test_run "${mc} ls ${test_gateway}/${test_bucket}" "${mc} ls ${test_gateway}/${test_bucket}" $read_only
+      test_result=$(add_return_code ${test_result} $?)
+
       # Cleanup
       echo_info "Removing bucket recursively, this might take a minute."
       test_run "${mc} rb --force ${test_gateway}/${test_bucket}" "${mc} rb --force ${test_gateway}/${test_bucket}" $read_only
+      test_result=$(add_return_code ${test_result} $?)
     fi
   fi
 
@@ -203,6 +234,10 @@ function test_mc {
 
   if [[ -f "${test_file_multipart}" ]]; then
     rm "${test_file_multipart}"
+  fi
+  
+  if [ ${test_result} -gt 0 ]; then
+    exit ${test_result}
   fi
 }
 
