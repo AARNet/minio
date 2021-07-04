@@ -331,7 +331,7 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 		return err
 	}
 
-	recursive, err := e.IsDir(ctx, eospath)
+	recursive, err := e.IsDir(ctx, p)
 	if err != nil {
 		return err
 	}

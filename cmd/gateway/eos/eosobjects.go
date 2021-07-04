@@ -166,6 +166,7 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string, forceDelet
 
 	err := e.FileSystem.rmdir(ctx, bucket)
 	if err != nil {
+		eosLogger.Error(ctx, err, "DeleteBucket: %+v", err)
 		return minio.BucketNotFound{Bucket: bucket}
 	}
 	return err
