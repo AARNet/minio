@@ -331,8 +331,18 @@ func (e *eosFS) rm(ctx context.Context, p string) error {
 		return err
 	}
 
+	recursive, err := e.IsDir(ctx, eospath)
+	if err != nil {
+		return err
+	}
+
+	option_recursive := ""
+	if recursive {
+		option_recursive = "&mgm.option=r"
+	}
+
 	eosLogger.Debug(ctx, "EOScmd: procuser.rm [eospath: "+eospath+"]", nil)
-	url := "mgm.cmd=rm&mgm.option=r&mgm.deletion=deep&mgm.path=" + url.QueryEscape(eospath) + e.URLExtras()
+	url := fmt.Sprintf("mgm.cmd=rm%s&mgm.deletion=deep&mgm.path=%s%s", option_recursive, url.QueryEscape(eospath), e.URLExtras())
 	_, m, err := e.MGMcurlWithRetry(ctx, url)
 	if err != nil {
 		eosLogger.Error(ctx, err, "eosfs.rm: request to MGM failed [eospath: %s]", eospath)
