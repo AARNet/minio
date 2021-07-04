@@ -133,6 +133,14 @@ services:
     - mq
     - mgm
     - qdb
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - http://127.0.0.1:9000
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
 volumes:
   eos_disks:
