@@ -38,38 +38,18 @@ func (g *EOS) Name() string {
 
 // NewGatewayLayer returns eos gatewaylayer.
 func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
-
 	MaxLogLevel = g.GetLogLevel()
-
-	stage := os.Getenv("EOSSTAGE")
-	if stage != "" {
-		os.MkdirAll(stage, 0700)
-	}
-
-	validbuckets := true
-	if os.Getenv("EOSVALIDBUCKETS") == "false" {
-		validbuckets = false
-	}
-
-	// Require a staging area for puts
-	if stage == "" {
-		stage = "/tmp"
-	}
-	eosLogger.Startup("EOS staging: %s", stage)
+	stage := g.SetupStageArea()
 
 	if g.IsReadOnly() {
 		eosLogger.Startup("EOS read only mode: ENABLED")
 	}
 
-	if !validbuckets {
+	if !g.GetValidBuckets() {
 		eosLogger.Startup("EOS allowing invalid bucket names (RISK)")
 	}
 
-	maxKeys, ok := strconv.Atoi(os.Getenv("OVERWRITEMAXKEYS"))
-	if ok != nil {
-		maxKeys = 0
-	}
-
+	eosLogger.Startup("EOS staging: %s", stage)
 	eosLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
 	eosLogger.Startup("EOS HTTP URL: %s", g.GetHTTPHost())
 	eosLogger.Startup("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
@@ -79,18 +59,18 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	eosLogger.Startup("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
 	eosLogger.Startup("EOS READ METHOD: %s", g.GetReadMethod())
 	eosLogger.Startup("EOS MAX RETRY: %d", g.GetMaxRetry())
-	eosLogger.Startup("EOS OVERWRITE MAX KEYS: %d", maxKeys)
+	eosLogger.Startup("EOS OVERWRITE MAX KEYS: %d", g.GetMaxKeysOverride())
 	eosLogger.Startup("EOS SORT FILE LISTING: %t", g.GetSort())
 	eosLogger.Startup("EOS LOG LEVEL: %d", MaxLogLevel)
 
 	// and go
 	return &eosObjects{
 		maxRetry:     g.GetMaxRetry(),
-		maxKeys:      maxKeys,
+		maxKeys:      g.GetMaxKeysOverride(),
 		path:         os.Getenv("VOLUME_PATH"),
 		hookurl:      os.Getenv("HOOKSURL"),
 		stage:        stage,
-		validbuckets: validbuckets,
+		validbuckets: g.GetValidBuckets(),
 		TransferList: NewTransferList(),
 		FileSystem:   g.SetupFileSystem(),
 		readonly:     g.IsReadOnly(),
@@ -156,6 +136,35 @@ func (g *EOS) GetSort() bool {
 		sort = 0
 	}
 	return (sort > 0)
+}
+
+// GetValidBuckets - return whether valid bucket names are required
+func (g *EOS) GetValidBuckets() bool {
+	validbuckets := true
+	if os.Getenv("EOSVALIDBUCKETS") == "false" {
+		validbuckets = false
+	}
+	return validbuckets
+}
+
+// GetMaxKeysOverride - return the override for the max number of keys returned
+func (g *EOS) GetMaxKeysOverride() int {
+	maxKeys, ok := strconv.Atoi(os.Getenv("OVERWRITEMAXKEYS"))
+	if ok != nil {
+		maxKeys = 0
+	}
+	return maxKeys
+}
+
+// SetupStageArea - setup stage area and return the path
+func (g *EOS) SetupStageArea() string {
+	stage := os.Getenv("EOSSTAGE")
+	if stage != "" {
+		os.MkdirAll(stage, 0700)
+	} else {
+		stage = "/tmp"
+	}
+	return stage
 }
 
 // SetupFileSystem - configures the filesystem
