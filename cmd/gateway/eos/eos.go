@@ -168,7 +168,7 @@ func (g *EOS) SetupStageArea() string {
 }
 
 // SetupFileSystem - configures the filesystem
-func (g *EOS) SetupFileSystem() *EOSFS {
+func (g *EOS) SetupFileSystem() *FileSystem {
 	xrdcp := &Xrdcp{
 		MaxRetry: g.GetMaxRetry(),
 		MGMHost:  os.Getenv("EOS"),
@@ -178,7 +178,7 @@ func (g *EOS) SetupFileSystem() *EOSFS {
 		GID:      os.Getenv("EOSGID"),
 	}
 
-	filesystem := &EOSFS{
+	filesystem := &FileSystem{
 		MaxRetry:   g.GetMaxRetry(),
 		Sort:       g.GetSort(),
 		MGMHost:    os.Getenv("EOS"),

@@ -24,7 +24,8 @@ import (
 	"strings"
 )
 
-type EOSFS struct {
+// FileSystem - configuration for interacting with EOS as a filesystem
+type FileSystem struct {
 	MaxRetry   int
 	Sort       bool
 	MGMHost    string
@@ -49,7 +50,7 @@ var (
 )
 
 // HTTPClient sets up and returns a http.Client
-func (e *EOSFS) HTTPClient() *http.Client {
+func (e *FileSystem) HTTPClient() *http.Client {
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			// This makes the logs pretty noisy, we'll leave it as a "dev" enable thing
@@ -70,7 +71,7 @@ func (e *EOSFS) HTTPClient() *http.Client {
 }
 
 // NewRequest sets up a client and a GET request for the MGM
-func (e *EOSFS) NewRequest(method string, url string, body io.Reader) (*http.Client, *http.Request, error) {
+func (e *FileSystem) NewRequest(method string, url string, body io.Reader) (*http.Client, *http.Request, error) {
 	client := e.HTTPClient()
 	req, err := http.NewRequest(method, url, body)
 	if err != nil {
@@ -81,12 +82,12 @@ func (e *EOSFS) NewRequest(method string, url string, body io.Reader) (*http.Cli
 }
 
 // URLExtras returns common parameters for requests to MGM
-func (e *EOSFS) URLExtras() string {
+func (e *FileSystem) URLExtras() string {
 	return "&eos.ruid=" + e.UID + "&eos.rgid=" + e.GID + "&mgm.format=json"
 }
 
 // AbsoluteEOSPath normalises and returns the absolute path in EOS
-func (e *EOSFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
+func (e *FileSystem) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	if strings.Contains(path, "..") {
 		return "", errFilePathBad
 	}
@@ -95,8 +96,8 @@ func (e *EOSFS) AbsoluteEOSPath(path string) (eosPath string, err error) {
 	return eosPath, nil
 }
 
-// MGMCurl makes GET requests to the MGM
-func (e *EOSFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[string]interface{}, err error) {
+// MGMcurl makes GET requests to the MGM
+func (e *FileSystem) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[string]interface{}, err error) {
 	eosurl := "http://" + e.HTTPHost + "/proc/user/?" + cmd
 	EOSLogger.Debug(ctx, "EOSMGMcurl: [eosurl: %s]", eosurl)
 
@@ -129,8 +130,8 @@ func (e *EOSFS) MGMcurl(ctx context.Context, cmd string) (body []byte, m map[str
 	return body, m, err
 }
 
-// MGMCurl makes GET requests to the MGM
-func (e *EOSFS) MGMcurlWithRetry(ctx context.Context, cmd string) (body []byte, m map[string]interface{}, err error) {
+// MGMcurlWithRetry makes GET requests to the MGM
+func (e *FileSystem) MGMcurlWithRetry(ctx context.Context, cmd string) (body []byte, m map[string]interface{}, err error) {
 	eosurl := "http://" + e.HTTPHost + "/proc/user/?" + cmd
 	EOSLogger.Debug(ctx, "EOSMGMcurlWithRetry: [eosurl: %s, maxRetry: %d]", eosurl, e.MaxRetry)
 
@@ -145,7 +146,7 @@ func (e *EOSFS) MGMcurlWithRetry(ctx context.Context, cmd string) (body []byte, 
 }
 
 // isEOSSysFile - checks to see if it matches an EOS system file (prefixed with .sys.[a-z]#)
-func (e *EOSFS) isEOSSysFile(name string) bool {
+func (e *FileSystem) isEOSSysFile(name string) bool {
 	size := len(name)
 	if size > 7 && strings.HasPrefix(name, ".sys.") && string(name[6]) == "#" {
 		return true
@@ -154,7 +155,7 @@ func (e *EOSFS) isEOSSysFile(name string) bool {
 }
 
 // BuildCache creates a cache of file stats for the duration of the request
-func (e *EOSFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []*FileStat, err error) {
+func (e *FileSystem) BuildCache(ctx context.Context, dirPath string, cacheReset bool) (entries []*FileStat, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	if cacheReset {
 		reqStatCache.Reset()
@@ -194,18 +195,18 @@ func (e *EOSFS) BuildCache(ctx context.Context, dirPath string, cacheReset bool)
 }
 
 // DeleteCache deletes a cache produced by BuildCache
-func (e *EOSFS) DeleteCache(ctx context.Context) {
+func (e *FileSystem) DeleteCache(ctx context.Context) {
 	e.StatCache.Delete(ctx)
 }
 
 // IsDir returns whether the path is a directory or not.
-func (e *EOSFS) IsDir(ctx context.Context, path string) (bool, error) {
+func (e *FileSystem) IsDir(ctx context.Context, path string) (bool, error) {
 	eospath, _ := e.AbsoluteEOSPath(path)
 	return e.Xrdcp.IsDir(ctx, eospath)
 }
 
 // GetObjectStat returns stats for object(s) using Find or Fileinfo depending on it's type
-func (e *EOSFS) GetObjectStat(ctx context.Context, eospath string) (stats []*FileStat, err error) {
+func (e *FileSystem) GetObjectStat(ctx context.Context, eospath string) (stats []*FileStat, err error) {
 	// Check if it's a directory, will error if doesn't exist.
 	isdir, err := e.Xrdcp.IsDir(ctx, eospath)
 	if err != nil {
@@ -220,8 +221,8 @@ func (e *EOSFS) GetObjectStat(ctx context.Context, eospath string) (stats []*Fil
 	return e.Xrdcp.Fileinfo(ctx, eospath)
 }
 
-// GetFolderStat is used for returning only stat information for a folder without recursing
-func (e *EOSFS) DirStat(ctx context.Context, p string) (fi *FileStat, err error) {
+// DirStat is used for returning only stat information for a folder without recursing
+func (e *FileSystem) DirStat(ctx context.Context, p string) (fi *FileStat, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
@@ -252,7 +253,8 @@ func (e *EOSFS) DirStat(ctx context.Context, p string) (fi *FileStat, err error)
 	return object, err
 }
 
-func (e *EOSFS) FileExists(ctx context.Context, p string) (bool, error) {
+// FileExists checks if a file exists.
+func (e *FileSystem) FileExists(ctx context.Context, p string) (bool, error) {
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return true, err
@@ -261,7 +263,7 @@ func (e *EOSFS) FileExists(ctx context.Context, p string) (bool, error) {
 }
 
 // Stat looks up and returns information about the path (p) provided. path should be in the format "<bucket>/<prefix>"
-func (e *EOSFS) Stat(ctx context.Context, p string) (object *FileStat, err error) {
+func (e *FileSystem) Stat(ctx context.Context, p string) (object *FileStat, err error) {
 	reqStatCache := e.StatCache.Get(ctx)
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
@@ -289,7 +291,7 @@ func (e *EOSFS) Stat(ctx context.Context, p string) (object *FileStat, err error
 	return object, nil
 }
 
-func (e *EOSFS) mkdirWithOption(ctx context.Context, p, option string) error {
+func (e *FileSystem) mkdirWithOption(ctx context.Context, p, option string) error {
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return err
@@ -311,14 +313,15 @@ func (e *EOSFS) mkdirWithOption(ctx context.Context, p, option string) error {
 }
 
 // mkdirp is essentially `mkdir -p`, checks for existence before creating.
-func (e *EOSFS) mkdirp(ctx context.Context, dir string) (err error) {
+func (e *FileSystem) mkdirp(ctx context.Context, dir string) (err error) {
 	if exists, _ := e.FileExists(ctx, dir); !exists {
 		err = e.mkdirWithOption(ctx, dir, "&mgm.option=p")
 	}
 	return err
 }
 
-func (e *EOSFS) Rm(ctx context.Context, p string) error {
+// Rm is used to remove a file or folder. It will use a recursive delete if the path is a directory.
+func (e *FileSystem) Rm(ctx context.Context, p string) error {
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return err
@@ -351,7 +354,8 @@ func (e *EOSFS) Rm(ctx context.Context, p string) error {
 	return nil
 }
 
-func (e *EOSFS) Copy(ctx context.Context, src, dst string, size int64) error {
+// Copy copies a file to another location
+func (e *FileSystem) Copy(ctx context.Context, src, dst string, size int64) error {
 	eossrcpath, err := e.AbsoluteEOSPath(src)
 	if err != nil {
 		return err
@@ -391,7 +395,8 @@ func (e *EOSFS) Copy(ctx context.Context, src, dst string, size int64) error {
 	return nil
 }
 
-func (e *EOSFS) Touch(ctx context.Context, p string, size int64) error {
+// Touch creates an empty file
+func (e *FileSystem) Touch(ctx context.Context, p string, size int64) error {
 	//bookingsize is ignored by touch...
 	//... then why do we specify it?
 	eospath, err := e.AbsoluteEOSPath(p)
@@ -414,7 +419,8 @@ func (e *EOSFS) Touch(ctx context.Context, p string, size int64) error {
 	return nil
 }
 
-func (e *EOSFS) Rename(ctx context.Context, from, to string) error {
+// Rename changes the name of a file or directory
+func (e *FileSystem) Rename(ctx context.Context, from, to string) error {
 	eosfrompath, err := e.AbsoluteEOSPath(from)
 	if err != nil {
 		return err
@@ -440,7 +446,8 @@ func (e *EOSFS) Rename(ctx context.Context, from, to string) error {
 	return nil
 }
 
-func (e *EOSFS) SetMeta(ctx context.Context, p, key, value string) error {
+// SetMeta creates an EOS attribute in the format of minio_<key>
+func (e *FileSystem) SetMeta(ctx context.Context, p, key, value string) error {
 	if key == "" || value == "" {
 		//dont bother setting if we don't get what we need
 		return nil
@@ -466,7 +473,7 @@ func (e *EOSFS) SetMeta(ctx context.Context, p, key, value string) error {
 }
 
 // SetMinioAttr - to replace SetMeta, uses minio.* format instead of minio_* format
-func (e *EOSFS) SetMinioAttr(ctx context.Context, p, key, value string) error {
+func (e *FileSystem) SetMinioAttr(ctx context.Context, p, key, value string) error {
 	if key == "" || value == "" {
 		//dont bother setting if we don't get what we need
 		return nil
@@ -491,25 +498,28 @@ func (e *EOSFS) SetMinioAttr(ctx context.Context, p, key, value string) error {
 	return nil
 }
 
-func (e *EOSFS) SetContentType(ctx context.Context, p, ct string) error {
+// SetContentType - creates minio_contenttype attribute
+func (e *FileSystem) SetContentType(ctx context.Context, p, ct string) error {
 	return e.SetMeta(ctx, p, "contenttype", ct)
 }
 
-func (e *EOSFS) SetETag(ctx context.Context, p, etag string) error {
+// SetETag - creates minio_etag attribute
+func (e *FileSystem) SetETag(ctx context.Context, p, etag string) error {
 	return e.SetMeta(ctx, p, "etag", etag)
 }
 
-// SetSourceSize - set an atttribute on the file containing the size of the source data
-func (e *EOSFS) SetSourceChecksum(ctx context.Context, p, etag string) error {
+// SetSourceChecksum - set an atttribute on the file containing the checksum of the source data
+func (e *FileSystem) SetSourceChecksum(ctx context.Context, p, etag string) error {
 	return e.SetMinioAttr(ctx, p, "source.checksum", etag)
 }
 
-// SetSourceChecksum - set an atttribute on the file containing the checksum of the source data
-func (e *EOSFS) SetSourceSize(ctx context.Context, p, size string) error {
+// SetSourceSize - set an atttribute on the file containing the size of the source data
+func (e *FileSystem) SetSourceSize(ctx context.Context, p, size string) error {
 	return e.SetMinioAttr(ctx, p, "source.size", size)
 }
 
-func (e *EOSFS) PutBuffer(ctx context.Context, stage string, p string, data io.Reader) (response *PutFileResponse, err error) {
+// PutBuffer pushes a file to staging then into EOS
+func (e *FileSystem) PutBuffer(ctx context.Context, stage string, p string, data io.Reader) (response *PutFileResponse, err error) {
 	EOSLogger.Debug(ctx, "EOScmd: xrdcp.PutBuffer [stage: %s, p: %s]", stage, p)
 	response, err = e.Xrdcp.PutBuffer(ctx, data, stage, p)
 	if err != nil {
@@ -519,7 +529,8 @@ func (e *EOSFS) PutBuffer(ctx context.Context, stage string, p string, data io.R
 	return response, nil
 }
 
-func (e *EOSFS) Put(ctx context.Context, p string, data []byte) (err error) {
+// Put uses a HTTP request to put a buffer into EOS
+func (e *FileSystem) Put(ctx context.Context, p string, data []byte) (err error) {
 	//curl -L -X PUT -T somefile -H 'Remote-User: minio' -sw '%{http_code}' http://eos:8000/eos-path/somefile
 
 	eospath, err := e.AbsoluteEOSPath(p)
@@ -615,7 +626,7 @@ func (e *EOSFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	return err
 }
 
-func (e *EOSFS) xrootdWriteChunk(ctx context.Context, p string, offset, size int64, checksum string, data []byte) error {
+func (e *FileSystem) xrootdWriteChunk(ctx context.Context, p string, offset, size int64, checksum string, data []byte) error {
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return err
@@ -633,7 +644,8 @@ func (e *EOSFS) xrootdWriteChunk(ctx context.Context, p string, offset, size int
 	return err
 }
 
-func (e *EOSFS) ReadChunk(ctx context.Context, p string, offset, length int64, data io.Writer) (err error) {
+// ReadChunk reads a chunk from EOS
+func (e *FileSystem) ReadChunk(ctx context.Context, p string, offset, length int64, data io.Writer) (err error) {
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return err

@@ -19,7 +19,7 @@ const (
 	healthCheckFile = ".minio-healthcheck"
 )
 
-func configure() *eos.EOSFS {
+func configure() *eos.FileSystem {
 	if os.Getenv("DEBUG") == "true" {
 		eos.MaxLogLevel = eos.LogLevelDebug
 	} else {
@@ -56,4 +56,6 @@ func main() {
 		eos.EOSLogger.Debug(ctx, "%s", err)
 		os.Exit(3)
 	}
+
+	eos.EOSLogger.Debug(ctx, "All checks passed")
 }
