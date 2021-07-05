@@ -1,11 +1,11 @@
 # Minio S3 server for CloudStor Shards
 
-## Synopsis 
+## Synopsis
 
-This container provides a single user instance of an S3 gateway mapped to a directory on an EOS instance. 
+This container provides a single user instance of an S3 gateway mapped to a directory on an EOS instance.
 
 ## How to use
-Like it's never been done befooooooooooooooore
+Just take a look at the development environment's `docker-compose.yml` in `aarnet/devenv/` for an example on how to use this.
 
 ## Configuration
 
@@ -33,8 +33,7 @@ Not sure if this is the full list, but it's the ones that were obvious.
 * `EOSUID` - (default: 48) the numeric ID of the owner of the files in EOS
 * `EOSGID` - (default: 48) the numeric ID of the group owner of the files in EOS
 * `EOSSTAGE` - (default: /stage) staging directory for uploads
-* `FOREGROUND_STAGING_TRANSFER` - (default: false) wait for the transfer from the staging area to EOS to complete before returning to user
-* `SCRIPTS` - (default: /scripts) `<insert description because I don't know>`
+* `SCRIPTS` - (default: /scripts) path containing the scripts required for running minio
 * `EOSLOGLEVEL` - (default: 1) 1: errors 2: info/errors 3: "debug"
 * `EOSREADONLY` - (no default) set to `true` to make it a read only container
 * `EOSVALIDBUCKETS` - (default: true) validate bucket names, if set to false this will allow invalid bucket names to be used (may not work correctly)
@@ -54,3 +53,27 @@ If you need to manually build the image you can run:
 ```
 docker build -t aplregistry.aarnet.edu.au/cloudservices/minio/shard:manual -f Dockerfile.aarnet .
 ```
+
+## AARNet's healthcheck
+
+There is a file `cmd/aarnet/healthcheck.go` which builds a healthcheck binary. It performs an `IsDir()`, `Put()` and `Rm()`  on a file called `.minio-healthcheck` in the root of an S3 gateway (ie. where the buckets are).
+
+If any of these commands fail, it will return a non-zero exit code.
+
+The binary is placed at `/scripts/minio-healthcheck` in the production docker image and is self-configuring using the same environment variables as the minio server.
+
+If you run the binary as `DEBUG=true /scripts/minio-healthcheck`, it will output debugging logs in the same format as the minio gateway.
+
+## Testing the gateway
+
+You can run `/scripts/test-gateway.sh` to run some basic tests using minio client. This script will:
+
+* Self-configure minio client using the above environment variables
+* Create a bucket
+* Upload a non-multipart file
+* Verify the upload of the non-multipart file
+* Remove the non-multipart file
+* Upload a multipart file
+* Verify the upload of the multipart file
+* Remove the multipart file
+* Delete the bucket recursively
