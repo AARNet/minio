@@ -22,6 +22,7 @@ RUN  rpm --rebuilddb &&\
 
 COPY aarnet/docker/scripts /scripts
 COPY --from=build /app/minio /scripts/minio
+COPY --from=build /app/minio-healthcheck /scripts/minio-healthcheck
 
 # Minio Client
 ADD https://dl.min.io/client/mc/release/linux-amd64/mc /usr/bin/mc
@@ -29,3 +30,16 @@ RUN chmod +x /usr/bin/mc
 
 EXPOSE 9000
 CMD /scripts/docker-entrypoint.sh
+
+ENV MINIO_BROWSER="off" \
+    MINIO_OPTS="" \
+    EOS="" \
+    EOSUSER="minio" \
+    EOSUID=48 \
+    EOSGID=48 \
+    EOSSTAGE="/stage" \
+    HOOKSURL="" \
+    SCRIPTS="/scripts" \
+    EOSLOGLEVEL=2 \
+    EOSSLEEP=100 \
+    EOSREADMETHOD="webdav"
