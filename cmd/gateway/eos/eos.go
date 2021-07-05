@@ -42,26 +42,26 @@ func (g *EOS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	stage := g.SetupStageArea()
 
 	if g.IsReadOnly() {
-		eosLogger.Startup("EOS read only mode: ENABLED")
+		EOSLogger.Startup("EOS read only mode: ENABLED")
 	}
 
 	if !g.GetValidBuckets() {
-		eosLogger.Startup("EOS allowing invalid bucket names (RISK)")
+		EOSLogger.Startup("EOS allowing invalid bucket names (RISK)")
 	}
 
-	eosLogger.Startup("EOS staging: %s", stage)
-	eosLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
-	eosLogger.Startup("EOS HTTP URL: %s", g.GetHTTPHost())
-	eosLogger.Startup("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
-	eosLogger.Startup("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
-	eosLogger.Startup("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
-	eosLogger.Startup("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
-	eosLogger.Startup("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
-	eosLogger.Startup("EOS READ METHOD: %s", g.GetReadMethod())
-	eosLogger.Startup("EOS MAX RETRY: %d", g.GetMaxRetry())
-	eosLogger.Startup("EOS OVERWRITE MAX KEYS: %d", g.GetMaxKeysOverride())
-	eosLogger.Startup("EOS SORT FILE LISTING: %t", g.GetSort())
-	eosLogger.Startup("EOS LOG LEVEL: %d", MaxLogLevel)
+	EOSLogger.Startup("EOS staging: %s", stage)
+	EOSLogger.Startup("EOS URL: %s", os.Getenv("EOS"))
+	EOSLogger.Startup("EOS HTTP URL: %s", g.GetHTTPHost())
+	EOSLogger.Startup("EOS HTTP Proxy: %s", os.Getenv("EOS_HTTP_PROXY"))
+	EOSLogger.Startup("EOS VOLUME PATH: %s", os.Getenv("VOLUME_PATH"))
+	EOSLogger.Startup("EOS USER (uid:gid): %s (%s:%s)", os.Getenv("EOSUSER"), os.Getenv("EOSUID"), os.Getenv("EOSGID"))
+	EOSLogger.Startup("EOS file hooks url: %s", os.Getenv("HOOKSURL"))
+	EOSLogger.Startup("EOS SCRIPTS PATH: %s", os.Getenv("SCRIPTS"))
+	EOSLogger.Startup("EOS READ METHOD: %s", g.GetReadMethod())
+	EOSLogger.Startup("EOS MAX RETRY: %d", g.GetMaxRetry())
+	EOSLogger.Startup("EOS OVERWRITE MAX KEYS: %d", g.GetMaxKeysOverride())
+	EOSLogger.Startup("EOS SORT FILE LISTING: %t", g.GetSort())
+	EOSLogger.Startup("EOS LOG LEVEL: %d", MaxLogLevel)
 
 	// and go
 	return &eosObjects{

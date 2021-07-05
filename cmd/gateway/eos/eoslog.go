@@ -21,7 +21,7 @@ const (
 	LogLevelDebug int = 3
 )
 
-type eosLog struct{}
+type EOSLog struct{}
 
 // LogEntry defines the structure of a log entry made by the EOS gateway
 type LogEntry struct {
@@ -37,10 +37,10 @@ type LogEntry struct {
 	Trace      []string `json:"trace,omitempty"`
 }
 
-var eosLogger eosLog
+var EOSLogger EOSLog
 
 // Debug -
-func (e *eosLog) Debug(ctx context.Context, messagefmt string, args ...interface{}) {
+func (e *EOSLog) Debug(ctx context.Context, messagefmt string, args ...interface{}) {
 	if LogLevelDebug <= MaxLogLevel {
 		methodName := e.GetFunctionName()
 		e.Log(ctx, LogLevelDebug, methodName, fmt.Sprintf(messagefmt, args...), nil)
@@ -48,7 +48,7 @@ func (e *eosLog) Debug(ctx context.Context, messagefmt string, args ...interface
 }
 
 // Error -
-func (e *eosLog) Error(ctx context.Context, err error, messagefmt string, args ...interface{}) {
+func (e *EOSLog) Error(ctx context.Context, err error, messagefmt string, args ...interface{}) {
 	if LogLevelError <= MaxLogLevel {
 		methodName := e.GetFunctionName()
 		e.Log(ctx, LogLevelError, methodName, fmt.Sprintf(messagefmt, args...), err)
@@ -56,7 +56,7 @@ func (e *eosLog) Error(ctx context.Context, err error, messagefmt string, args .
 }
 
 // Info -
-func (e *eosLog) Info(ctx context.Context, messagefmt string, args ...interface{}) {
+func (e *EOSLog) Info(ctx context.Context, messagefmt string, args ...interface{}) {
 	if LogLevelInfo <= MaxLogLevel {
 		methodName := e.GetFunctionName()
 		e.Log(ctx, LogLevelInfo, methodName, fmt.Sprintf(messagefmt, args...), nil)
@@ -64,14 +64,14 @@ func (e *eosLog) Info(ctx context.Context, messagefmt string, args ...interface{
 }
 
 // Stat -
-func (e *eosLog) Stat(ctx context.Context, messagefmt string, args ...interface{}) {
+func (e *EOSLog) Stat(ctx context.Context, messagefmt string, args ...interface{}) {
 	// Always log stats.
 	methodName := e.GetFunctionName()
 	e.Log(ctx, LogLevelStat, methodName, fmt.Sprintf(messagefmt, args...), nil)
 }
 
 // GetFunctionName gets the name of the function that called Debug/Error/Info/Stat
-func (e *eosLog) GetFunctionName() string {
+func (e *EOSLog) GetFunctionName() string {
 	pc := make([]uintptr, 15)
 	n := runtime.Callers(3, pc)
 	frames := runtime.CallersFrames(pc[:n])
@@ -81,12 +81,12 @@ func (e *eosLog) GetFunctionName() string {
 }
 
 // Startup -
-func (e *eosLog) Startup(messagefmt string, args ...interface{}) {
+func (e *EOSLog) Startup(messagefmt string, args ...interface{}) {
 	e.Log(context.TODO(), LogLevelInfo, "", fmt.Sprintf(messagefmt, args...), nil)
 }
 
 // Log actually logs the message
-func (e *eosLog) Log(ctx context.Context, level int, method string, message string, err error) {
+func (e *EOSLog) Log(ctx context.Context, level int, method string, message string, err error) {
 
 	var levelString string
 	switch level {

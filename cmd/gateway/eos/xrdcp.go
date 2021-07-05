@@ -41,7 +41,7 @@ func (x *Xrdcp) XrdcpWithRetry(ctx context.Context, arg ...string) (outputStr st
 		output, err := cmd.CombinedOutput()
 
 		if err != nil {
-			eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s (attempt:%d)", arg, retry)
+			EOSLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s (attempt:%d)", arg, retry)
 			Sleep()
 			continue
 		} else {
@@ -50,7 +50,7 @@ func (x *Xrdcp) XrdcpWithRetry(ctx context.Context, arg ...string) (outputStr st
 		}
 	}
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s : failed %d times.", arg, x.MaxRetry)
+		EOSLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s : failed %d times.", arg, x.MaxRetry)
 		return "", err
 	}
 	return outputStr, nil
@@ -113,10 +113,10 @@ func (x *Xrdcp) IsDir(ctx context.Context, path string) (bool, error) {
 func (x *Xrdcp) Ls(ctx context.Context, lsflags string, path string) (string, int64, error) {
 	rooturl, err := x.UnescapedURI(fmt.Sprintf("/proc/user/?mgm.cmd=ls&mgm.option=%s&mgm.path={{filepath}}", lsflags), path)
 	if err != nil {
-		eosLogger.Error(ctx, err, "xrdcp.Ls: Failed to unescape URI [path: %s]", path)
+		EOSLogger.Error(ctx, err, "xrdcp.Ls: Failed to unescape URI [path: %s]", path)
 		return "", 1, err
 	}
-	eosLogger.Debug(ctx, "xrdcp.LS: [rooturl: %s]", rooturl)
+	EOSLogger.Debug(ctx, "xrdcp.LS: [rooturl: %s]", rooturl)
 
 	outputStr, err := x.XrdcpWithRetry(ctx, "-s", rooturl, "-")
 	if err != nil {
@@ -152,16 +152,16 @@ func (x *Xrdcp) ParseOutput(ctx context.Context, result string) (string, string,
 func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 	rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=find&mgm.option=I&mgm.find.maxdepth=1&mgm.path={{filepath}}", path)
 	if err != nil {
-		eosLogger.Error(ctx, err, "xrdcp.Find: Failed to unescape URI [path: %s]", path)
+		EOSLogger.Error(ctx, err, "xrdcp.Find: Failed to unescape URI [path: %s]", path)
 		return nil, err
 	}
-	eosLogger.Debug(ctx, "xrdcp.FIND: [rooturl: %s]", rooturl)
+	EOSLogger.Debug(ctx, "xrdcp.FIND: [rooturl: %s]", rooturl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-s", rooturl, "-")
 	pipe, _ := cmd.StdoutPipe()
 
 	if err := cmd.Start(); err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s ", rooturl)
+		EOSLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s ", rooturl)
 		return nil, err
 	}
 	defer cmd.Wait()
@@ -198,10 +198,10 @@ func (x *Xrdcp) Find(ctx context.Context, path string) ([]*FileStat, error) {
 func (x *Xrdcp) Fileinfo(ctx context.Context, path string) ([]*FileStat, error) {
 	rooturl, err := x.UnescapedURI("/proc/user/?mgm.cmd=fileinfo&mgm.file.info.option=-m&mgm.path={{filepath}}", path)
 	if err != nil {
-		eosLogger.Error(ctx, err, "xrdcp.Fileinfo: Failed to unescape URI [path: %s]", path)
+		EOSLogger.Error(ctx, err, "xrdcp.Fileinfo: Failed to unescape URI [path: %s]", path)
 		return nil, err
 	}
-	eosLogger.Debug(ctx, "xrdcp.FILEINFO: [rooturl: %s]", rooturl)
+	EOSLogger.Debug(ctx, "xrdcp.FILEINFO: [rooturl: %s]", rooturl)
 
 	outputStr, err := x.XrdcpWithRetry(ctx, "-s", rooturl, "-")
 	if err != nil {
@@ -263,7 +263,7 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 
 	filename, object := x.GetFilenameFromObject(ctx, object)
 	if filename == "" {
-		eosLogger.Debug(ctx, "Unable to get filename from object [object: %s]", object)
+		EOSLogger.Debug(ctx, "Unable to get filename from object [object: %s]", object)
 		return nil
 	}
 
@@ -309,7 +309,7 @@ func (x *Xrdcp) ParseFileInfo(ctx context.Context, object string) *FileStat {
 
 	// If EOS is set to use md5sum etags, use the one from EOS
 	if eosETagType == "md5" && eosETag != "" {
-		eosLogger.Debug(ctx, "xrdcp.ParseFileinfo: using EOS md5sum [filename: %s, etag: %s]", filename, eosETag)
+		EOSLogger.Debug(ctx, "xrdcp.ParseFileinfo: using EOS md5sum [filename: %s, etag: %s]", filename, eosETag)
 		etag = eosETag
 	} else {
 		etag = minioETag
@@ -355,7 +355,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 	// Unescape the URI so that it removes any URI escaped characters (eg. %2F)
 	xrdURI, err := x.UnescapedURI("{{filepath}}", dstPath)
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to unescape URI for %s", dst)
+		EOSLogger.Error(ctx, err, "Failed to unescape URI for %s", dst)
 		return nil, err
 	}
 
@@ -382,7 +382,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 					err = fmt.Errorf("Not found: %s", errBuf.String())
 				case 51:
 					//Log something
-					eosLogger.Debug(ctx, "PUT attempt #%d failed: %+v", retry, errBuf.String())
+					EOSLogger.Debug(ctx, "PUT attempt #%d failed: %+v", retry, errBuf.String())
 					//Clear buffers
 					errBuf.Reset()
 					//Last attempt failed, lets return
@@ -403,7 +403,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 
 		// Pull the checksum and file information from stderr (xrdcp outputs it to stderr)
 		errStr := errBuf.String()
-		eosLogger.Debug(ctx, "xrdcp.PutBuffer: response: %s", errStr)
+		EOSLogger.Debug(ctx, "xrdcp.PutBuffer: response: %s", errStr)
 
 		if !strings.HasPrefix(errStr, "md5: ") {
 			return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", errStr)
@@ -430,14 +430,14 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) (*PutFileR
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
+		EOSLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
 		return nil, err
 	}
-	eosLogger.Debug(ctx, "xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
+	EOSLogger.Debug(ctx, "xrdcp.PUT: [eospath: %s, eosurl: %s]", eospath, eosurl)
 
 	outputStr, err := x.XrdcpWithRetry(ctx, "--nopbar", "--force", "--path", "--cksum", "md5:print", src, eosurl)
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp --nopbar --force --path --cksum md5:print %s %s [eospath: %s]", src, eosurl, eospath)
+		EOSLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp --nopbar --force --path --cksum md5:print %s %s [eospath: %s]", src, eosurl, eospath)
 		return nil, err
 	}
 
@@ -445,7 +445,7 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) (*PutFileR
 		return nil, fmt.Errorf("Write failed: no --cksum information returned by xrdcp [response: %s]", outputStr)
 	}
 
-	eosLogger.Info(ctx, outputStr, nil)
+	EOSLogger.Info(ctx, outputStr, nil)
 	splitStr := strings.Split(outputStr, " ")
 	response := &PutFileResponse{}
 	response.ChecksumType = strings.TrimRight(splitStr[0], ":")
@@ -466,11 +466,11 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	eospath = strings.Replace(eospath, "%", "%25", -1)
 	eosurl, err := url.QueryUnescape(x.GetXrootBase() + eospath + "?eos.ruid=" + x.UID + "&eos.rgid=" + x.GID)
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
+		EOSLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
 		return err
 	}
 
-	eosLogger.Debug(ctx, "xrdcp.GET: [eosurl: %s]", eosurl)
+	EOSLogger.Debug(ctx, "xrdcp.GET: [eosurl: %s]", eosurl)
 
 	cmd := exec.Command("/usr/bin/xrdcp", "-N", eosurl, "-")
 	var stdout bytes.Buffer
@@ -479,12 +479,12 @@ func (x *Xrdcp) ReadChunk(ctx context.Context, p string, offset, length int64, d
 	cmd.Stderr = &stderr
 	err2 := cmd.Run()
 	if err2 != nil {
-		eosLogger.Error(ctx, err2, "Failed to run /usr/bin/xrdcp -N %s - %+v", eosurl, err2)
+		EOSLogger.Error(ctx, err2, "Failed to run /usr/bin/xrdcp -N %s - %+v", eosurl, err2)
 	}
 
 	errStr := strings.TrimSpace(stderr.String())
 	if errStr != "" {
-		eosLogger.Error(ctx, fmt.Errorf(errStr), errStr) // TODO: second argument might need to change to a generic message
+		EOSLogger.Error(ctx, fmt.Errorf(errStr), errStr) // TODO: second argument might need to change to a generic message
 	}
 
 	if offset >= 0 {
