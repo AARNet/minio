@@ -26,7 +26,7 @@ import (
 
 // Xrdcp ... struct
 type Xrdcp struct {
-	maxRetry int
+	MaxRetry int
 	Path     string
 	MGMHost  string
 	User     string
@@ -36,7 +36,7 @@ type Xrdcp struct {
 
 // XrdcpWithRetry - Run xrdcp in a retry loop
 func (x *Xrdcp) XrdcpWithRetry(ctx context.Context, arg ...string) (outputStr string, err error) {
-	for retry := 1; retry <= x.maxRetry; retry++ {
+	for retry := 1; retry <= x.MaxRetry; retry++ {
 		cmd := exec.Command("/usr/bin/xrdcp", arg...)
 		output, err := cmd.CombinedOutput()
 
@@ -50,7 +50,7 @@ func (x *Xrdcp) XrdcpWithRetry(ctx context.Context, arg ...string) (outputStr st
 		}
 	}
 	if err != nil {
-		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s : failed %d times.", arg, x.maxRetry)
+		eosLogger.Error(ctx, err, "Failed to run /usr/bin/xrdcp %s : failed %d times.", arg, x.MaxRetry)
 		return "", err
 	}
 	return outputStr, nil
@@ -359,7 +359,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		return nil, err
 	}
 
-	for retry := 1; retry <= x.maxRetry; retry++ {
+	for retry := 1; retry <= x.MaxRetry; retry++ {
 
 		// Execute command and collect buffers
 		cmd := exec.Command("/usr/bin/xrdcp", "--silent", "--force", "--path", "--cksum", "md5:print", fd.Name(), xrdURI, fmt.Sprintf("-ODeos.ruid=%s&eos.rgid=%s", x.UID, x.GID))
@@ -386,8 +386,8 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 					//Clear buffers
 					errBuf.Reset()
 					//Last attempt failed, lets return
-					if retry == x.maxRetry {
-						return nil, fmt.Errorf("Write failed after %d attempts [tmp: %s, xrdURI: %s, error: %s]", x.maxRetry, fd.Name(), xrdURI, err)
+					if retry == x.MaxRetry {
+						return nil, fmt.Errorf("Write failed after %d attempts [tmp: %s, xrdURI: %s, error: %s]", x.MaxRetry, fd.Name(), xrdURI, err)
 					}
 					SleepMs(1000)
 					continue
@@ -418,7 +418,7 @@ func (x *Xrdcp) PutBuffer(ctx context.Context, stream io.Reader, stagePath strin
 		return response, nil
 	}
 
-	return nil, fmt.Errorf("Write failed: Exceeded maximum retries [maxRetry: %d]", x.maxRetry)
+	return nil, fmt.Errorf("Write failed: Exceeded maximum retries [MaxRetry: %d]", x.MaxRetry)
 }
 
 // Put - puts a file

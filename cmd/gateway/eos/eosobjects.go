@@ -41,7 +41,7 @@ type eosObjects struct {
 	readonly     bool
 	validbuckets bool
 	TransferList *TransferList
-	FileSystem   *eosFS
+	FileSystem   *EOSFS
 }
 
 // ListObjectsMarker is the marker used to continue listing objects when maxKeys is hit.
