@@ -318,13 +318,7 @@ func (e *EOSFS) mkdirp(ctx context.Context, dir string) (err error) {
 	return err
 }
 
-// rmdir is the same as rm.
-func (e *EOSFS) rmdir(ctx context.Context, p string) (err error) {
-	err = e.rm(ctx, p)
-	return err
-}
-
-func (e *EOSFS) rm(ctx context.Context, p string) error {
+func (e *EOSFS) Rm(ctx context.Context, p string) error {
 	eospath, err := e.AbsoluteEOSPath(p)
 	if err != nil {
 		return err
@@ -615,7 +609,7 @@ func (e *EOSFS) Put(ctx context.Context, p string, data []byte) (err error) {
 	if err != nil {
 		eosLogger.Error(ctx, err, "eosfs.Put: EOSput failed %d times. [eosurl %s]", e.MaxRetry, eosurl)
 		// remove the file on failure so we don't end up with left over 0 byte files
-		_ = e.rm(ctx, p)
+		_ = e.Rm(ctx, p)
 	}
 
 	return err

@@ -164,7 +164,7 @@ func (e *eosObjects) DeleteBucket(ctx context.Context, bucket string, forceDelet
 		return minio.NotImplemented{}
 	}
 
-	err := e.FileSystem.rmdir(ctx, bucket)
+	err := e.FileSystem.Rm(ctx, bucket)
 	if err != nil {
 		eosLogger.Error(ctx, err, "DeleteBucket: %+v", err)
 		return minio.BucketNotFound{Bucket: bucket}
@@ -288,7 +288,7 @@ func (e *eosObjects) PutObject(ctx context.Context, bucket, object string, data 
 		if err == nil && objInfo.Size != data.Size() {
 			eosLogger.Error(ctx, err, "PUT: File on disk is not the correct size [disk: %d, expected: %d]", objInfo.Size, data.Size())
 			// Remove the file
-			_ = e.FileSystem.rm(ctx, objectpath)
+			_ = e.FileSystem.Rm(ctx, objectpath)
 			return objInfo, minio.IncompleteBody{Bucket: bucket, Object: object}
 		}
 	} else {
@@ -306,7 +306,7 @@ func (e *eosObjects) DeleteObject(ctx context.Context, bucket, object string, op
 		return minio.ObjectInfo{}, minio.NotImplemented{}
 	}
 
-	_ = e.FileSystem.rm(ctx, PathJoin(bucket, object))
+	_ = e.FileSystem.Rm(ctx, PathJoin(bucket, object))
 	return minio.ObjectInfo{Bucket: bucket, Name: object}, nil
 }
 
@@ -770,7 +770,7 @@ func (e *eosObjects) CompleteMultipartUploadStaging(ctx context.Context, bucket,
 	err = e.TransferFromStaging(ctx, stagepath, uploadID, objInfo)
 	if err != nil {
 		eosLogger.Error(ctx, err, "CompleteMultipartUpload: [uploadID: %s]", uploadID)
-		err = e.FileSystem.rm(ctx, uploadID)
+		err = e.FileSystem.Rm(ctx, uploadID)
 		if err != nil {
 			eosLogger.Error(ctx, err, "CompleteMultipartUpload: cleanup rm failed [uploadID: %s]", uploadID)
 		}
@@ -928,7 +928,7 @@ func (e *eosObjects) AbortMultipartUpload(ctx context.Context, bucket, object, u
 		os.RemoveAll(e.stage + "/" + stagepath)
 	}
 
-	e.FileSystem.rm(ctx, bucket+"/"+object)
+	e.FileSystem.Rm(ctx, bucket+"/"+object)
 	e.TransferList.DeleteTransfer(uploadID)
 
 	return nil
