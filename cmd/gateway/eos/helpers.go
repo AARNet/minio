@@ -126,7 +126,7 @@ func UnescapePath(str string) string {
 	// Iterate each segment of the path and unescape it where possible
 	splitPath := strings.Split(str, "/")
 	for _, part := range splitPath {
-		t, err := url.QueryUnescape(part)
+		t, err := url.PathUnescape(part)
 		if err != nil {
 			unescaped = path.Join(unescaped, part)
 		} else {

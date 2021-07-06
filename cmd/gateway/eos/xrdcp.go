@@ -428,7 +428,7 @@ func (x *Xrdcp) Put(ctx context.Context, src, dst string, size int64) (*PutFileR
 		return nil, err
 	}
 	eospath = strings.Replace(eospath, "%", "%25", -1)
-	eosurl, err := url.QueryUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
+	eosurl, err := url.PathUnescape(fmt.Sprintf("%s%s?eos.ruid=%s&eos.rgid=%s&eos.bookingsize=%d", x.GetXrootBase(), eospath, x.UID, x.GID, size))
 	if err != nil {
 		EOSLogger.Error(ctx, err, "Failed to unescape URI [uri: %s]", eosurl)
 		return nil, err
