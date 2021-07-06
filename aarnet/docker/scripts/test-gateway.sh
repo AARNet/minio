@@ -113,7 +113,7 @@ function test_mc_fileinfo {
   elif [ $? -eq 1 ] && [ "${reverse}" == "0" ]; then
     echo_error "FAIL: Unable to get file information for '${src}'"
     return 1
-  fi  
+  fi
   return 0
 }
 
@@ -135,6 +135,7 @@ function test_mc {
   local test_bucket="testbucket-${tmp_string}"
   local test_file="test-${tmp_string}"
   local test_file_multipart="test-multipart-${tmp_string}"
+  local test_file_multipart_plus="test+multipart-${tmp_string}"
   local test_result=0
 
   echo_info "Setting up minio client"
@@ -189,6 +190,19 @@ function test_mc {
         test_result=$(add_return_code ${test_result} $?)
       fi
 
+      # Test upload "big" file with a '+' in the name (xrdcp)
+      test_mc_cp "${mc}" "${test_file_multipart}" "${test_gateway}/${test_bucket}/${test_file_multipart_plus}"
+      test_result=$(add_return_code ${test_result} $?)
+      file_copied=$?
+      if [ $file_copied -eq 0 ]; then
+        echo_info "Waiting 5 seconds to allow multipart transfer to complete"
+        sleep 5
+        test_mc_fileinfo "${mc}" "${test_gateway}/${test_bucket}/${test_file_multipart_plus}" 134217728 "${test_file_multipart_plus}" "${testfilexrdcp_etag}"
+        test_result=$(add_return_code ${test_result} $?)
+        test_run "${mc} rm ${test_gateway}/${test_bucket}/${test_file_multipart_plus}" "${mc} rm ${test_gateway}/${test_bucket}/${test_file_multipart_plus}" $read_only
+        test_result=$(add_return_code ${test_result} $?)
+      fi
+
       test_mc_cp "${mc}" "${test_file_multipart}" "${test_gateway}/${test_bucket}/inadirectory-xrdcp/${test_file_multipart}"
       test_result=$(add_return_code ${test_result} $?)
       file_copied=$?
@@ -235,7 +249,7 @@ function test_mc {
   if [[ -f "${test_file_multipart}" ]]; then
     rm "${test_file_multipart}"
   fi
-  
+
   if [ ${test_result} -gt 0 ]; then
     exit ${test_result}
   fi
