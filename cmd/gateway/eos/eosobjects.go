@@ -148,7 +148,10 @@ func (e *eosObjects) MakeBucketWithLocation(ctx context.Context, bucket string, 
 
 	exists, _ := e.FileSystem.FileExists(ctx, bucket)
 	if !exists {
-		_ = e.FileSystem.mkdirWithOption(ctx, bucket, "")
+		err := e.FileSystem.mkdirWithOption(ctx, bucket, "")
+		if err != nil {
+			return MakeBucketFailed{Bucket: bucket}
+		}
 	} else {
 		return minio.BucketExists{Bucket: bucket}
 	}
