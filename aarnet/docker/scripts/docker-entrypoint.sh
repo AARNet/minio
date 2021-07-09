@@ -52,20 +52,7 @@ chmod 755 /scripts/minio
 export MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY}"
 export MINIO_SECRET_KEY="${MINIO_SECRET_KEY}"
 export VOLUME_PATH="${VOLUME_PATH}"
-
-# Defaults
-export MINIO_BROWSER=${MINIO_BROWSER:-off}
-export MINIO_OPTS=${MINIO_OPTS:-}
 export EOS=${EOS}
-export EOSUSER=${EOSUSER:-minio}
-export EOSUID=${EOSUID:-48}
-export EOSGID=${EOSGID:-48}
-export EOSSTAGE=${EOSSTAGE:-/stage}
-export HOOKSURL="${HOOKSURL}"
-export SCRIPTS="/scripts"
-export EOSLOGLEVEL=${EOSLOGLEVEL:-2}
-export EOSSLEEP=${EOSSLEEP:-100}
-export EOSREADMETHOD=${EOSREADMETHOD:-webdav}
 
 /scripts/minio ${MINIO_OPTS} --json gateway eos "${VOLUME_PATH}"
 

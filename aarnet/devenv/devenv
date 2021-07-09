@@ -1,11 +1,20 @@
 #!/bin/bash
-PROGNAME=`basename "$0"`
-export EOS_DIR=`pwd`
-export BUILD_TAG="${BUILD_TAG-minio-dev}"
 
-# docker-compose prefixes the network name with the parent directory.. so:
-dc_base=`basename ${EOS_DIR}`
-minio_container_host="minio.${dc_base}_minioshard"
+# Import the .env file to load docker-compose project name
+if [[ -f ./.env ]]; then
+  source ./.env
+else
+  echo ".env file not found and is required"
+  exit 1
+fi
+
+PROGNAME=`basename "$0"`
+export WORKING_DIR=`pwd`
+export SHARD_CREATE_DIR="/eos/${EOS_INSTANCE_NAME}/data"
+export EOS_MNT="${WORKING_DIR}/devmnt/eos"
+
+DC_NETWORK_NAME="${COMPOSE_PROJECT_NAME}_shard"
+EOS_LOGS_VOLUME_NAME="${COMPOSE_PROJECT_NAME}_eos_logs"
 
 #==============================================================================
 # print script usage information
@@ -24,15 +33,19 @@ function usage {
 function dockerr {
   if [ $jenkins ]; then
     docker "${@}"
-  else 
+  else
     sudo docker "${@}"
   fi
 }
 
 function dockercompose {
   if [ $jenkins ]; then
-    BUILD_TAG=${BUILD_TAG} docker-compose -f docker-compose.Jenkins.yml "${@}"
-  else 
+    if [ "${BUILD_TAG}" != "" ]; then
+		BUILD_TAG=${BUILD_TAG} docker-compose -f docker-compose.Jenkins.yml "${@}"
+	else
+    	docker-compose "${@}"
+	fi
+  else
     sudo docker-compose "${@}"
   fi
 }
@@ -49,22 +62,54 @@ function quiet_dcexec {
   fi
 }
 
+# Load all files from a directory
+function load_devenvd {
+	if [[ -d ./devenv.d/ ]]; then
+		str="$(find ./devenv.d/ -type f -name '*.sh' -print)"
+		arr=( $str )
+		for f in "${arr[@]}"; do
+			if [[ -f $f ]]; then
+				source $f || echo "$f not found"
+			fi
+		done
+	fi
+}
+
 #==============================================================================
 # pull eos-docker and build container images locally
 #==============================================================================
 
 function build_docker_images {
-  docker build -t aplregistry.aarnet.edu.au/cloudservices/minio/shard:minio-dev -f ../../Dockerfile.aarnet ../../
-  cd ${EOS_DIR}
+  cd ${WORKING_DIR}
   if [ -d "eos-docker_tmp" ]; then
     rm -rf eos-docker_tmp
   fi
-  git clone git@git.aarnet.edu.au:dockerfiles/eos-docker.git eos-docker_tmp
+
+  ( git clone -q -n git@git.aarnet.edu.au:dockerfiles/eos-docker.git eos-docker_tmp \
+    && cd eos-docker_tmp \
+    && git checkout ${EOS_DOCKER_COMMIT} )
+
   ## Can be used by external users, docker-compose.yml will need to be
   ## updated to not include aplregistry.aarnet.edu.au/ in the image name
   # git clone https://github.com/AARNet/eos-docker.git eos-docker_tmp
   cd eos-docker_tmp
-  ./build -t minio-dev -i mgm,mq,fst,qdb
+  if [ $jenkins ]; then
+	# Jenkins doesn't have sudo, so we need to strip it from the file
+    sed -i "s/sudo //g" build
+  fi
+
+  # Use centos instead of rhel if we don't have access to the internal AARNet repositories
+  curl -s --connect-timeout 5 https://repos.aarnet.net.au
+  if [ $? -ne 0 ]; then
+  	echo "Unable to connect to https://repos.aarnet.net.au, using centos:7 image instead."
+    sed -i -e "s;export base_image=.*;export base_image=centos:7;" build
+	sed -i -e "s;enabled=1;enabled=0;g" containers/content/yum/rhel7-dev.repo containers/content/yum/rhscl.repo
+  fi
+
+  # Disable graphite in the MGM so it doesn't log spam because it can't connect
+  #sed -i -e 's;COPY .* /eos_graphite.py;;' containers/Dockertmp.mgm
+
+  ./build -t ${EOS_BUILD_TAG} -i ${EOS_BUILD_IMAGES}
   cd ..
   rm -rf eos-docker_tmp
 }
@@ -77,9 +122,9 @@ function build_docker_images {
 function destroy {
   echo; echo "Removing containers..."
   echo;
-  dockercompose ${dockercompose_opts} down
+  dockercompose ${dockercompose_opts} down -v
   # Use docker so we don't have to worry about permissions
-  dockerr run --rm -v ${EOS_DIR}:/tmpdir alpine:latest sh -c 'mkdir -p /tmpdir/e;rm -rf /tmpdir/e' 
+  dockerr run --rm -v ${WORKING_DIR}:/tmpdir alpine:latest sh -c 'mkdir -p /tmpdir/e;rm -rf /tmpdir/e'
 }
 
 #==============================================================================
@@ -88,18 +133,10 @@ function destroy {
 
 function create_files {
   # Use docker so we don't have to worry about sudo when we don't have it
-  dockerr run --rm -v ${EOS_DIR}/e:/e -v ${EOS_DIR}/files:/files alpine:latest sh -c '
-  mkdir -p /e/md;
-  mkdir -p /e/config;
-  mkdir -p /e/ns-queue;
-  mkdir -p /e/disks;
-  mkdir -p /e/eos;
-  mkdir -p /e/grid_hammer;
-  mkdir -p /e/qdb;
-  mkdir -p /e/log;
-  mkdir -p /e/log/tx;
-  mkdir -p /e/qdb/log;
-  mkdir -p /e/qdb/ns;
+  dockerr run --rm \
+  -v ${EOS_MNT}:/e \
+  -v ${WORKING_DIR}/files:/files \
+  alpine:latest sh -c '
   cp /files/*.keytab /e;
   chown -R 2:2 /e;
   chmod 600 /e/eos.keytab;
@@ -113,15 +150,19 @@ function create_files {
 
 function setup {
   create_files
-  sleep 5
- 
+
   echo; echo "Starting containers..."
   echo; dockercompose up -d
 
-  echo; echo "Checking mgm is booted...";
-  echo; dcexec mgm eos ns | grep -c booted > /dev/null || { echo 'Master MGM failed to start - check logs in e/log/mgm/xrdlog.mgm' ; cat e/log/mgm/xrdlog.mgm ; exit 1; }
+  echo; echo "Checking mgm is booted..."
+  echo; dcexec mgm eos ns | grep -c booted > /dev/null || { echo "Master MGM failed to start - check logs in $(dockerr volume inspect ${EOS_LOGS_VOLUME_NAME} | grep Mountpoint | sed -e 's;.*\"Mountpoint\": \"\(.*\)\",.*;\1;')/mgm/xrdlog.mgm" ; exit 1; }
 
-  sleep 5
+  echo; echo "Setting log level to error..."
+  echo; quiet_dcexec mgm "eos -r 0 0 -b debug err '*'"
+
+  echo; echo "Setting up default space..."
+  echo; quiet_dcexec mgm eos -r 0 0 -b space define default
+
   echo; echo "Setting up vids..."
   echo;
   quiet_dcexec mgm eos -r 0 0 -b vid enable sss
@@ -130,28 +171,38 @@ function setup {
   quiet_dcexec mgm eos -r 0 0 -b vid set membership daemon -uids adm
   quiet_dcexec mgm eos -r 0 0 -b vid set membership daemon -gids adm
   quiet_dcexec mgm eos -r 0 0 -b vid set membership daemon +sudo
-  quiet_dcexec mgm eos -r 0 0 -b vid set membership 48 +sudo
-  quiet_dcexec mgm eos -r 0 0 -b vid set map -tident *@${minio_container_host} vuid:48 vgid:48
-  quiet_dcexec mgm eos -r 0 0 -b vid set map -tident minio@${minio_container_host} vuid:48 vgid:48
-  quiet_dcexec mgm eos -r 0 0 -b debug err
+  quiet_dcexec mgm eos -r 0 0 -b vid set membership ${EOS_UID} +sudo
+  for svcname in $(dockercompose ps --services); do
+    vidhost="${COMPOSE_PROJECT_NAME}_${svcname}_1.${DC_NETWORK_NAME}"
+    echo "Adding vid tident and sss gateway for ${vidhost}"
+    quiet_dcexec mgm eos -r 0 0 -b vid set map -tident *@${vidhost} vuid:${EOS_UID} vgid:${EOS_UID}
+    quiet_dcexec mgm eos -r 0 0 -b vid set map -tident ${EOS_USER}@${vidhost} vuid:${EOS_UID} vgid:${EOS_UID}
+    quiet_dcexec mgm eos -r 0 0 -b vid add gateway ${vidhost} sss
+  done
 
   # create filesystems
   echo; echo "Setting up FST..."
   echo;
   quiet_dcexec fst mkdir /disks/eosfs1
   quiet_dcexec fst chown daemon:daemon /disks/eosfs1
-  quiet_dcexec fst eos -r 0 0 -b fs add eosfs1 fst.minioshard:1095 /disks/eosfs1 default rw
+  quiet_dcexec fst eos -r 0 0 -b fs add eosfs1 fst.${EOS_INSTANCE_NAME}:1095 /disks/eosfs1 default rw
 
 
-  echo; echo "Creating and setting permissions on minio directory /eos/minioshard/gateways/miniodev"
+  echo; echo "Creating and setting permissions on app directory ${SHARD_CREATE_DIR}"
   echo;
-  quiet_dcexec fst eos -r 0 0 -b mkdir -p /eos/minioshard/gateways/miniodev
-  quiet_dcexec fst eos -r 0 0 -b chown 48:48 /eos/minioshard/gateways/miniodev
-  quiet_dcexec mgm eos -r 0 0 -b attr -r set sys.forced.checksum=md5 /eos/minioshard/gateways/miniodev
+  quiet_dcexec fst eos -r 0 0 -b mkdir -p ${SHARD_CREATE_DIR}
+  quiet_dcexec fst eos -r 0 0 -b chown ${EOS_UID}:${EOS_UID} ${SHARD_CREATE_DIR}
+  quiet_dcexec mgm eos -r 0 0 -b attr set sys.acl="u:2:rwxc" /eos/${EOS_INSTANCE_NAME}
+  quiet_dcexec mgm eos -r 0 0 -b attr set sys.acl="u:2:rwxc" ${SHARD_CREATE_DIR}
 
   echo; echo "Enabling space and groups..";
-  quiet_dcexec mgm eos group set default.0 on
-  echo; quiet_dcexec mgm eos space set default on
+  echo;
+  quiet_dcexec mgm eos space set default on
+
+  echo; echo "EOS is now running."
+
+  echo; echo "Running any extra source scripts in devenv.d/"
+  load_devenvd
 
   echo; echo "..All done!"
 }

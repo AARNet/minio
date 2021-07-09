@@ -1,120 +1,155 @@
 version: '2'
 services:
   mq:
-    container_name: mq
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mq:4.6.5
-    tty: true
-    privileged: true
-    stdin_open: true
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mq:4.8.43-43
     env_file:
-    - ./files/eos-docker.env
-    hostname: mq.minioshard
+      - ./files/eos-docker.env
+    hostname: mq.shard
     networks:
-      minioshard:
+      shard:
         aliases:
-          - mq.minioshard
+          - mq.shard
     volumes:
-    - ./e/eos.keytab:/etc/eos.keytab:ro
-    - ./e/qdb.keytab:/etc/qdb.keytab:ro
-    - ./e/log:/var/log/eos
-    - ./e/config:/var/eos/config
-    - ./e/md:/var/eos/md
-    - ./e/ns-queue:/var/eos/ns-queue
+      - './devmnt/eos/eos.keytab:/etc/eos.keytab:ro'
+      - './devmnt/eos/qdb.keytab:/etc/qdb.keytab:ro'
+      - 'eos_logs:/var/log/eos'
+      - 'eos_config:/var/eos/config'
+      - 'eos_md:/var/eos/md'
+      - 'eos_ns_queue:/var/eos/ns-queue'
     environment:
       EOS_SET_MASTER: 1
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - nc -zv localhost 1097
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   mgm:
-    container_name: mgm
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mgm:4.6.5
-    tty: true
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-mgm:4.8.43-43
     privileged: true
-    stdin_open: true
     env_file:
-    - ./files/eos-docker.env
-    hostname: mgm.minioshard
+      - ./files/eos-docker.env
+    hostname: mgm.shard
     networks:
-      minioshard:
+      shard:
         aliases:
-          - mgm.minioshard
+          - mgm.shard
     volumes_from:
-    - mq
+      - mq
     depends_on:
-    - qdb
+      qdb:
+        condition: service_healthy
     environment:
       EOS_SET_MASTER: 1
+      EOS_GRAPHITE: 'false'
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - eos ns | grep booted
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   fst:
-    container_name: fst
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-fst:4.6.5
-    tty: true
-    privileged: true
-    stdin_open: true
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-fst:4.8.43-43
     env_file:
-    - ./files/eos-docker.env
-    hostname: fst.minioshard
+      - ./files/eos-docker.env
+    hostname: fst.shard
     networks:
-      minioshard:
+      shard:
         aliases:
-          - fst.minioshard
+          - fst.shard
     volumes:
-    - ./e/eos.keytab:/etc/eos.keytab:ro
-    - ./e/log:/var/log/eos
-    - ./e/disks:/disks
+      - './devmnt/eos/eos.keytab:/etc/eos.keytab:ro'
+      - 'eos_logs:/var/log/eos'
+      - 'eos_disks:/disks'
     depends_on:
-    - mgm
+      - mgm
     environment:
-      EOS_MGM_URL: "root://mgm.minioshard"
+      EOS_MGM_URL: 'root://mgm.shard'
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - nc -zv localhost 1095
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   qdb:
-    container_name: qdb
-    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-qdb:0.4.0
-    tty: true
-    privileged: true
-    stdin_open: true
+    image: aplregistry.aarnet.edu.au/cloudservices/eos/eos-citrine-qdb:0.4.2-29
     env_file:
-    - ./files/eos-docker.env
-    hostname: qdb.minioshard
+      - ./files/eos-docker.env
+    hostname: qdb.shard
     networks:
-      minioshard:
+      shard:
         aliases:
-          - qdb.minioshard
+          - qdb.shard
     depends_on:
-    - mq
+      - mq
     volumes:
-    - ./e/eos.keytab:/etc/eos.keytab:ro
-    - ./e/qdb.keytab:/etc/qdb.keytab:ro
-    - ./e/qdb/log:/var/log/eos
-    - ./e/qdb/ns:/var/lib/quarkdb
+      - './devmnt/eos/eos.keytab:/etc/eos.keytab:ro'
+      - './devmnt/eos/qdb.keytab:/etc/qdb.keytab:ro'
+      - 'eos_logs:/var/log/eos'
+      - 'quarkdb_ns:/var/lib/quarkdb'
     environment:
-      EOS_QDB_DIR: "/var/lib/quarkdb/eosns"
-      EOS_QDB_PORT: "7777"
-      EOS_QDB_MODE: "raft"
-      EOS_QDB_CLUSTER_ID: "3d659c1a-e70f-43f0-bed4-941a2ca0765b"
-      EOS_QDB_NODES: "qdb.minioshard:7777"
+      EOS_QDB_DIR: /var/lib/quarkdb/eosns
+      EOS_QDB_PORT: '7777'
+      EOS_QDB_MODE: raft
+      EOS_QDB_CLUSTER_ID: 3d659c1a-e70f-43f0-bed4-941a2ca0765b
+      EOS_QDB_NODES: 'qdb.shard:7777'
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - '-h'
+        - localhost
+        - '-p'
+        - '7777'
+        - raft-info
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
 
   minio:
-    image: aplregistry.aarnet.edu.au/cloudservices/minio/shard:${BUILD_TAG}
-    container_name: minio
-    environment:
-    - EOS=mgm.minioshard
-    - VOLUME_PATH=/eos/minioshard/gateways/miniodev
-    - MINIO_ACCESS_KEY=minioadmin
-    - MINIO_SECRET_KEY=minioadmin
-    - EOSLOGLEVEL=2
-    - XRD_STREAMTIMEOUT=14400
-    - XRD_REQUESTTIMEOUT=14400
+    image: 'aplregistry.aarnet.edu.au/cloudservices/minio/shard:${EOS_BUILD_TAG}'
+    build:
+      dockerfile:  Dockerfile.aarnet
+      context: ../../
+    networks:
+        shard:
+          aliases:
+          - minio.shard
+    env_file:
+      - ./files/minio.env
+    ports:
+    - 9000:9000
     volumes:
-    - ./e/eos.keytab:/etc/k8screds/eos.keytab
-    - ./e/minio/stage:/stage
+    - './devmnt/eos/eos.keytab:/etc/k8screds/eos.keytab:ro'
+    - minio_stage:/stage
     depends_on:
     - fst
     - mq
     - mgm
     - qdb
-    networks:
-      minioshard:
-        aliases:
-          - minio.minioshard
+
+volumes:
+  eos_disks:
+    driver: local
+  eos_md:
+    driver: local
+  eos_ns_queue:
+    driver: local
+  eos_config:
+    driver: local
+  eos_logs:
+    driver: local
+  quarkdb_ns:
+    driver: local
+  minio_stage:
+    driver: local
 
 networks:
-  minioshard:
+  shard: null

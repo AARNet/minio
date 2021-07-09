@@ -14,7 +14,7 @@ COPY aarnet/docker/yum.repos.d/* /etc/yum.repos.d/
 RUN  rpm --rebuilddb &&\
      yum -y remove ed mailx wget libselinux-python sysstat lm_sensors-libs crontabs vim-minimal yum-utils &&\
      yum -y update &&\
-     yum -y install xrootd-client-4.9.1 python2-xrootd-4.9.1 xrootd-libs-4.9.1 --enablerepo=xrootd &&\
+     yum -y install jq xrootd-client-4.9.1 python2-xrootd-4.9.1 xrootd-libs-4.9.1 --enablerepo=xrootd &&\
      chmod 4755 /usr/bin/xrdcp &&\
      yum clean all &&\
      rm -rf /var/cache/yum &&\
@@ -22,6 +22,24 @@ RUN  rpm --rebuilddb &&\
 
 COPY aarnet/docker/scripts /scripts
 COPY --from=build /app/minio /scripts/minio
+COPY --from=build /app/minio-healthcheck /scripts/minio-healthcheck
+
+# Minio Client
+ADD https://dl.min.io/client/mc/release/linux-amd64/mc /usr/bin/mc
+RUN chmod +x /usr/bin/mc
 
 EXPOSE 9000
 CMD /scripts/docker-entrypoint.sh
+
+ENV MINIO_BROWSER="off" \
+    MINIO_OPTS="" \
+    EOS="" \
+    EOSUSER="minio" \
+    EOSUID=48 \
+    EOSGID=48 \
+    EOSSTAGE="/stage" \
+    HOOKSURL="" \
+    SCRIPTS="/scripts" \
+    EOSLOGLEVEL=2 \
+    EOSSLEEP=100 \
+    EOSREADMETHOD="webdav"
