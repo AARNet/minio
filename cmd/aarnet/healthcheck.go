@@ -108,7 +108,7 @@ func checkEOS(ctx context.Context) {
 func main() {
 	configure()
 	ctx := context.Background()
-	checkMinio(ctx)
+	//checkMinio(ctx) temporarily disabling as it fails due to lack of auth and fills the logs with spurious errors
 	checkEOS(ctx)
 	eos.EOSLogger.Debug(ctx, "All checks passed")
 }
